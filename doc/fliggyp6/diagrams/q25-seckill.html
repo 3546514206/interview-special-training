@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Q25 · 秒杀系统五层架构</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', 'PingFang SC', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 2rem; }
+    .card { background: rgba(15, 23, 42, 0.5); border-radius: 0.75rem; border: 1px solid #1e293b; padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+    .toolbar { display: flex; gap: 0.5rem; margin-left: auto; flex-shrink: 0; align-items: center; }
+    .toolbar-toggle {
+      background: transparent; border: none; color: #475569; cursor: pointer;
+      font-size: 1.25rem; line-height: 1; padding: 0.25rem 0.5rem; border-radius: 0.375rem;
+      transition: color 0.2s, background 0.2s;
+    }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
+    .toolbar-actions { display: none; gap: 0.5rem; }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button {
+      background: rgba(30, 41, 59, 0.8); border: 1px solid #334155; color: #94a3b8;
+      padding: 0.375rem 0.75rem; border-radius: 0.375rem; font-family: inherit;
+      font-size: 0.75rem; cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    }
+    .toolbar-actions button:hover { background: rgba(51, 65, 85, 0.8); color: white; border-color: #475569; }
+    @media print { body { background: #020617; padding: 1rem; } .toolbar { display: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="container" id="report-container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>Q25 · 秒杀系统五层架构</h1>
+        <div class="toolbar">
+          <div class="toolbar-actions">
+            <button onclick="copyAsImage(this)">📋 Copy</button>
+            <button onclick="downloadPNG(this)">🖼️ PNG</button>
+            <button onclick="downloadPDF(this)">📄 PDF</button>
+          </div>
+          <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
+        </div>
+      </div>
+      <p class="subtitle">热点隔离 / 动静分离 / 分层削峰 / 异步化 / 兜底预案 —— 每层都是漏斗，DB 只见 100 单</p>
+    </div>
+
+    <!-- Main Diagram -->
+    <div class="diagram-container">
+      <svg viewBox="0 0 1100 730">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- ============ funnel arrows (behind boxes) ============ -->
+        <line x1="380" y1="118" x2="380" y2="154" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="380" y1="234" x2="380" y2="270" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="380" y1="370" x2="380" y2="406" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="380" y1="478" x2="380" y2="514" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- ============ L1 client ============ -->
+        <rect x="40" y="58" width="680" height="60" rx="6" fill="#0f172a"/>
+        <rect x="40" y="58" width="680" height="60" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="380" y="82" fill="white" font-size="11" font-weight="600" text-anchor="middle">① 客户端 · 1 亿+ 请求</text>
+        <text x="380" y="102" fill="#94a3b8" font-size="8" text-anchor="middle">静态化 + URL 随机数防提前刷 + 开始前按钮置灰 + 本地 JS 校验</text>
+
+        <text x="380" y="142" fill="#fbbf24" font-size="8" text-anchor="middle">CDN + 浏览器缓存过滤 ~90% 静态请求 → 剩 ~1000 万动态请求</text>
+
+        <!-- ============ L2 gateway ============ -->
+        <rect x="40" y="158" width="680" height="76" rx="6" fill="#0f172a"/>
+        <rect x="40" y="158" width="680" height="76" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="380" y="182" fill="white" font-size="11" font-weight="600" text-anchor="middle">② 接入层 · Nginx/OpenResty + 网关（限流 + 验证码/答题 + 用户频控）</text>
+        <text x="380" y="202" fill="#94a3b8" font-size="8" text-anchor="middle">答题打散请求时间窗（1-2s 削峰）· 同一用户 N 秒 1 次 · 拦脚本与黄牛</text>
+        <text x="380" y="220" fill="#475569" font-size="8" text-anchor="middle">过滤 ~80% 异常流量 → 剩百万级有效请求</text>
+
+        <!-- ============ L3 app + redis ============ -->
+        <rect x="40" y="274" width="680" height="96" rx="6" fill="#0f172a"/>
+        <rect x="40" y="274" width="680" height="96" rx="6" fill="rgba(6, 78, 59, 0.3)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="380" y="298" fill="white" font-size="11" font-weight="600" text-anchor="middle">③ 应用层 · 秒杀服务（独立部署/独立域名，故障不传染主站）</text>
+        <rect x="80" y="312" width="280" height="44" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="220" y="330" fill="white" font-size="9" font-weight="600" text-anchor="middle">Redis Lua 原子预扣库存</text>
+        <text x="220" y="346" fill="#c4b5fd" font-size="7.5" text-anchor="middle">单线程执行 = 串行，无锁无 RTT</text>
+        <rect x="400" y="312" width="280" height="44" rx="6" fill="rgba(76, 29, 149, 0.25)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="540" y="330" fill="#c4b5fd" font-size="8.5" font-weight="600" text-anchor="middle">热点 Key 分桶：100 件拆 10-50 桶</text>
+        <text x="540" y="346" fill="#94a3b8" font-size="7.5" text-anchor="middle">随机落桶，并发能力 ×8-10；hash tag 同槽</text>
+
+        <text x="380" y="394" fill="#fbbf24" font-size="8" text-anchor="middle">只有预扣成功（=库存数）的请求进队列 → 100 个名额</text>
+
+        <!-- ============ L4 MQ ============ -->
+        <rect x="40" y="410" width="680" height="68" rx="6" fill="#0f172a"/>
+        <rect x="40" y="410" width="680" height="68" rx="6" fill="rgba(251, 146, 60, 0.25)" stroke="#fb923c" stroke-width="1.5"/>
+        <text x="380" y="434" fill="white" font-size="11" font-weight="600" text-anchor="middle">④ 异步层 · RocketMQ 事务消息排队下单</text>
+        <text x="380" y="454" fill="#94a3b8" font-size="8" text-anchor="middle">半消息确认后返"秒杀成功" · 削峰填谷匀速消费 · 同步刷盘+主从同步才不丢</text>
+        <text x="380" y="470" fill="#475569" font-size="7.5" text-anchor="middle">订单号唯一索引防重复消费 · 消费失败触发库存回滚</text>
+
+        <text x="380" y="502" fill="#fbbf24" font-size="8" text-anchor="middle">匀速落库，DB 永远只面对 100 单</text>
+
+        <!-- ============ L5 DB ============ -->
+        <rect x="40" y="518" width="680" height="76" rx="6" fill="#0f172a"/>
+        <rect x="40" y="518" width="680" height="76" rx="6" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="380" y="542" fill="white" font-size="11" font-weight="600" text-anchor="middle">⑤ 数据库层 · 订单库 / 库存库（最终一致）</text>
+        <text x="380" y="562" fill="#94a3b8" font-size="8" text-anchor="middle">UPDATE stock SET n=n-1 WHERE id=? AND stock&gt;0（乐观锁二次校验兜底）</text>
+        <text x="380" y="580" fill="#475569" font-size="8" text-anchor="middle">30 分钟未支付 → 延迟队列 → Redis + DB 库存归还</text>
+
+        <!-- ============ bottom strip ============ -->
+        <rect x="40" y="620" width="680" height="80" rx="6" fill="rgba(136, 19, 55, 0.15)" stroke="#fb7185" stroke-width="1" stroke-dasharray="4,4"/>
+        <text x="380" y="644" fill="#fecdd3" font-size="9" font-weight="600" text-anchor="middle">兜底预案（提前演练，不是出事再想）</text>
+        <text x="380" y="664" fill="#94a3b8" font-size="8" text-anchor="middle">售罄 → 前端直接返回，不再打后端 · 开卖 → 降级评论/推荐等非核心</text>
+        <text x="380" y="684" fill="#94a3b8" font-size="8" text-anchor="middle">Redis 故障 → 切 DB + 排队 + 限流 · 全链路压测（TCPCopy + 影子库）</text>
+
+        <!-- ============ right column: rate limiting ============ -->
+        <text x="750" y="36" fill="white" font-size="11" font-weight="600">4 层限流防刷</text>
+        <rect x="750" y="48" width="310" height="40" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="905" y="64" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">CDN 层：URL 限流</text>
+        <text x="905" y="79" fill="#94a3b8" font-size="7.5" text-anchor="middle">静态资源边缘拦截</text>
+        <rect x="750" y="96" width="310" height="40" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.2"/>
+        <text x="905" y="112" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">网关层：Sentinel 集群流控</text>
+        <text x="905" y="127" fill="#94a3b8" font-size="7.5" text-anchor="middle">热点参数限流（按商品 ID）</text>
+        <rect x="750" y="144" width="310" height="40" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.2"/>
+        <text x="905" y="160" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">应用层：Redis 用户频控</text>
+        <text x="905" y="175" fill="#94a3b8" font-size="7.5" text-anchor="middle">同一用户 1 秒 ≤5 次 + 黑名单</text>
+        <rect x="750" y="192" width="310" height="40" rx="6" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1.2"/>
+        <text x="905" y="208" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">业务层：风控</text>
+        <text x="905" y="223" fill="#94a3b8" font-size="7.5" text-anchor="middle">设备指纹 / 行为分析 / 验证码</text>
+
+        <!-- ============ right column: 3-stage stock ============ -->
+        <text x="750" y="262" fill="white" font-size="11" font-weight="600">库存扣减三阶段（防超卖核心）</text>
+        <rect x="750" y="274" width="310" height="120" rx="8" fill="rgba(15, 23, 42, 0.6)" stroke="#475569" stroke-width="1"/>
+        <text x="766" y="296" fill="#a78bfa" font-size="8.5" font-weight="600">1. Redis 预扣（Lua 原子）</text>
+        <text x="766" y="312" fill="#94a3b8" font-size="7.5">判库存 → DECR → 记录用户，一步完成</text>
+        <text x="766" y="334" fill="#a78bfa" font-size="8.5" font-weight="600">2. DB 二次校验</text>
+        <text x="766" y="350" fill="#94a3b8" font-size="7.5">WHERE stock&gt;0，挡住一切上游误差</text>
+        <text x="766" y="372" fill="#a78bfa" font-size="8.5" font-weight="600">3. 支付超时回滚</text>
+        <text x="766" y="388" fill="#94a3b8" font-size="7.5">30min 延迟队列 → 归还 Redis + DB</text>
+
+        <!-- ============ right column: lua ============ -->
+        <rect x="750" y="408" width="310" height="130" rx="8" fill="#0f172a" stroke="#a78bfa" stroke-width="1.2"/>
+        <text x="905" y="428" fill="#a78bfa" font-size="8.5" font-weight="600" text-anchor="middle">预扣 Lua 脚本（KEYS=stock,history）</text>
+        <text x="766" y="448" fill="#c4b5fd" font-size="7.5">local s = tonumber(GET stock)</text>
+        <text x="766" y="464" fill="#c4b5fd" font-size="7.5">if not s or s &lt;= 0 then return 0 end</text>
+        <text x="766" y="480" fill="#c4b5fd" font-size="7.5">DECR stock</text>
+        <text x="766" y="496" fill="#c4b5fd" font-size="7.5">ZINCRBY history 1 userId  -- 幂等去重</text>
+        <text x="766" y="512" fill="#c4b5fd" font-size="7.5">return 1</text>
+        <text x="766" y="528" fill="#475569" font-size="7.5">单线程一次执行完 = 天然原子，无网络往返</text>
+
+        <!-- ============ right column: experiment ============ -->
+        <rect x="750" y="552" width="310" height="88" rx="8" fill="rgba(8, 51, 68, 0.3)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="905" y="574" fill="#a5f3fc" font-size="8.5" font-weight="600" text-anchor="middle">实验对照（Q25SeckillLab）</text>
+        <text x="766" y="594" fill="#94a3b8" font-size="7.5">1000 人抢 100 件，裸 check-then-act：</text>
+        <text x="766" y="610" fill="#fb7185" font-size="7.5">超卖 ~900 件（读和扣之间被插队）</text>
+        <text x="766" y="628" fill="#a7f3d0" font-size="7.5">synchronized / Atomic / Lua / MQ 四种救法</text>
+
+        <!-- legend -->
+        <rect x="750" y="660" width="16" height="10" rx="2" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="772" y="668" fill="#94a3b8" font-size="8">入口</text>
+        <rect x="810" y="660" width="16" height="10" rx="2" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1"/>
+        <text x="832" y="668" fill="#94a3b8" font-size="8">服务/网关</text>
+        <rect x="900" y="660" width="16" height="10" rx="2" fill="rgba(76, 29, 149, 0.4)" stroke="#a78bfa" stroke-width="1"/>
+        <text x="922" y="668" fill="#94a3b8" font-size="8">存储</text>
+        <rect x="970" y="660" width="16" height="10" rx="2" fill="rgba(251, 146, 60, 0.3)" stroke="#fb923c" stroke-width="1"/>
+        <text x="992" y="668" fill="#94a3b8" font-size="8">MQ</text>
+      </svg>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>五大原则</h3>
+        </div>
+        <ul>
+          <li>• 热点隔离：秒杀独立域名/集群/DB</li>
+          <li>• 动静分离：静态走 CDN，动态走缓存</li>
+          <li>• 分层削峰：层层漏斗过滤</li>
+          <li>• 异步化：核心链路只做预扣</li>
+          <li>• 兜底预案：限流降级熔断静态化</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot violet"></div>
+          <h3>防超卖三阶段</h3>
+        </div>
+        <ul>
+          <li>• Redis Lua 预扣（原子，无 RTT）</li>
+          <li>• DB WHERE stock&gt;0 二次校验</li>
+          <li>• 支付超时延迟队列回滚</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>易错点</h3>
+        </div>
+        <ul>
+          <li>• ❌ "先 DB 扣库存" → DB 扛不住并发</li>
+          <li>• ❌ "Lua 比锁快 10 倍" → 无固定倍数，取决于网络 RTT</li>
+          <li>• ❌ "MQ 一定不丢" → 同步刷盘+主从同步才不丢</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <p class="footer">
+      飞猪 P6 · Q25 秒杀系统设计 · 对应实验 q25.Q25SeckillLab
+    </p>
+  </div>
+
+  <script>
+    async function copyAsImage(btn) {
+      const orig = btn.textContent;
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = '✓ Copied!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPNG(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const link = document.createElement('a');
+        link.download = 'q25-seckill.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPDF(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save('q25-seckill.pdf');
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Q1 · HashMap 底层实现难点</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', 'PingFang SC', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 2rem; }
+    .card { background: rgba(15, 23, 42, 0.5); border-radius: 0.75rem; border: 1px solid #1e293b; padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+    .toolbar { display: flex; gap: 0.5rem; margin-left: auto; flex-shrink: 0; align-items: center; }
+    .toolbar-toggle {
+      background: transparent; border: none; color: #475569; cursor: pointer;
+      font-size: 1.25rem; line-height: 1; padding: 0.25rem 0.5rem; border-radius: 0.375rem;
+      transition: color 0.2s, background 0.2s;
+    }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
+    .toolbar-actions { display: none; gap: 0.5rem; }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button {
+      background: rgba(30, 41, 59, 0.8); border: 1px solid #334155; color: #94a3b8;
+      padding: 0.375rem 0.75rem; border-radius: 0.375rem; font-family: inherit;
+      font-size: 0.75rem; cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    }
+    .toolbar-actions button:hover { background: rgba(51, 65, 85, 0.8); color: white; border-color: #475569; }
+    @media print { body { background: #020617; padding: 1rem; } .toolbar { display: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="container" id="report-container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>Q1 · HashMap 底层实现</h1>
+        <div class="toolbar">
+          <div class="toolbar-actions">
+            <button onclick="copyAsImage(this)">📋 Copy</button>
+            <button onclick="downloadPNG(this)">🖼️ PNG</button>
+            <button onclick="downloadPDF(this)">📄 PDF</button>
+          </div>
+          <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
+        </div>
+      </div>
+      <p class="subtitle">两大卡点：树化要"链表 ≥8 且数组 ≥64"双条件；扩容用 hash &amp; oldCap 拆链，不重新 hash</p>
+    </div>
+
+    <!-- Main Diagram -->
+    <div class="diagram-container">
+      <svg viewBox="0 0 1100 780">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- ============ Section 1: structure ============ -->
+        <text x="30" y="28" fill="white" font-size="11" font-weight="600">① 结构：数组 + 链表 + 红黑树（一个桶的三种形态）</text>
+
+        <!-- bucket array -->
+        <text x="50" y="52" fill="#94a3b8" font-size="8">Node&lt;K,V&gt;[] table（容量恒为 2 的幂）</text>
+        <rect x="50" y="60" width="54" height="30" rx="3" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="77" y="79" fill="#a5f3fc" font-size="9" text-anchor="middle">0</text>
+        <rect x="106" y="60" width="54" height="30" rx="3" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="133" y="79" fill="#a5f3fc" font-size="9" text-anchor="middle">1</text>
+        <rect x="162" y="60" width="54" height="30" rx="3" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="189" y="79" fill="#a5f3fc" font-size="9" text-anchor="middle">2</text>
+        <rect x="218" y="60" width="54" height="30" rx="3" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="245" y="79" fill="#a5f3fc" font-size="9" text-anchor="middle">3</text>
+        <rect x="274" y="60" width="54" height="30" rx="3" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="301" y="79" fill="#a5f3fc" font-size="9" text-anchor="middle">4</text>
+        <rect x="330" y="60" width="54" height="30" rx="3" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="357" y="79" fill="#a5f3fc" font-size="9" text-anchor="middle">5</text>
+        <rect x="386" y="60" width="54" height="30" rx="3" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="413" y="79" fill="#a5f3fc" font-size="9" text-anchor="middle">6</text>
+        <rect x="442" y="60" width="54" height="30" rx="3" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="469" y="79" fill="#a5f3fc" font-size="9" text-anchor="middle">7</text>
+
+        <!-- chain under bucket 1 -->
+        <line x1="133" y1="90" x2="133" y2="116" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+        <text x="150" y="106" fill="#475569" font-size="7">冲突</text>
+        <rect x="90" y="120" width="88" height="40" rx="5" fill="#0f172a"/>
+        <rect x="90" y="120" width="88" height="40" rx="5" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="134" y="137" fill="white" font-size="8" font-weight="600" text-anchor="middle">Node k=a</text>
+        <text x="134" y="152" fill="#94a3b8" font-size="7" text-anchor="middle">next →</text>
+        <line x1="178" y1="140" x2="196" y2="140" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+        <rect x="200" y="120" width="88" height="40" rx="5" fill="#0f172a"/>
+        <rect x="200" y="120" width="88" height="40" rx="5" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="244" y="137" fill="white" font-size="8" font-weight="600" text-anchor="middle">Node k=q</text>
+        <text x="244" y="152" fill="#94a3b8" font-size="7" text-anchor="middle">next →</text>
+        <line x1="288" y1="140" x2="306" y2="140" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+        <rect x="310" y="120" width="88" height="40" rx="5" fill="#0f172a"/>
+        <rect x="310" y="120" width="88" height="40" rx="5" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="354" y="137" fill="white" font-size="8" font-weight="600" text-anchor="middle">Node k=z</text>
+        <text x="354" y="152" fill="#94a3b8" font-size="7" text-anchor="middle">null</text>
+        <text x="244" y="178" fill="#94a3b8" font-size="7.5" text-anchor="middle">链表（&lt;8 个）：尾插 O(1)，查询 O(n)</text>
+
+        <!-- rbtree under bucket 5 -->
+        <line x1="357" y1="90" x2="357" y2="112" stroke="#64748b" stroke-width="0" />
+        <line x1="440" y1="96" x2="452" y2="112" stroke="#64748b" stroke-width="1.2" marker-end="url(#arrowhead)"/>
+        <text x="418" y="106" fill="#475569" font-size="7">≥8 且 ≥64</text>
+        <circle cx="458" cy="126" r="11" fill="rgba(136,19,55,0.5)" stroke="#fb7185" stroke-width="1.2"/>
+        <text x="458" y="129" fill="white" font-size="7" text-anchor="middle">k</text>
+        <line x1="451" y1="135" x2="432" y2="150" stroke="#475569" stroke-width="1"/>
+        <line x1="465" y1="135" x2="484" y2="150" stroke="#475569" stroke-width="1"/>
+        <circle cx="426" cy="158" r="11" fill="rgba(136,19,55,0.5)" stroke="#fb7185" stroke-width="1.2"/>
+        <text x="426" y="161" fill="white" font-size="7" text-anchor="middle">k</text>
+        <circle cx="490" cy="158" r="11" fill="rgba(30,41,59,0.8)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="490" y="161" fill="white" font-size="7" text-anchor="middle">k</text>
+        <line x1="419" y1="167" x2="404" y2="182" stroke="#475569" stroke-width="1"/>
+        <line x1="433" y1="167" x2="448" y2="182" stroke="#475569" stroke-width="1"/>
+        <circle cx="398" cy="190" r="11" fill="rgba(30,41,59,0.8)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="398" y="193" fill="white" font-size="7" text-anchor="middle">k</text>
+        <circle cx="454" cy="190" r="11" fill="rgba(30,41,59,0.8)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="454" y="193" fill="white" font-size="7" text-anchor="middle">k</text>
+        <text x="426" y="218" fill="#94a3b8" font-size="7.5" text-anchor="middle">红黑树 TreeNode：查询 O(log N)</text>
+
+        <!-- hash & index box -->
+        <rect x="560" y="52" width="510" height="76" rx="6" fill="#0f172a"/>
+        <rect x="560" y="52" width="510" height="76" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="815" y="74" fill="white" font-size="9" font-weight="600" text-anchor="middle">定位桶：index = (n-1) &amp; hash，其中 hash = h ^ (h &gt;&gt;&gt; 16)</text>
+        <text x="815" y="94" fill="#94a3b8" font-size="8" text-anchor="middle">扰动函数：把高 16 位异或进低位，让高位也参与定位 → 减少碰撞</text>
+        <text x="815" y="112" fill="#a5f3fc" font-size="8" text-anchor="middle">n 为 2 的幂时 (n-1)&amp;hash ≡ hash % n —— 位运算更快，这是主因</text>
+
+        <!-- constants box -->
+        <rect x="560" y="142" width="510" height="148" rx="6" fill="#0f172a"/>
+        <rect x="560" y="142" width="510" height="148" rx="6" fill="rgba(30, 41, 59, 0.4)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="815" y="164" fill="white" font-size="9" font-weight="600" text-anchor="middle">关键常量（源码即答案）</text>
+        <text x="580" y="186" fill="#cbd5e1" font-size="8">DEFAULT_INITIAL_CAPACITY = 16 · MAXIMUM_CAPACITY = 2^30</text>
+        <text x="580" y="208" fill="#cbd5e1" font-size="8">LOAD_FACTOR = 0.75（时间-空间平衡；冲突率与利用率折中）</text>
+        <text x="580" y="230" fill="#fbbf24" font-size="8">TREEIFY_THRESHOLD = 8 · UNTREEIFY = 6（回退留 2 的滞后量防抖动）</text>
+        <text x="580" y="252" fill="#fbbf24" font-size="8">MIN_TREEIFY_CAPACITY = 64（树化的最低数组容量！）</text>
+        <text x="580" y="274" fill="#94a3b8" font-size="7.5">泊松分布：0.75 下链长到 8 的概率 ≈ 0.00000006 —— 到 8 说明 hash 已异常</text>
+
+        <!-- ============ Section 2: put flow ============ -->
+        <text x="30" y="322" fill="white" font-size="11" font-weight="600">② put 流程：两大卡点都在这条链上</text>
+
+        <rect x="40" y="340" width="180" height="56" rx="6" fill="#0f172a"/>
+        <rect x="40" y="340" width="180" height="56" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="130" y="362" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">① put(k, v)</text>
+        <text x="130" y="380" fill="#94a3b8" font-size="8" text-anchor="middle">数组空 → 先 resize 初始化</text>
+        <line x1="220" y1="368" x2="244" y2="368" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <rect x="248" y="340" width="220" height="56" rx="6" fill="#0f172a"/>
+        <rect x="248" y="340" width="220" height="56" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="358" y="362" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">② 扰动 + (n-1)&amp;hash 定位桶</text>
+        <text x="358" y="380" fill="#94a3b8" font-size="8" text-anchor="middle">不取模，位运算</text>
+        <line x1="468" y1="368" x2="492" y2="368" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <rect x="496" y="340" width="240" height="56" rx="6" fill="#0f172a"/>
+        <rect x="496" y="340" width="240" height="56" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="616" y="362" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">③ 桶空直插 / 同 key 覆盖</text>
+        <text x="616" y="380" fill="#94a3b8" font-size="8" text-anchor="middle">桶非空且 key 不同 → 尾插链表</text>
+        <line x1="736" y1="368" x2="760" y2="368" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <rect x="764" y="340" width="300" height="56" rx="6" fill="#0f172a"/>
+        <rect x="764" y="340" width="300" height="56" rx="6" fill="rgba(120,53,15,0.35)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="914" y="362" fill="#fde68a" font-size="9" font-weight="700" text-anchor="middle">④ 链表长度 ≥ 8 ？→ treeifyBin()</text>
+        <text x="914" y="380" fill="#94a3b8" font-size="8" text-anchor="middle">进来先问数组够不够大 —— 卡点一</text>
+
+        <!-- dual condition highlight -->
+        <line x1="914" y1="396" x2="914" y2="416" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <rect x="40" y="420" width="1024" height="86" rx="8" fill="#0f172a"/>
+        <rect x="40" y="420" width="1024" height="86" rx="8" fill="rgba(120, 53, 15, 0.2)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="552" y="442" fill="#fbbf24" font-size="10" font-weight="700" text-anchor="middle">树化双条件：链表 ≥ 8 且 table.length ≥ 64（缺一不可）</text>
+        <rect x="80" y="456" width="460" height="36" rx="5" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.2"/>
+        <text x="310" y="478" fill="#a7f3d0" font-size="8.5" text-anchor="middle">数组 ≥ 64 → 真转红黑树 TreeNode（查询 O(log N)）</text>
+        <rect x="570" y="456" width="460" height="36" rx="5" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1.2"/>
+        <text x="800" y="478" fill="#fecdd3" font-size="8.5" text-anchor="middle">数组 &lt; 64 → 不树化！只 resize 扩容（实验亲眼所见）</text>
+
+        <!-- resize strip -->
+        <rect x="40" y="520" width="1024" height="34" rx="5" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1"/>
+        <text x="552" y="541" fill="#cbd5e1" font-size="8.5" text-anchor="middle">⑤ size &gt; threshold（= cap × 0.75）→ resize 容量翻倍 —— 扩容时怎么搬节点？看 ③</text>
+
+        <!-- ============ Section 3: resize split ============ -->
+        <text x="30" y="590" fill="white" font-size="11" font-weight="600">③ 扩容拆链：hash &amp; oldCap 一刀切成两半（卡点二）</text>
+
+        <!-- old array -->
+        <text x="60" y="614" fill="#94a3b8" font-size="8">oldCap = 4（扩容前）</text>
+        <rect x="60" y="622" width="52" height="26" rx="3" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="86" y="639" fill="#cbd5e1" font-size="8" text-anchor="middle">0</text>
+        <rect x="116" y="622" width="52" height="26" rx="3" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="142" y="639" fill="#cbd5e1" font-size="8" text-anchor="middle">1</text>
+        <rect x="172" y="622" width="52" height="26" rx="3" fill="rgba(76,29,149,0.45)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="198" y="639" fill="white" font-size="8" font-weight="700" text-anchor="middle">2</text>
+        <rect x="228" y="622" width="52" height="26" rx="3" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="254" y="639" fill="#cbd5e1" font-size="8" text-anchor="middle">3</text>
+        <text x="198" y="664" fill="#c4b5fd" font-size="7.5" text-anchor="middle">桶 2 挂着 4 个节点（hash 第 3 位不同）</text>
+
+        <!-- new array -->
+        <text x="420" y="614" fill="#94a3b8" font-size="8">newCap = 8（扩容后）</text>
+        <rect x="420" y="622" width="52" height="26" rx="3" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="446" y="639" fill="#a5f3fc" font-size="8" text-anchor="middle">0</text>
+        <rect x="476" y="622" width="52" height="26" rx="3" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="502" y="639" fill="#a5f3fc" font-size="8" text-anchor="middle">1</text>
+        <rect x="532" y="622" width="52" height="26" rx="3" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="558" y="639" fill="white" font-size="8" font-weight="700" text-anchor="middle">2</text>
+        <rect x="588" y="622" width="52" height="26" rx="3" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="614" y="639" fill="#a5f3fc" font-size="8" text-anchor="middle">3</text>
+        <rect x="644" y="622" width="52" height="26" rx="3" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="670" y="639" fill="white" font-size="8" font-weight="700" text-anchor="middle">6</text>
+
+        <path d="M 198 648 C 240 690, 480 690, 552 652" fill="none" stroke="#34d399" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <path d="M 210 648 C 320 710, 580 710, 664 652" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrowhead)"/>
+
+        <text x="370" y="700" fill="#a7f3d0" font-size="8" text-anchor="middle">hash &amp; oldCap == 0 → 留原位 2</text>
+        <text x="480" y="722" fill="#fecdd3" font-size="8" text-anchor="middle">hash &amp; oldCap == oldCap(4) → 搬去 2+4=6</text>
+        <text x="370" y="744" fill="#475569" font-size="7.5" text-anchor="middle">不看 key、不重算 hash：新增的那一位(bit 2)是 0 还是 1，只有两种去处 —— 2 的幂设计的红利</text>
+
+        <!-- right note: 1.7 vs 1.8 -->
+        <rect x="760" y="610" width="304" height="120" rx="8" fill="rgba(15, 23, 42, 0.6)" stroke="#475569" stroke-width="1"/>
+        <text x="912" y="632" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">1.7 vs 1.8（追问高频）</text>
+        <text x="776" y="652" fill="#fecdd3" font-size="7.5">1.7 头插：并发扩容链表成环 → get 死循环</text>
+        <text x="776" y="670" fill="#a7f3d0" font-size="7.5">1.8 尾插：不成环，但并发仍会丢数据</text>
+        <text x="776" y="688" fill="#94a3b8" font-size="7.5">1.8 加红黑树：查询 O(n)→O(log N)</text>
+        <text x="776" y="706" fill="#475569" font-size="7.5">并发场景的正解永远是 ConcurrentHashMap</text>
+
+        <!-- legend -->
+        <rect x="40" y="752" width="16" height="10" rx="2" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="62" y="760" fill="#94a3b8" font-size="8">数组/定位</text>
+        <rect x="130" y="752" width="16" height="10" rx="2" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1"/>
+        <text x="152" y="760" fill="#94a3b8" font-size="8">链表节点</text>
+        <rect x="215" y="752" width="16" height="10" rx="2" fill="rgba(136, 19, 55, 0.5)" stroke="#fb7185" stroke-width="1"/>
+        <text x="237" y="760" fill="#94a3b8" font-size="8">红黑树/新位</text>
+        <rect x="310" y="752" width="16" height="10" rx="2" fill="rgba(120, 53, 15, 0.35)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="332" y="760" fill="#94a3b8" font-size="8">树化判定</text>
+      </svg>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>卡点一：树化双条件</h3>
+        </div>
+        <ul>
+          <li>• ❌ "链表 ≥8 就转树" → 还要数组 ≥64</li>
+          <li>• 数组 &lt;64：只扩容（把链表摊薄）</li>
+          <li>• 退化阈值 6 不是 8：留滞后防反复横跳</li>
+          <li>• 8 的来源：泊松分布，链长 8 概率亿分之六</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>卡点二：扩容重定位</h3>
+        </div>
+        <ul>
+          <li>• hash &amp; oldCap == 0 → 原位 j</li>
+          <li>• == oldCap → j + oldCap</li>
+          <li>• 不重新 hash，链表拆两半各挂各的</li>
+          <li>• 前提：容量是 2 的幂</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>易错点</h3>
+        </div>
+        <ul>
+          <li>• 2 的幂主因是位运算快，不是均匀</li>
+          <li>• 0.75 = 时间-空间平衡，非玄学</li>
+          <li>• 树化只救查询，put 反而更慢</li>
+          <li>• 实验：改容量 64 阈值看树化时机变化</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <p class="footer">
+      飞猪 P6 · Q1 HashMap 底层实现 · 对应实验 q01.Q01HashMapLab
+    </p>
+  </div>
+
+  <script>
+    async function copyAsImage(btn) {
+      const orig = btn.textContent;
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = '✓ Copied!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPNG(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const link = document.createElement('a');
+        link.download = 'q01-hashmap.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPDF(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save('q01-hashmap.pdf');
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+  </script>
+</body>
+</html>

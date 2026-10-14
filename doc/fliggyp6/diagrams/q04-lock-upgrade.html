@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Q4 · synchronized 锁升级全景</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', 'PingFang SC', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 2rem; }
+    .card { background: rgba(15, 23, 42, 0.5); border-radius: 0.75rem; border: 1px solid #1e293b; padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+    .toolbar { display: flex; gap: 0.5rem; margin-left: auto; flex-shrink: 0; align-items: center; }
+    .toolbar-toggle {
+      background: transparent; border: none; color: #475569; cursor: pointer;
+      font-size: 1.25rem; line-height: 1; padding: 0.25rem 0.5rem; border-radius: 0.375rem;
+      transition: color 0.2s, background 0.2s;
+    }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
+    .toolbar-actions { display: none; gap: 0.5rem; }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button {
+      background: rgba(30, 41, 59, 0.8); border: 1px solid #334155; color: #94a3b8;
+      padding: 0.375rem 0.75rem; border-radius: 0.375rem; font-family: inherit;
+      font-size: 0.75rem; cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    }
+    .toolbar-actions button:hover { background: rgba(51, 65, 85, 0.8); color: white; border-color: #475569; }
+    @media print { body { background: #020617; padding: 1rem; } .toolbar { display: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="container" id="report-container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>Q4 · synchronized 锁升级</h1>
+        <div class="toolbar">
+          <div class="toolbar-actions">
+            <button onclick="copyAsImage(this)">📋 Copy</button>
+            <button onclick="downloadPNG(this)">🖼️ PNG</button>
+            <button onclick="downloadPDF(this)">📄 PDF</button>
+          </div>
+          <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
+        </div>
+      </div>
+      <p class="subtitle">无锁 → 偏向 → 轻量 → 重量 · 单向不可逆 · JDK 15 起默认禁用偏向锁（JEP 374）</p>
+    </div>
+
+    <!-- Main Diagram -->
+    <div class="diagram-container">
+      <svg viewBox="0 0 1000 700">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <marker id="arrowrose" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- ============ Section 1: mark word 64-bit layout ============ -->
+        <text x="10" y="28" fill="white" font-size="11" font-weight="600">① 64 位 mark word 布局（最低 3 bit = 锁状态位 Tag）</text>
+
+        <!-- Row 1: unlocked 001 -->
+        <text x="82" y="53" fill="#94a3b8" font-size="8" text-anchor="end" font-weight="600">无锁 001</text>
+        <rect x="90" y="40" width="300" height="18" fill="#0f172a" stroke="#1e293b" stroke-width="0.5"/>
+        <text x="240" y="52" fill="#475569" font-size="7" text-anchor="middle">unused 25b</text>
+        <rect x="390" y="40" width="310" height="18" fill="rgba(30,41,59,0.8)" stroke="#94a3b8" stroke-width="1"/>
+        <text x="545" y="52" fill="#cbd5e1" font-size="7" text-anchor="middle">identity_hashcode 31b</text>
+        <rect x="700" y="40" width="60" height="18" fill="rgba(30,41,59,0.8)" stroke="#94a3b8" stroke-width="1"/>
+        <text x="730" y="52" fill="#cbd5e1" font-size="7" text-anchor="middle">age 4b</text>
+        <rect x="760" y="40" width="50" height="18" fill="rgba(30,41,59,0.8)" stroke="#94a3b8" stroke-width="1"/>
+        <text x="785" y="52" fill="#cbd5e1" font-size="7" text-anchor="middle">0</text>
+        <rect x="810" y="40" width="140" height="18" fill="rgba(148,163,184,0.35)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="880" y="52" fill="white" font-size="8" text-anchor="middle" font-weight="700">lock 01</text>
+
+        <!-- Row 2: biased 101 -->
+        <text x="82" y="79" fill="#fbbf24" font-size="8" text-anchor="end" font-weight="600">偏向 101</text>
+        <rect x="90" y="66" width="530" height="18" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="355" y="78" fill="#fde68a" font-size="7" text-anchor="middle">threadId 54b</text>
+        <rect x="620" y="66" width="80" height="18" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="660" y="78" fill="#fde68a" font-size="7" text-anchor="middle">epoch 2b</text>
+        <rect x="700" y="66" width="60" height="18" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="730" y="78" fill="#fde68a" font-size="7" text-anchor="middle">age 4b</text>
+        <rect x="760" y="66" width="50" height="18" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="785" y="78" fill="#fde68a" font-size="7" text-anchor="middle">1</text>
+        <rect x="810" y="66" width="140" height="18" fill="rgba(251,191,36,0.35)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="880" y="78" fill="white" font-size="8" text-anchor="middle" font-weight="700">lock 01</text>
+
+        <!-- Row 3: lightweight 00 -->
+        <text x="82" y="105" fill="#22d3ee" font-size="8" text-anchor="end" font-weight="600">轻量 00</text>
+        <rect x="90" y="92" width="720" height="18" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="450" y="104" fill="#a5f3fc" font-size="7" text-anchor="middle">指向栈中 Lock Record 的指针 62b</text>
+        <rect x="810" y="92" width="140" height="18" fill="rgba(34,211,238,0.35)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="880" y="104" fill="white" font-size="8" text-anchor="middle" font-weight="700">lock 00</text>
+
+        <!-- Row 4: heavyweight 10 -->
+        <text x="82" y="131" fill="#fb7185" font-size="8" text-anchor="end" font-weight="600">重量 10</text>
+        <rect x="90" y="118" width="720" height="18" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1"/>
+        <text x="450" y="130" fill="#fecdd3" font-size="7" text-anchor="middle">指向 ObjectMonitor 的指针 62b</text>
+        <rect x="810" y="118" width="140" height="18" fill="rgba(251,113,133,0.35)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="880" y="130" fill="white" font-size="8" text-anchor="middle" font-weight="700">lock 10</text>
+
+        <text x="950" y="152" fill="#475569" font-size="7" text-anchor="end">另：Tag=11 为 GC 标记；调用过 hashCode() 的对象无法偏向（hash 无处存放）</text>
+
+        <!-- ============ Section 2: state machine ============ -->
+        <text x="10" y="176" fill="white" font-size="11" font-weight="600">② 四级状态流转（单向不可逆）</text>
+
+        <!-- arrows first (behind boxes) -->
+        <line x1="258" y1="222" x2="294" y2="222" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="488" y1="222" x2="524" y2="222" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <line x1="718" y1="222" x2="754" y2="222" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="276" y="212" fill="#94a3b8" font-size="9" text-anchor="middle" font-weight="700">①</text>
+        <text x="506" y="212" fill="#94a3b8" font-size="9" text-anchor="middle" font-weight="700">②</text>
+        <text x="736" y="212" fill="#94a3b8" font-size="9" text-anchor="middle" font-weight="700">③</text>
+
+        <!-- skip arc: unlocked -> lightweight (JDK15+) -->
+        <path d="M 165 260 C 165 330, 625 330, 625 260" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrowrose)"/>
+        <text x="395" y="322" fill="#fb7185" font-size="8" text-anchor="middle">JDK 15+ 默认禁用偏向（JEP 374）：新线程直接走轻量级 CAS</text>
+
+        <!-- state boxes -->
+        <rect x="70" y="190" width="188" height="64" rx="6" fill="#0f172a"/>
+        <rect x="70" y="190" width="188" height="64" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="164" y="212" fill="white" font-size="12" font-weight="600" text-anchor="middle">无锁</text>
+        <text x="164" y="230" fill="#94a3b8" font-size="8" text-anchor="middle">Tag 001 · 新建对象</text>
+        <text x="164" y="244" fill="#94a3b8" font-size="8" text-anchor="middle">几乎无竞争</text>
+
+        <rect x="300" y="190" width="188" height="64" rx="6" fill="#0f172a"/>
+        <rect x="300" y="190" width="188" height="64" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="394" y="212" fill="white" font-size="12" font-weight="600" text-anchor="middle">偏向锁</text>
+        <text x="394" y="230" fill="#94a3b8" font-size="8" text-anchor="middle">Tag 101 · 存 threadId</text>
+        <text x="394" y="244" fill="#94a3b8" font-size="8" text-anchor="middle">单线程重复获取</text>
+
+        <rect x="530" y="190" width="188" height="64" rx="6" fill="#0f172a"/>
+        <rect x="530" y="190" width="188" height="64" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="624" y="212" fill="white" font-size="12" font-weight="600" text-anchor="middle">轻量级锁</text>
+        <text x="624" y="230" fill="#94a3b8" font-size="8" text-anchor="middle">Tag 00 · CAS 自旋</text>
+        <text x="624" y="244" fill="#94a3b8" font-size="8" text-anchor="middle">多线程交替执行</text>
+
+        <rect x="760" y="190" width="188" height="64" rx="6" fill="#0f172a"/>
+        <rect x="760" y="190" width="188" height="64" rx="6" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="854" y="212" fill="white" font-size="12" font-weight="600" text-anchor="middle">重量级锁</text>
+        <text x="854" y="230" fill="#94a3b8" font-size="8" text-anchor="middle">Tag 10 · OS mutex</text>
+        <text x="854" y="244" fill="#94a3b8" font-size="8" text-anchor="middle">同一时刻多线程真竞争</text>
+
+        <!-- trigger footnotes -->
+        <text x="277" y="278" fill="#94a3b8" font-size="8" text-anchor="middle">① 首个线程 CAS 写 threadId</text>
+        <text x="507" y="278" fill="#94a3b8" font-size="8" text-anchor="middle">② 他线程来抢 → 撤销偏向</text>
+        <text x="737" y="278" fill="#94a3b8" font-size="8" text-anchor="middle">③ 自旋失败（自适应阈值）</text>
+
+        <!-- ============ Section 3: per-state mechanism ============ -->
+        <text x="10" y="380" fill="white" font-size="11" font-weight="600">③ 各状态工作机制</text>
+
+        <rect x="70" y="396" width="188" height="140" rx="6" fill="rgba(30, 41, 59, 0.35)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4,4"/>
+        <text x="164" y="416" fill="#94a3b8" font-size="9" font-weight="600" text-anchor="middle">无锁 · 为什么会有偏向</text>
+        <text x="80" y="436" fill="#94a3b8" font-size="8">· 锁总是由同一线程获取</text>
+        <text x="80" y="455" fill="#94a3b8" font-size="8">· 连 CAS 都想省掉</text>
+        <text x="80" y="474" fill="#94a3b8" font-size="8">· 已算 hashCode() 则禁偏向</text>
+        <text x="80" y="493" fill="#475569" font-size="8">→ 起点状态，非锁</text>
+
+        <rect x="300" y="396" width="188" height="140" rx="6" fill="rgba(120, 53, 15, 0.25)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="394" y="416" fill="#fbbf24" font-size="9" font-weight="600" text-anchor="middle">偏向 · 零成本重入</text>
+        <text x="310" y="436" fill="#94a3b8" font-size="8">· 首次 CAS 写 threadId 进头部</text>
+        <text x="310" y="455" fill="#94a3b8" font-size="8">· 再入只比对 ID，无原子指令</text>
+        <text x="310" y="474" fill="#94a3b8" font-size="8">· 撤销须等 safepoint，代价高</text>
+        <text x="310" y="493" fill="#475569" font-size="8">→ 死因：维护成本 &gt; 收益</text>
+
+        <rect x="530" y="396" width="188" height="140" rx="6" fill="rgba(8, 51, 68, 0.35)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="624" y="416" fill="#22d3ee" font-size="9" font-weight="600" text-anchor="middle">轻量 · 用户态 CAS</text>
+        <text x="540" y="436" fill="#94a3b8" font-size="8">· 栈帧建 Lock Record</text>
+        <text x="540" y="455" fill="#94a3b8" font-size="8">· CAS 把 mark word 换成指针</text>
+        <text x="540" y="474" fill="#94a3b8" font-size="8">· 抢不到就自旋（自适应）</text>
+        <text x="540" y="493" fill="#475569" font-size="8">→ 不进内核，交替执行最优</text>
+
+        <rect x="760" y="396" width="188" height="140" rx="6" fill="rgba(136, 19, 55, 0.35)" stroke="#fb7185" stroke-width="1"/>
+        <text x="854" y="416" fill="#fb7185" font-size="9" font-weight="600" text-anchor="middle">重量 · ObjectMonitor</text>
+        <text x="770" y="436" fill="#94a3b8" font-size="8">· C++ 对象：owner/EntryList</text>
+        <text x="770" y="455" fill="#94a3b8" font-size="8">· 竞争线程 park → 内核 mutex</text>
+        <text x="770" y="474" fill="#94a3b8" font-size="8">· wait/notify = WaitSet 操作</text>
+        <text x="770" y="493" fill="#475569" font-size="8">→ 上下文切换，最重但稳</text>
+
+        <!-- ============ Section 4: warning ============ -->
+        <rect x="70" y="566" width="878" height="48" rx="6" fill="rgba(136, 19, 55, 0.15)" stroke="#fb7185" stroke-width="1" stroke-dasharray="4,4"/>
+        <text x="509" y="586" fill="#fecdd3" font-size="9" text-anchor="middle" font-weight="600">⚠ 单向不可逆：升级后不降级（直到对象被 GC）</text>
+        <text x="509" y="604" fill="#94a3b8" font-size="8" text-anchor="middle">自适应自旋（JDK 6+）：JVM 按上一次在同一把锁上的自旋结果动态调整次数，不再是固定 PreBlockSpin=10</text>
+
+        <!-- ============ Legend ============ -->
+        <text x="70" y="648" fill="white" font-size="10" font-weight="600">Legend</text>
+        <rect x="70" y="660" width="16" height="10" rx="2" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1"/>
+        <text x="92" y="668" fill="#94a3b8" font-size="8">无锁</text>
+        <rect x="140" y="660" width="16" height="10" rx="2" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="162" y="668" fill="#94a3b8" font-size="8">偏向（JDK15+ 默认关）</text>
+        <rect x="290" y="660" width="16" height="10" rx="2" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="312" y="668" fill="#94a3b8" font-size="8">轻量</text>
+        <rect x="360" y="660" width="16" height="10" rx="2" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1"/>
+        <text x="382" y="668" fill="#94a3b8" font-size="8">重量</text>
+        <line x1="440" y1="665" x2="456" y2="665" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="3,3"/>
+        <text x="462" y="668" fill="#94a3b8" font-size="8">JDK15+ 默认跳过路径</text>
+      </svg>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>易错点</h3>
+        </div>
+        <ul>
+          <li>• ❌ "JDK 8 没有偏向锁" → ✅ 有，JDK 15 起才默认禁用</li>
+          <li>• ❌ "自旋固定 10 次" → ✅ JDK 6+ 自适应</li>
+          <li>• mark word 8B；对象头 = mark 8B + class ptr 8B（压缩后 12B）</li>
+          <li>• 偏向锁可批量重偏向（JDK 15 前），但撤销代价不小</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>升级触发条件</h3>
+        </div>
+        <ul>
+          <li>• 无锁 → 偏向：第一个线程 CAS threadId</li>
+          <li>• 偏向 → 轻量：其他线程竞争，撤销偏向</li>
+          <li>• 轻量 → 重量：自旋超自适应阈值</li>
+          <li>• 新 JDK 默认：起步就是轻量级</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>面试一句话</h3>
+        </div>
+        <ul>
+          <li>• 本质："能用便宜的就不用贵的"</li>
+          <li>• 偏向死于撤销成本（JEP 374）</li>
+          <li>• 轻量适合交替执行，重量适合真竞争</li>
+          <li>• 对应实验：JOL 逐行打印 mark word 变化</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <p class="footer">
+      飞猪 P6 · Q4 synchronized 锁升级 · 对应实验 q04.Q04LockUpgradeLab
+    </p>
+  </div>
+
+  <script>
+    async function copyAsImage(btn) {
+      const orig = btn.textContent;
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = '✓ Copied!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPNG(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const link = document.createElement('a');
+        link.download = 'q04-lock-upgrade.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPDF(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save('q04-lock-upgrade.pdf');
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+  </script>
+</body>
+</html>

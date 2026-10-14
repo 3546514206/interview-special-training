@@ -1,4 +1,4 @@
-# 飞猪 P6 Java 后端 · 面试真题答卷（经核实版）
+ wo'yon# 飞猪 P6 Java 后端 · 面试真题答卷（经核实版）
 
 > **目标岗位**：飞猪旅行科技 · Java 研发工程师-度假 · P6
 > **出品**：潇潇
@@ -41,6 +41,14 @@
 - "为什么负载因子 0.75？" → 答"是时间（冲突概率）和空间（数组利用率）的平衡点。0.5 太浪费空间，1.0 冲突太多"
 - "为什么 1.7 会死循环？" → 头插法 + 并发扩容会形成环形链表，get 时死循环。1.8 改尾插法即使并发也不会成环，但**仍可能数据不一致**（建议用 ConcurrentHashMap）
 - "扩容时怎么定位元素？" → `hash & oldCap`，结果 0 留在原位，结果 1 移到 `index + oldCap`（用 2 次幂设计避免 rehash）
+
+**【配图 · HashMap 结构图 + put 流程 + 扩容拆链】**
+
+![Q1 HashMap 结构图 + put 流程 + 扩容拆链](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q01-hashmap.png)
+
+> 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q01-hashmap.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q01-hashmap.html)
+>
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
 
 ---
 
@@ -116,6 +124,14 @@
 - "ReentrantLock 的公平锁和非公平锁区别？" → 公平锁 acquire 时先看队列有没有等待者（FIFO）；非公平锁直接 CAS 抢（可能插队，但吞吐量高）
 - "AQS 怎么实现 Condition？" → `await()` 把当前节点从 CLH 移到 Condition 单向队列；`signal()` 把节点移回 CLH，再 `unpark` 唤醒
 
+**【配图 · AQS 全景（state / CLH 队列 / acquire-release / Condition）】**
+
+![Q3 AQS 全景（state / CLH 队列 / acquire-release / Condition）](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q03-aqs.png)
+
+> 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q03-aqs.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q03-aqs.html)
+>
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
+
 ---
 
 ### Q4 · synchronized 锁升级（⭐⭐⭐⭐⭐）
@@ -153,6 +169,14 @@
 - "无锁 → 轻量跳过了偏向吗？" → 是的，**新 JDK 默认禁偏向**，第一个线程来就 CAS 自旋走轻量
 - "轻量级锁怎么工作？" → 线程栈帧创建 `Lock Record`，CAS 把 mark word 拷贝到 Lock Record 指针里；解锁再 CAS 写回。多个线程交替用 CAS 自旋，谁先成功谁持有
 - "重量级锁的 ObjectMonitor 是什么？" → C++ 对象，每个 Java 对象在重量级锁状态都关联一个，包含 owner / EntryList / WaitSet。`wait()` 把线程放进 WaitSet，`notify()` 移到 EntryList 重新竞争
+
+**【配图 · 锁升级状态机 + mark word 位布局】**
+
+![Q4 锁升级状态机 + mark word 位布局](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q04-lock-upgrade.png)
+
+> 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q04-lock-upgrade.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q04-lock-upgrade.html)
+>
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
 
 ---
 
@@ -548,6 +572,14 @@
 - "undo log 一直增长怎么办？" → purge 线程清理 + 监控 `innodb_max_undo_log_size`
 - "MVCC 解决了所有一致性问题吗？" → ❌ 不解决写冲突，写冲突靠**锁**
 
+**【配图 · MVCC 版本链 + ReadView 可见性五规则】**
+
+![Q13 MVCC 版本链 + ReadView 可见性五规则](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q13-mvcc.png)
+
+> 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q13-mvcc.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q13-mvcc.html)
+>
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
+
 ---
 
 ### Q14 · Redis 5 大数据类型 + 底层数据结构（⭐⭐⭐⭐⭐）
@@ -783,6 +815,14 @@
 - "为什么 enable.idempotence 后 max.in.flight.requests ≤ 5？" → 5 以内乱序不丢消息，超过 5 需要显式等前一批 ack，会破坏幂等
 - "EOS 三层级怎么选？" → 单分区用幂等；多分区用事务；流处理端到端用 Kafka Streams `processing.guarantee=exactly_once`
 
+**【配图 · Kafka 不丢不重（Producer / Broker / Consumer 三端）】**
+
+![Q18 Kafka 不丢不重（Producer / Broker / Consumer 三端）](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q18-kafka-exactly-once.png)
+
+> 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q18-kafka-exactly-once.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q18-kafka-exactly-once.html)
+>
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
+
 ---
 
 ### Q19 · Kafka 消费者线程安全 + Rebalance（⭐⭐⭐⭐）
@@ -910,6 +950,14 @@
 - "@Lazy 为什么能打破构造器循环？" → Spring 注入**代理占位符**（不立即创建真实 Bean），调用时才触发创建
 - "为什么 Spring 2.6+ 默认禁？" → Spring 团队认为循环依赖是**设计问题的信号**，应在编译期/启动期就暴露，不依赖框架补救
 - "@Transactional + 循环依赖会怎样？" → 同 AOP 逻辑，**三级缓存保证代理一致性**，但 `allowRawInjectionDespiteWrapping=false` 下若检测到引用不一致会抛异常
+
+**【配图 · 三级缓存流程 + 二级缓存反例对比】**
+
+![Q20 三级缓存流程 + 二级缓存反例对比](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q20-circular-dependency.png)
+
+> 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q20-circular-dependency.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q20-circular-dependency.html)
+>
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
 
 ---
 
@@ -1198,6 +1246,14 @@
 - "Lua 原子性的根本原因？" → Redis 单线程执行 Lua，**一次执行完成 = 串行**，不会被其他命令插入
 - "为什么分桶要 10-50 个？" → 太少（5 个）单桶压力还大，太多（100 个）遍历性能下降，10-50 是经验值
 - "怎么验证秒杀设计？" → 全链路压测（TCPCopy 录制真实流量 + 压测标记 + 影子库 + 监控）
+
+**【配图 · 秒杀五层漏斗架构 + 防超卖三阶段】**
+
+![Q25 秒杀五层漏斗架构 + 防超卖三阶段](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q25-seckill.png)
+
+> 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q25-seckill.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q25-seckill.html)
+>
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
 
 ---
 

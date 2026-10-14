@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Q20 · Spring 三级缓存解决循环依赖</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'JetBrains Mono', 'PingFang SC', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+    .container { max-width: 1200px; margin: 0 auto; }
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.875rem; margin-left: 1.75rem; }
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+    svg { width: 100%; min-width: 900px; display: block; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 2rem; }
+    .card { background: rgba(15, 23, 42, 0.5); border-radius: 0.75rem; border: 1px solid #1e293b; padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+    .card h3 { font-size: 0.875rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+    .card li { margin-bottom: 0.375rem; }
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+    .toolbar { display: flex; gap: 0.5rem; margin-left: auto; flex-shrink: 0; align-items: center; }
+    .toolbar-toggle {
+      background: transparent; border: none; color: #475569; cursor: pointer;
+      font-size: 1.25rem; line-height: 1; padding: 0.25rem 0.5rem; border-radius: 0.375rem;
+      transition: color 0.2s, background 0.2s;
+    }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
+    .toolbar-actions { display: none; gap: 0.5rem; }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button {
+      background: rgba(30, 41, 59, 0.8); border: 1px solid #334155; color: #94a3b8;
+      padding: 0.375rem 0.75rem; border-radius: 0.375rem; font-family: inherit;
+      font-size: 0.75rem; cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    }
+    .toolbar-actions button:hover { background: rgba(51, 65, 85, 0.8); color: white; border-color: #475569; }
+    @media print { body { background: #020617; padding: 1rem; } .toolbar { display: none !important; } }
+  </style>
+</head>
+<body>
+  <div class="container" id="report-container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>Q20 · Spring 三级缓存与循环依赖</h1>
+        <div class="toolbar">
+          <div class="toolbar-actions">
+            <button onclick="copyAsImage(this)">📋 Copy</button>
+            <button onclick="downloadPNG(this)">🖼️ PNG</button>
+            <button onclick="downloadPDF(this)">📄 PDF</button>
+          </div>
+          <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
+        </div>
+      </div>
+      <p class="subtitle">三级是核心：ObjectFactory 延迟决策，保证 B 拿到的早期引用 == A 最终暴露的引用（AOP 代理一致性）</p>
+    </div>
+
+    <!-- Main Diagram -->
+    <div class="diagram-container">
+      <svg viewBox="0 0 1100 730">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- ============ Section 1: three caches ============ -->
+        <text x="30" y="28" fill="white" font-size="11" font-weight="600">① 三级缓存各存什么（getBean 查找顺序：一级 → 二级 → 三级）</text>
+
+        <rect x="60" y="44" width="300" height="84" rx="6" fill="#0f172a"/>
+        <rect x="60" y="44" width="300" height="84" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="210" y="66" fill="white" font-size="11" font-weight="600" text-anchor="middle">一级 singletonObjects</text>
+        <text x="210" y="84" fill="#94a3b8" font-size="8" text-anchor="middle">Map&lt;String, Object&gt;</text>
+        <text x="210" y="102" fill="#a7f3d0" font-size="8" text-anchor="middle">完整初始化的成品 Bean</text>
+        <text x="210" y="118" fill="#475569" font-size="7" text-anchor="middle">对外暴露的就是它</text>
+
+        <rect x="440" y="44" width="300" height="84" rx="6" fill="#0f172a"/>
+        <rect x="440" y="44" width="300" height="84" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="590" y="66" fill="white" font-size="11" font-weight="600" text-anchor="middle">二级 earlySingletonObjects</text>
+        <text x="590" y="84" fill="#94a3b8" font-size="8" text-anchor="middle">Map&lt;String, Object&gt;</text>
+        <text x="590" y="102" fill="#fde68a" font-size="8" text-anchor="middle">半成品早期引用（工厂的执行结果）</text>
+        <text x="590" y="118" fill="#475569" font-size="7" text-anchor="middle">提前曝光位</text>
+
+        <rect x="820" y="44" width="260" height="84" rx="6" fill="#0f172a"/>
+        <rect x="820" y="44" width="260" height="84" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="950" y="66" fill="white" font-size="11" font-weight="600" text-anchor="middle">三级 singletonFactories</text>
+        <text x="950" y="84" fill="#94a3b8" font-size="8" text-anchor="middle">Map&lt;String, ObjectFactory&lt;?&gt;&gt;</text>
+        <text x="950" y="102" fill="#a5f3fc" font-size="8" text-anchor="middle">工厂：延迟决定给原始还是代理</text>
+        <text x="950" y="118" fill="#475569" font-size="7" text-anchor="middle">getEarlyBeanReference()</text>
+
+        <line x1="360" y1="86" x2="436" y2="86" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="398" y="76" fill="#94a3b8" font-size="7" text-anchor="middle">miss</text>
+        <line x1="740" y1="86" x2="816" y2="86" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="778" y="76" fill="#94a3b8" font-size="7" text-anchor="middle">miss</text>
+
+        <!-- ============ Section 2: A -> B -> A flow ============ -->
+        <text x="30" y="164" fill="white" font-size="11" font-weight="600">② A → B → A 全流程（字段注入场景）</text>
+
+        <!-- Phase 1 -->
+        <rect x="30" y="180" width="104" height="56" rx="6" fill="rgba(30, 41, 59, 0.6)" stroke="#475569" stroke-width="1"/>
+        <text x="82" y="203" fill="#cbd5e1" font-size="8" font-weight="600" text-anchor="middle">阶段 1</text>
+        <text x="82" y="219" fill="#94a3b8" font-size="8" text-anchor="middle">A 开工</text>
+        <rect x="154" y="180" width="240" height="56" rx="6" fill="#0f172a"/>
+        <rect x="154" y="180" width="240" height="56" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="274" y="202" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">① 实例化 new A()</text>
+        <text x="274" y="220" fill="#94a3b8" font-size="8" text-anchor="middle">只分配内存，还没注入属性</text>
+        <line x1="394" y1="208" x2="426" y2="208" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <rect x="430" y="180" width="290" height="56" rx="6" fill="#0f172a"/>
+        <rect x="430" y="180" width="290" height="56" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="575" y="202" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">② ObjectFactory 放入三级缓存</text>
+        <text x="575" y="220" fill="#94a3b8" font-size="8" text-anchor="middle">lambda：() -&gt; getEarlyBeanReference(A)</text>
+
+        <!-- Phase 2 -->
+        <rect x="30" y="248" width="104" height="56" rx="6" fill="rgba(30, 41, 59, 0.6)" stroke="#475569" stroke-width="1"/>
+        <text x="82" y="271" fill="#cbd5e1" font-size="8" font-weight="600" text-anchor="middle">阶段 2</text>
+        <text x="82" y="287" fill="#94a3b8" font-size="8" text-anchor="middle">A 需要 B</text>
+        <rect x="154" y="248" width="240" height="56" rx="6" fill="#0f172a"/>
+        <rect x="154" y="248" width="240" height="56" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="274" y="270" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">③ new B()，B 的工厂进三级</text>
+        <text x="274" y="288" fill="#94a3b8" font-size="8" text-anchor="middle">A 属性注入发现依赖 B → 创建 B</text>
+        <line x1="394" y1="276" x2="426" y2="276" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <rect x="430" y="248" width="230" height="56" rx="6" fill="#0f172a"/>
+        <rect x="430" y="248" width="230" height="56" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="545" y="270" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">④ B 属性注入需要 A</text>
+        <text x="545" y="288" fill="#94a3b8" font-size="8" text-anchor="middle">getSingleton("a") 查缓存</text>
+        <line x1="660" y1="276" x2="692" y2="276" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <rect x="696" y="248" width="290" height="56" rx="6" fill="#0f172a"/>
+        <rect x="696" y="248" width="290" height="56" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="841" y="270" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">⑤ 一级 ✗ → 二级 ✗ → 三级 ✓</text>
+        <text x="841" y="288" fill="#94a3b8" font-size="8" text-anchor="middle">命中 A 的 ObjectFactory</text>
+
+        <!-- Phase 3 -->
+        <rect x="30" y="316" width="104" height="56" rx="6" fill="rgba(30, 41, 59, 0.6)" stroke="#475569" stroke-width="1"/>
+        <text x="82" y="339" fill="#cbd5e1" font-size="8" font-weight="600" text-anchor="middle">阶段 3</text>
+        <text x="82" y="355" fill="#94a3b8" font-size="8" text-anchor="middle">工厂执行 ★</text>
+        <rect x="154" y="316" width="330" height="56" rx="6" fill="#0f172a"/>
+        <rect x="154" y="316" width="330" height="56" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="319" y="338" fill="#a5f3fc" font-size="8.5" font-weight="600" text-anchor="middle">⑥ getObject()：需要代理则此刻生成</text>
+        <text x="319" y="356" fill="#94a3b8" font-size="8" text-anchor="middle">提前 AOP —— 代理 A' 在这里定型</text>
+        <line x1="484" y1="344" x2="516" y2="344" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <rect x="520" y="316" width="240" height="56" rx="6" fill="#0f172a"/>
+        <rect x="520" y="316" width="240" height="56" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.2"/>
+        <text x="640" y="338" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">⑦ 早期引用(A') 进二级</text>
+        <text x="640" y="356" fill="#94a3b8" font-size="8" text-anchor="middle">同时从三级缓存删除</text>
+        <line x1="760" y1="344" x2="792" y2="344" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <rect x="796" y="316" width="240" height="56" rx="6" fill="#0f172a"/>
+        <rect x="796" y="316" width="240" height="56" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.2"/>
+        <text x="916" y="338" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">⑧ B 拿到 A'，B 完成</text>
+        <text x="916" y="356" fill="#94a3b8" font-size="8" text-anchor="middle">完整 B 进一级缓存</text>
+
+        <!-- Phase 4 -->
+        <rect x="30" y="384" width="104" height="56" rx="6" fill="rgba(30, 41, 59, 0.6)" stroke="#475569" stroke-width="1"/>
+        <text x="82" y="407" fill="#cbd5e1" font-size="8" font-weight="600" text-anchor="middle">阶段 4</text>
+        <text x="82" y="423" fill="#94a3b8" font-size="8" text-anchor="middle">回到 A 收尾</text>
+        <rect x="154" y="384" width="260" height="56" rx="6" fill="#0f172a"/>
+        <rect x="154" y="384" width="260" height="56" rx="6" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="284" y="406" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">⑨ A 拿到完整 B，注入完成</text>
+        <text x="284" y="424" fill="#94a3b8" font-size="8" text-anchor="middle">初始化（init / Aware / 后置处理器）</text>
+        <line x1="414" y1="412" x2="446" y2="412" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <rect x="450" y="384" width="250" height="56" rx="6" fill="#0f172a"/>
+        <rect x="450" y="384" width="250" height="56" rx="6" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.2"/>
+        <text x="575" y="406" fill="white" font-size="8.5" font-weight="600" text-anchor="middle">⑩ A' 进一级缓存</text>
+        <text x="575" y="424" fill="#94a3b8" font-size="8" text-anchor="middle">清理二三级中的 A</text>
+        <line x1="700" y1="412" x2="732" y2="412" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <rect x="736" y="384" width="300" height="56" rx="6" fill="rgba(6, 78, 59, 0.3)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="886" y="406" fill="#34d399" font-size="9" font-weight="700" text-anchor="middle">✅ B 持有的 A' == 容器暴露的 A'</text>
+        <text x="886" y="424" fill="#94a3b8" font-size="8" text-anchor="middle">同一个引用，事务/异步代理不失效</text>
+
+        <!-- ============ Section 3: why not two levels ============ -->
+        <text x="30" y="470" fill="white" font-size="11" font-weight="600">③ 为什么二级不够 —— AOP 代理一致性（本题真正考点）</text>
+
+        <rect x="30" y="486" width="520" height="190" rx="8" fill="#0f172a"/>
+        <rect x="30" y="486" width="520" height="190" rx="8" fill="rgba(136, 19, 55, 0.15)" stroke="#fb7185" stroke-width="1.2"/>
+        <text x="290" y="510" fill="#fb7185" font-size="10" font-weight="600" text-anchor="middle">反例：只有二级缓存</text>
+        <text x="50" y="534" fill="#fecdd3" font-size="8.5">1. A 实例化 → 原始 A 直接进二级缓存（没有工厂）</text>
+        <text x="50" y="556" fill="#fecdd3" font-size="8.5">2. B 注入原始 A → B 完成</text>
+        <text x="50" y="578" fill="#fecdd3" font-size="8.5">3. A 继续初始化 → 匹配 @Transactional 切点 → 生成代理 A'</text>
+        <text x="50" y="600" fill="#fecdd3" font-size="8.5">4. 代理 A' 进一级缓存（容器最终暴露 A'）</text>
+        <rect x="50" y="616" width="480" height="42" rx="4" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1"/>
+        <text x="290" y="634" fill="white" font-size="8.5" font-weight="700" text-anchor="middle">❌ B 永远持有原始 A ≠ 代理 A'</text>
+        <text x="290" y="650" fill="#fecdd3" font-size="8" text-anchor="middle">B 调 A 的方法不经过代理 → 事务/@Async 失效</text>
+
+        <rect x="570" y="486" width="500" height="190" rx="8" fill="#0f172a"/>
+        <rect x="570" y="486" width="500" height="190" rx="8" fill="rgba(6, 78, 59, 0.15)" stroke="#34d399" stroke-width="1.2"/>
+        <text x="820" y="510" fill="#34d399" font-size="10" font-weight="600" text-anchor="middle">正解：三级缓存（工厂延迟决策）</text>
+        <text x="590" y="534" fill="#a7f3d0" font-size="8.5">1. 三级存的是工厂，不急着定原始还是代理</text>
+        <text x="590" y="556" fill="#a7f3d0" font-size="8.5">2. B 真正需要早期引用时才执行工厂 → 代理 A' 定型</text>
+        <text x="590" y="578" fill="#a7f3d0" font-size="8.5">3. A' 进二级；A 完成后，同一个 A' 进一级</text>
+        <text x="590" y="600" fill="#a7f3d0" font-size="8.5">4. 没有 AOP 时工厂直接返回原始对象，同样一致</text>
+        <rect x="590" y="616" width="460" height="42" rx="4" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1"/>
+        <text x="820" y="634" fill="white" font-size="8.5" font-weight="700" text-anchor="middle">✅ B 拿到的 == 容器最终暴露的</text>
+        <text x="820" y="650" fill="#a7f3d0" font-size="8" text-anchor="middle">要么都是代理，要么都是原始 —— 引用同一</text>
+
+        <!-- ============ Legend ============ -->
+        <text x="30" y="706" fill="white" font-size="10" font-weight="600">Legend</text>
+        <rect x="90" y="698" width="16" height="10" rx="2" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1"/>
+        <text x="112" y="706" fill="#94a3b8" font-size="8">一级/成品</text>
+        <rect x="180" y="698" width="16" height="10" rx="2" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="202" y="706" fill="#94a3b8" font-size="8">二级/早期引用</text>
+        <rect x="290" y="698" width="16" height="10" rx="2" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="312" y="706" fill="#94a3b8" font-size="8">三级/工厂</text>
+        <rect x="390" y="698" width="16" height="10" rx="2" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1"/>
+        <text x="412" y="706" fill="#94a3b8" font-size="8">普通步骤</text>
+        <text x="490" y="706" fill="#475569" font-size="8">构造器注入 / prototype 的循环依赖三级缓存救不了（实例化前就要依赖）</text>
+      </svg>
+    </div>
+
+    <!-- Info Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>三级各存什么</h3>
+        </div>
+        <ul>
+          <li>• 一级：完整 Bean（对外暴露）</li>
+          <li>• 二级：工厂执行后的早期引用</li>
+          <li>• 三级：ObjectFactory（延迟决策）</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>为什么必须三级</h3>
+        </div>
+        <ul>
+          <li>• 二级能解普通循环，解不了 AOP 一致性</li>
+          <li>• 工厂把"是否代理"推迟到被需要那一刻</li>
+          <li>• B 拿到的 == 容器最终暴露的引用</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>救不了的情况</h3>
+        </div>
+        <ul>
+          <li>• 构造器注入循环 → BeanCurrentlyInCreationException</li>
+          <li>• prototype 作用域（不进缓存）</li>
+          <li>• Spring Boot 2.6+ 默认禁止循环依赖</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <p class="footer">
+      飞猪 P6 · Q20 Spring 循环依赖 · 对应实验 q20.Q20CircularDependencyLab（三级缓存 true / 二级反例 false）
+    </p>
+  </div>
+
+  <script>
+    async function copyAsImage(btn) {
+      const orig = btn.textContent;
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = '✓ Copied!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPNG(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const link = document.createElement('a');
+        link.download = 'q20-three-level-cache.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPDF(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save('q20-three-level-cache.pdf');
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+  </script>
+</body>
+</html>
