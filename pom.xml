@@ -14,4 +14,24 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
+    <dependencies>
+        <!-- Q4 锁升级实验：打印对象头 mark word -->
+        <dependency>
+            <groupId>org.openjdk.jol</groupId>
+            <artifactId>jol-core</artifactId>
+            <version>0.10</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!-- 统一运行方式: mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.lab.q01.Q01HashMapLab -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>1.6.0</version>
+            </plugin>
+        </plugins>
+    </build>
+
 </project>

@@ -1,0 +1,3 @@
+dubbo=edu.zjnu.lab.q23.protocol.DubboProtocol
+http=edu.zjnu.lab.q23.protocol.HttpProtocol
+wrapper=edu.zjnu.lab.q23.protocol.LogWrapper
