@@ -50,6 +50,16 @@
 >
 > 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
 
+**【配图 · JDK7 头插法并发扩容成环（动图 · 10 帧逐步播放）】**
+
+![JDK7 头插法并发扩容成环（静态帧：第 7 帧 · 关键一箭环焊死）](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q01-jdk7-cycle.png)
+
+> 🎬 **动图版**（浏览器打开 → ▶ 自动播放 / ←→ 逐帧 / 可导出 PNG·PDF）：[fliggyp6/diagrams/q01-jdk7-cycle.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q01-jdk7-cycle.html)
+>
+> 成环的本质是**时间顺序错了**（T1 拿旧引用醒来时，T2 已把链序反转），静态图只能拍下"环焊死"一瞬，强烈建议逐帧看完 10 步。选取的 key 是 33 和 1——它们 %16 同桶、%32 也同桶，搬完仍同桶是成环前提。
+>
+> 📌 绝对路径注意事项同上一张图
+
 ---
 
 ### Q2 · ConcurrentHashMap 1.7 vs 1.8（⭐⭐⭐⭐⭐）
