@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JDK7 头插法 · 并发扩容成环动图</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #020617;
+    font-family: 'JetBrains Mono', monospace;
+    color: #e2e8f0;
+    display: flex;
+    justify-content: center;
+    padding: 24px 16px;
+    min-height: 100vh;
+  }
+  .container { width: 1320px; max-width: 100%; }
+
+  /* ---------- header ---------- */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot {
+    width: 12px; height: 12px; border-radius: 50%;
+    background: #fb7185;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(251,113,133,0.6); }
+    70%  { box-shadow: 0 0 0 10px rgba(251,113,133,0); }
+    100% { box-shadow: 0 0 0 0 rgba(251,113,133,0); }
+  }
+  .header h1 { font-size: 21px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 13px; color: #7d8db0; margin-top: 5px; }
+  .toolbar { position: relative; }
+  .toolbar-toggle {
+    background: none; border: 1px solid #334155; color: #94a3b8;
+    border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 16px;
+    font-family: inherit;
+  }
+  .toolbar-toggle:hover { color: #e2e8f0; border-color: #475569; }
+  .toolbar-actions { display: none; position: absolute; right: 0; top: 38px; gap: 6px; z-index: 10; }
+  .toolbar.open .toolbar-actions { display: flex; }
+  .toolbar-actions button {
+    background: #0f172a; border: 1px solid #334155; color: #cbd5e1;
+    border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px;
+    font-family: inherit;
+  }
+  .toolbar-actions button:hover { color: #f1f5f9; border-color: #64748b; }
+  @media print { .toolbar { display: none !important; } }
+
+  /* ---------- player controls ---------- */
+  .controls {
+    display: flex; align-items: center; gap: 12px;
+    margin-bottom: 12px; flex-wrap: wrap;
+  }
+  .controls button {
+    background: #0f172a; border: 1px solid #334155; color: #e2e8f0;
+    border-radius: 6px; padding: 7px 16px; cursor: pointer; font-size: 14px;
+    font-family: inherit;
+  }
+  .controls button:hover { border-color: #64748b; }
+  .controls button:disabled { opacity: 0.35; cursor: default; }
+  .step-ind { font-size: 14px; color: #cbd5e1; min-width: 70px; }
+  .key-hint { font-size: 12px; color: #64748b; }
+  .dots { display: flex; gap: 7px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+  .dots button {
+    width: 14px; height: 14px; border-radius: 50%; padding: 0;
+    background: #1e293b; border: 1px solid #334155; cursor: pointer;
+  }
+  .dots button.cur { background: #fb7185; border-color: #fb7185; }
+  .dots button:hover { border-color: #fb7185; }
+
+  /* ---------- diagram card ---------- */
+  .diagram-card {
+    border: 1px solid #1e293b; border-radius: 12px;
+    background: #020617; overflow: hidden; margin-bottom: 18px;
+  }
+  svg.diagram { display: block; width: 100%; height: auto; }
+
+  /* ---------- summary cards ---------- */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+  .card {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid #1e293b; border-radius: 10px; padding: 16px 18px;
+  }
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+  .card-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; }
+  .card ul { list-style: none; }
+  .card li { font-size: 13px; color: #a5b4cc; line-height: 1.75; }
+  .card li b { color: #e2e8f0; font-weight: 600; }
+
+  .footer {
+    font-size: 12px; color: #5b6b8c;
+    display: flex; justify-content: space-between; padding-top: 4px;
+  }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>Q1 · JDK7 头插法 × 并发扩容成环 —— 逐帧演示</h1>
+        <div class="subtitle">transfer() 头插 · 两线程共享 Entry · 死循环的诞生全过程（点 ▶ 自动播放，或 ←/→ 逐帧）</div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbar').classList.toggle('open')">⋯</button>
+      <div class="toolbar-actions">
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="btn-reset" title="回到第 0 帧">⏮</button>
+    <button id="btn-prev" title="上一帧">◀</button>
+    <button id="btn-play" title="自动播放">▶ 播放</button>
+    <button id="btn-next" title="下一帧">▶|</button>
+    <span class="step-ind" id="step-ind">1 / 10</span>
+    <span class="key-hint">← → 键翻页 · 每帧对应源码里的一小步</span>
+    <div class="dots" id="dots"></div>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1160 636" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+        <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#8ea3bd"/>
+        </marker>
+        <marker id="arrRose" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185"/>
+        </marker>
+        <marker id="arrCyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/>
+        </marker>
+        <marker id="arrAmber" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24"/>
+        </marker>
+      </defs>
+
+      <rect width="1160" height="636" fill="#020617"/>
+      <rect width="1160" height="636" fill="url(#grid)"/>
+
+      <!-- ===== 线程徽章 ===== -->
+      <g id="th1">
+        <rect x="40" y="24" width="165" height="50" rx="8" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="122" y="46" text-anchor="middle" fill="#22d3ee" font-size="14" font-weight="600">线程 1 (T1)</text>
+        <text x="122" y="66" text-anchor="middle" fill="#a5b4cc" font-size="11" id="th1-state">等待扩容</text>
+      </g>
+      <g id="th2">
+        <rect x="225" y="24" width="165" height="50" rx="8" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="307" y="46" text-anchor="middle" fill="#34d399" font-size="14" font-weight="600">线程 2 (T2)</text>
+        <text x="307" y="66" text-anchor="middle" fill="#a5b4cc" font-size="11" id="th2-state">等待扩容</text>
+      </g>
+      <text x="1120" y="52" text-anchor="end" fill="#64748b" font-size="12">JDK 7 · transfer()</text>
+
+      <!-- ===== 左：老表 ===== -->
+      <g>
+        <rect x="40" y="100" width="250" height="318" rx="10" fill="rgba(30,41,59,0.35)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4,4"/>
+        <text x="165" y="128" text-anchor="middle" fill="#f1f5f9" font-size="14" font-weight="600">老表 table (cap=16)</text>
+        <text x="165" y="148" text-anchor="middle" fill="#8ea3bd" font-size="11">两线程先后触发 resize，都要搬它</text>
+        <rect x="70" y="164" width="190" height="42" rx="6" fill="#0f172a" stroke="#475569" stroke-width="1"/>
+        <text x="165" y="191" text-anchor="middle" fill="#f1f5f9" font-size="14">桶1 : 33 → 1</text>
+        <text x="165" y="232" text-anchor="middle" fill="#a5b4cc" font-size="11">JDK7 的 put 也是头插：</text>
+        <text x="165" y="251" text-anchor="middle" fill="#a5b4cc" font-size="11">先放 1 再放 33，链变 33→1</text>
+        <text x="165" y="279" text-anchor="middle" fill="#8ea3bd" font-size="11">33&amp;15 = 1&amp;15 = 1（旧桶同）</text>
+        <text x="165" y="298" text-anchor="middle" fill="#8ea3bd" font-size="11">33&amp;31 = 1&amp;31 = 1（新桶同）</text>
+        <text x="165" y="326" text-anchor="middle" fill="#8ea3bd" font-size="11">→ 搬完仍同桶，成环的前提</text>
+        <text x="165" y="362" text-anchor="middle" fill="#64748b" font-size="11" id="old-state"></text>
+        <text x="165" y="381" text-anchor="middle" fill="#64748b" font-size="11" id="old-state2"></text>
+      </g>
+
+      <!-- ===== 中：共享节点舞台 ===== -->
+      <text x="580" y="118" text-anchor="middle" fill="#7d8db0" font-size="12">共享的 Entry 节点（两线程改的是同一批对象）</text>
+
+      <!-- e / next 指针徽章 -->
+      <g id="badge-e">
+        <rect x="344" y="138" width="112" height="38" rx="6" fill="rgba(8,51,68,0.5)" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="400" y="163" text-anchor="middle" fill="#22d3ee" font-size="14" font-weight="600" id="badge-e-txt">e</text>
+      </g>
+      <g id="badge-next">
+        <rect x="524" y="138" width="112" height="38" rx="6" fill="rgba(120,53,15,0.4)" stroke="#fbbf24" stroke-width="1.2"/>
+        <text x="580" y="163" text-anchor="middle" fill="#fbbf24" font-size="14" font-weight="600" id="badge-next-txt">next</text>
+      </g>
+
+      <!-- 节点 33 -->
+      <g>
+        <rect x="348" y="238" width="104" height="64" rx="8" fill="#0f172a"/>
+        <rect x="348" y="238" width="104" height="64" rx="8" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="400" y="267" text-anchor="middle" fill="#f1f5f9" font-size="18" font-weight="700">Entry 33</text>
+        <text x="400" y="289" text-anchor="middle" fill="#a5b4cc" font-size="10">key=33 · hash&amp;15=1</text>
+      </g>
+      <!-- 节点 1 -->
+      <g>
+        <rect x="608" y="238" width="104" height="64" rx="8" fill="#0f172a"/>
+        <rect x="608" y="238" width="104" height="64" rx="8" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="660" y="267" text-anchor="middle" fill="#f1f5f9" font-size="18" font-weight="700">Entry 1</text>
+        <text x="660" y="289" text-anchor="middle" fill="#a5b4cc" font-size="10">key=1 · hash&amp;15=1</text>
+      </g>
+      <!-- null 桩 -->
+      <text x="764" y="278" fill="#64748b" font-size="14" font-style="italic">null</text>
+
+      <!-- 动态箭头层 -->
+      <g id="stage-arrows"></g>
+
+      <text x="580" y="350" text-anchor="middle" fill="#7d8db0" font-size="11">实线 = .next 指针的真实指向（随时可能被两个线程改写）</text>
+      <text x="580" y="372" text-anchor="middle" fill="#fb7185" font-size="14" font-weight="600" id="ring-warn" opacity="0">⛔ 环已成：33.next=1 且 1.next=33，谁进来谁转圈</text>
+
+      <!-- ===== 右：新表 ===== -->
+      <g>
+        <rect x="870" y="100" width="250" height="318" rx="10" fill="rgba(30,41,59,0.35)" stroke="#a78bfa" stroke-width="1" stroke-dasharray="4,4"/>
+        <text x="995" y="128" text-anchor="middle" fill="#f1f5f9" font-size="14" font-weight="600">新表 newTable (cap=32)</text>
+        <text x="995" y="148" text-anchor="middle" fill="#8ea3bd" font-size="11">两线程各建了一张，但 Entry 共享</text>
+        <rect x="900" y="164" width="190" height="42" rx="6" fill="#0f172a" stroke="#475569" stroke-width="1"/>
+        <text x="995" y="191" text-anchor="middle" fill="#f1f5f9" font-size="14" id="new-bucket">桶1 : （空）</text>
+        <text x="995" y="232" text-anchor="middle" fill="#8ea3bd" font-size="11" id="new-owner"></text>
+        <text x="995" y="264" text-anchor="middle" fill="#a5b4cc" font-size="11">头插三步（JDK7 transfer）：</text>
+        <text x="995" y="283" text-anchor="middle" fill="#a5b4cc" font-size="11">② e.next = 新桶当前头</text>
+        <text x="995" y="302" text-anchor="middle" fill="#a5b4cc" font-size="11">③ e 自己当头</text>
+        <text x="995" y="330" text-anchor="middle" fill="#8ea3bd" font-size="11">效果：每搬一个，链序反转一次</text>
+      </g>
+
+      <!-- ===== 下左：源码面板 ===== -->
+      <g>
+        <rect x="40" y="440" width="520" height="178" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+        <text x="60" y="466" fill="#8ea3bd" font-size="11">JDK 7 · transfer()（do-while 逐节点搬家）</text>
+        <rect id="code-hl" x="52" y="474" width="496" height="24" rx="4" fill="rgba(34,211,238,0.14)" opacity="0"/>
+        <text x="64" y="490" fill="#7d8db0" font-size="13">do {</text>
+        <text x="72" y="516" fill="#f1f5f9" font-size="13">① Entry next = e.next;      <tspan fill="#7d8db0">// 记下下一个</tspan></text>
+        <text x="72" y="542" fill="#f1f5f9" font-size="13">② e.next = newTable[i];     <tspan fill="#7d8db0">// 头插: 接到新桶头上</tspan></text>
+        <text x="72" y="568" fill="#f1f5f9" font-size="13">③ newTable[i] = e;          <tspan fill="#7d8db0">// 自己当头</tspan></text>
+        <text x="72" y="594" fill="#f1f5f9" font-size="13">④ e = next;</text>
+        <text x="64" y="612" fill="#7d8db0" font-size="13">} while (e != null);</text>
+      </g>
+
+      <!-- ===== 下右：解说面板 ===== -->
+      <g>
+        <rect x="588" y="440" width="532" height="178" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+        <text x="608" y="466" fill="#8ea3bd" font-size="11" id="cap-title">解说</text>
+        <text x="608" y="494" fill="#f8fafc" font-size="14" font-weight="600" id="cap-0"></text>
+        <text x="608" y="520" fill="#cbd5e1" font-size="13" id="cap-1"></text>
+        <text x="608" y="546" fill="#cbd5e1" font-size="13" id="cap-2"></text>
+        <text x="608" y="572" fill="#cbd5e1" font-size="13" id="cap-3"></text>
+        <text x="608" y="598" fill="#a5b4cc" font-size="13" id="cap-4"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#fb7185"></div><h3>成环三要素（缺一不可）</h3></div>
+      <ul>
+        <li>• <b>头插</b>：T2 独自搬完，链序已反转（33→1 变 1→33）</li>
+        <li>• <b>节点共享</b>：两线程 newTable 各一张，Entry 对象同一批</li>
+        <li>• <b>挂起时机</b>：T1 在①之后睡，醒来拿着旧 e / next 从②继续，33 被搬第二次</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#34d399"></div><h3>JDK8 为什么修好了</h3></div>
+      <ul>
+        <li>• <b>尾插保序</b>（preserve order）：搬家不反转链序，旧引用不再指错方向</li>
+        <li>• 扩容按 <b>hash &amp; oldCap</b> 拆两条：0 留原位、1 去 原位+oldCap</li>
+        <li>• 单线程下每个节点只被搬一次，结构性地成不了环</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#a78bfa"></div><h3>但 HashMap 仍不安全</h3></div>
+      <ul>
+        <li>• 并发 put 仍会<b>丢数据</b>、size 不准、遍历时 CME</li>
+        <li>• 面试收尾：<b>并发场景用 ConcurrentHashMap</b>（CAS + synchronized 桶级锁）</li>
+        <li>• 死循环是 1.7 的病，数据不一致是 1.7 / 1.8 共有的病</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>q01 · JDK7 头插法并发扩容成环 · 逐帧演示</span>
+    <span>飞猪 P6 Java 面试特训 · 配套实验 Q01HashMapLab</span>
+  </div>
+</div>
+
+<script>
+/* ============ 帧数据 ============ */
+const F = [
+{ // 0
+  th1:'idle', th2:'idle', line:-1,
+  arrows:[['33','1',0],['1','null',0]], e:null, next:null, head:null, owner:'', ring:false,
+  title:'第 0 帧 · 开局',
+  cap:['老表桶1挂着 33 → 1，两个线程同时 put，都触发了扩容。',
+       '为什么是 33 和 1？它们 %16 同桶、%32 也同桶——',
+       '搬完还会挤在同一个桶里，这是能成环的前提。',
+       '接下来看 T1 怎么在错误的时间睡去，又在错误的地点醒来。']
+},
+{ // 1
+  th1:'sleep', th2:'idle', line:0,
+  arrows:[['33','1',0],['1','null',0]], e:'33', next:'1', head:null, owner:'', ring:false,
+  title:'第 1 帧 · T1 执行①后被挂起',
+  cap:['T1 走到①：next = e.next，记下 next=1（e=33）。',
+       '就在这一步之后，T1 被调度挂起（时间片用完）。',
+       '它栈里躺着 e=33、next=1 —— 这两个值此刻还是对的。']
+},
+{ // 2
+  th1:'sleep', th2:'run', line:1,
+  arrows:[['33','null',0],['1','null',0]], e:null, next:null, head:'33', owner:'T2 正在搬', ring:false,
+  title:'第 2 帧 · T2 搬 33（头插）',
+  cap:['T2 全速开跑。搬 33：② 33.next = 新桶当前头(null)，③ 33 当头。',
+       '注意：33→1 这条箭头被抹掉了，节点 1 悬空（不属于任何桶）。',
+       'Entry 是共享对象——T2 改箭头，T1 醒来后看到的也是改过的。']
+},
+{ // 3
+  th1:'sleep', th2:'run', line:1,
+  arrows:[['1','33',0],['33','null',0]], e:null, next:null, head:'1', owner:'T2 正在搬', ring:false,
+  title:'第 3 帧 · T2 搬 1 —— 链序反转！',
+  cap:['T2 搬 1：① next=1.next=null，② 1.next=新桶头(33)，③ 1 当头。',
+       '新表桶1 = 1 → 33。看到没：原来是 33→1，头插搬完变成 1→33。',
+       '头插法的个性：搬一条链，等于把它反转一条。']
+},
+{ // 4
+  th1:'sleep', th2:'done', line:-1,
+  arrows:[['1','33',0],['33','null',0]], e:'33', next:'1', head:'1', owner:'T2 完成，已交接 table', ring:false,
+  title:'第 4 帧 · T2 跑完，世界已变',
+  cap:['T2 跑完整个 transfer，新表交接为正式 table。',
+       '共享节点的真实状态：1→33→null。',
+       '而 T1 还在睡，栈里的 e=33、next=1 已经过期——',
+       '它醒来后会把 33 再搬一次，灾难的种子已经埋下。']
+},
+{ // 5
+  th1:'run', th2:'done', line:1,
+  arrows:[['1','33',0],['33','null',0]], e:'33', next:'1', head:'33', owner:'T1 在搬（自己的新表）', ring:false,
+  title:'第 5 帧 · T1 醒来 · 迭代1：搬 33',
+  cap:['T1 从②继续（①不会重做！），仍认为 e=33、next=1。',
+       '头插 33 进自己的新表：33.next=null，33 当头。',
+       '④ e = next = 1，进入迭代2。目前节点仍是 1→33→null。']
+},
+{ // 6
+  th1:'run', th2:'done', line:0,
+  arrows:[['1','33',0],['33','null',0]], e:'1', next:'33', head:'1', owner:'T1 在搬（自己的新表）', ring:false,
+  title:'第 6 帧 · 迭代2：搬 1，读到新链！',
+  cap:['e=1。① 重读 next = 1.next = 33 —— 读到的是 T2 反转后的链！',
+       '头插 1：1.next=新桶头(33)，没变化；1 当头。',
+       '④ e = next = 33 —— 33 居然要被搬第二次了。',
+       '每一次头插都在“反转”，两次反转叠加，环只差最后一箭。']
+},
+{ // 7
+  th1:'run', th2:'done', line:1,
+  arrows:[['33','1',2],['1','33',2]], e:'33', next:'null', head:'33', owner:'T1 在搬（自己的新表）', ring:true,
+  title:'第 7 帧 · 迭代3：关键一箭，环焊死',
+  cap:['e=33（第二次搬它）。① next = 33.next = null。',
+       '② 33.next = 新桶当前头 = 1 —— 就是这一箭。',
+       '此刻 33.next=1 且 1.next=33，环形链表诞生。',
+       '③ 33 当头。④ e = next = null → 循环条件 e!=null 不成立，正常退出。']
+},
+{ // 8
+  th1:'done', th2:'done', line:-1,
+  arrows:[['33','1',2],['1','33',2]], e:null, next:null, head:'33', owner:'T1 也“完成”', ring:true,
+  title:'第 8 帧 · 悄无声息地收工',
+  cap:['T1 心满意足地返回：do-while 正常结束，没有任何异常。',
+       '新表桶1 = 33 ⇄ 1 的无限环，就躺在 table 里。',
+       '毒已经下完，只等下一个倒霉蛋来查询。']
+},
+{ // 9
+  th1:'victim', th2:'victim', line:-1,
+  arrows:[['33','1',2],['1','33',2]], e:null, next:null, head:'33', owner:'带环的 table', ring:true,
+  title:'第 9 帧 · get 落进桶1：死循环',
+  cap:['任意线程 get/put，hash 落到桶1：',
+       'for (e = table[i]; e != null; e = e.next) —— 在环里永远出不去。',
+       '线程卡死、CPU 100%，这就是 JDK7 并发扩容死循环。',
+       'JDK8 改尾插保序 + 拆两条链，单线程下结构性成不了环；',
+       '但并发丢数据依旧，并发场景请用 ConcurrentHashMap。']
+}
+];
+
+/* ============ 渲染 ============ */
+const NS = 'http://www.w3.org/2000/svg';
+const $ = id => document.getElementById(id);
+const lineY = [516, 542, 568, 594];          // ①②③④ 的 y
+let cur = 0, timer = null;
+
+function drawArrows(list) {
+  const g = $('stage-arrows'); g.innerHTML = '';
+  list.forEach(([a, b, mode]) => {
+    // mode: 0 普通灰箭头, 2 环(rose 弧线)
+    const isRing = mode === 2;
+    const p = document.createElementNS(NS, 'path');
+    let d, mid;
+    if (isRing) {
+      if (a === '33') { // 33 → 1 上弧
+        d = 'M 452 242 C 482 190, 592 190, 612 242'; mid = [532, 200];
+      } else {          // 1 → 33 下弧
+        d = 'M 612 298 C 592 350, 482 350, 452 298'; mid = [532, 342];
+      }
+      p.setAttribute('d', d);
+      p.setAttribute('stroke', '#fb7185');
+      p.setAttribute('stroke-width', '2.6');
+      p.setAttribute('fill', 'none');
+      p.setAttribute('marker-end', 'url(#arrRose)');
+    } else {
+      const x1 = a === '33' ? 452 : 612;
+      let x2;
+      if (b === '33') x2 = 452; else if (b === '1') x2 = 612; else x2 = 758; // null
+      p.setAttribute('d', `M ${x1} 270 L ${x2 - (b==='null'?4:0)} 270`);
+      p.setAttribute('stroke', mode === 1 ? '#e2e8f0' : '#8ea3bd');
+      p.setAttribute('stroke-width', mode === 1 ? '2.6' : '2');
+      p.setAttribute('fill', 'none');
+      p.setAttribute('marker-end', 'url(#arr)');
+      mid = [(x1 + x2) / 2, 260];
+    }
+    g.appendChild(p);
+    const t = document.createElementNS(NS, 'text');
+    t.setAttribute('x', mid[0]); t.setAttribute('y', mid[1] - (isRing ? 5 : 0));
+    t.setAttribute('text-anchor', 'middle');
+    t.setAttribute('font-size', '11');
+    t.setAttribute('fill', isRing ? '#fb7185' : '#a5b4cc');
+    t.textContent = a + '.next';
+    g.appendChild(t);
+  });
+}
+
+function drawPtr() {
+  const be = $('badge-e'), g = $('stage-arrows');
+  [['e','33','#22d3ee','arrCyan'],['next','1','#fbbf24','arrAmber']].forEach(([kind, def, color, mk]) => {
+    const tgt = F[cur][kind];
+    const badge = kind === 'e' ? be : $('badge-next');
+    const txt = $(kind === 'e' ? 'badge-e-txt' : 'badge-next-txt');
+    if (!tgt) { badge.style.opacity = 0.15; txt.textContent = kind; return; }
+    badge.style.opacity = 1;
+    txt.textContent = kind + ' = ' + tgt;
+    const bx = kind === 'e' ? 400 : 580;
+    const tx = tgt === '33' ? 400 : tgt === '1' ? 660 : 764; // next=null 指向 null 桩
+    const ty = tgt === 'null' ? 264 : 238;
+    const ln = document.createElementNS(NS, 'path');
+    ln.setAttribute('d', `M ${bx} 176 C ${bx} 212, ${tx} 202, ${tx} ${ty - 4}`);
+    ln.setAttribute('stroke', color); ln.setAttribute('stroke-width', '2');
+    ln.setAttribute('fill', 'none'); ln.setAttribute('marker-end', `url(#${mk})`);
+    g.appendChild(ln);
+  });
+}
+
+const thState = {
+  idle:  ['等待扩容', '#a5b4cc'],
+  run:   ['▶ 运行中', '#22d3ee'],
+  sleep: ['💤 挂起(栈里存着 e,next)', '#fbbf24'],
+  done:  ['✓ 完成', '#34d399'],
+  victim:['⚠ 落入环中', '#fb7185'],
+};
+
+function render(i) {
+  const f = F[i]; cur = i;
+  // 线程
+  [['th1', f.th1], ['th2', f.th2]].forEach(([id, st]) => {
+    const [txt, col] = thState[st];
+    const el = $(id + '-state'); el.textContent = txt; el.setAttribute('fill', col);
+    $(id).querySelector('rect').setAttribute('opacity', st === 'idle' ? 0.45 : 1);
+  });
+  // 代码高亮
+  const hl = $('code-hl');
+  if (f.line >= 0) { hl.setAttribute('opacity', 1); hl.setAttribute('y', lineY[f.line] - 17); }
+  else hl.setAttribute('opacity', 0);
+  // 舞台
+  drawArrows(f.arrows); drawPtr();
+  $('ring-warn').setAttribute('opacity', f.ring ? 1 : 0);
+  // 新表
+  $('new-bucket').textContent = '桶1 : ' + (f.head === null ? '（空）' :
+      f.ring ? (f.head + ' ⇄ ' + (f.head === '33' ? '1' : '33') + '  ⛔ 环') :
+      chainText(f));
+  $('new-owner').textContent = f.owner;
+  // 老表状态
+  $('old-state').textContent = i >= 4 ? 'T2 已把 table 指向新表（左表作废）' : '';
+  $('old-state2').textContent = i >= 5 ? 'T1 还在搬它记忆里的旧链' : '';
+  // 解说
+  $('cap-title').textContent = '解说 · ' + f.title;
+  for (let k = 0; k < 5; k++) $('cap-' + k).textContent = f.cap[k] || '';
+  // 控件
+  $('step-ind').textContent = (i + 1) + ' / ' + F.length;
+  $('btn-prev').disabled = i === 0;
+  $('btn-next').disabled = i === F.length - 1;
+  document.querySelectorAll('#dots button').forEach((d, k) => d.classList.toggle('cur', k === i));
+}
+
+function chainText(f) {
+  if (f.head === '33') return '33';
+  if (f.head === '1') return '1 → 33';
+  return '';
+}
+
+/* ============ 控件 ============ */
+const dots = $('dots');
+F.forEach((_, k) => {
+  const b = document.createElement('button');
+  b.onclick = () => { stopPlay(); render(k); };
+  dots.appendChild(b);
+});
+$('btn-prev').onclick = () => { stopPlay(); if (cur > 0) render(cur - 1); };
+$('btn-next').onclick = () => { stopPlay(); if (cur < F.length - 1) render(cur + 1); };
+$('btn-reset').onclick = () => { stopPlay(); render(0); };
+$('btn-play').onclick = togglePlay;
+function togglePlay() {
+  if (timer) return stopPlay();
+  if (cur >= F.length - 1) render(0);
+  $('btn-play').textContent = '⏸ 暂停';
+  timer = setInterval(() => {
+    if (cur >= F.length - 1) return stopPlay();
+    render(cur + 1);
+  }, 2200);
+}
+function stopPlay() {
+  if (timer) { clearInterval(timer); timer = null; $('btn-play').textContent = '▶ 播放'; }
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { stopPlay(); if (cur < F.length - 1) render(cur + 1); }
+  if (e.key === 'ArrowLeft')  { stopPlay(); if (cur > 0) render(cur - 1); }
+});
+
+// 支持 #f=N 直接定位（截图 / 分享用）
+const m = location.hash.match(/f=(\d+)/);
+render(m ? Math.min(F.length - 1, +m[1]) : 0);
+
+/* ============ 导出工具条 ============ */
+function capture() {
+  const el = document.getElementById('report-container');
+  const r = el.getBoundingClientRect();
+  return html2canvas(document.body, {
+    x: r.left - 32, y: r.top - 32,
+    width: r.width + 64, height: r.height + 64,
+    scale: 2,
+    backgroundColor: '#020617',
+    ignoreElements: n => n.closest && n.closest('.toolbar')
+  });
+}
+function copyAsImage() {
+  capture().then(c => c.toBlob(b => navigator.clipboard.write([new ClipboardItem({ 'image/png': b })])));
+}
+function downloadPNG() {
+  capture().then(c => {
+    const a = document.createElement('a');
+    a.download = 'q01-jdk7-cycle.png'; a.href = c.toDataURL('image/png'); a.click();
+  });
+}
+function downloadPDF() {
+  capture().then(c => {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: c.width >= c.height ? 'l' : 'p', unit: 'px', format: [c.width, c.height] });
+    pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, c.width, c.height);
+    pdf.save('q01-jdk7-cycle.pdf');
+  });
+}
+</script>
+</body>
+</html>
