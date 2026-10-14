@@ -70,6 +70,8 @@
   .controls button:hover { border-color: #64748b; }
   .controls button:disabled { opacity: 0.35; cursor: default; }
   .step-ind { font-size: 14px; color: #cbd5e1; min-width: 70px; }
+  .frame-title { font-size: 14px; color: #a78bfa; font-weight: 700; }
+  .qmark { cursor: help; font-size: 15px; color: #7d8db0; }
   .key-hint { font-size: 12px; color: #64748b; }
   .dots { display: flex; gap: 7px; margin-left: auto; align-items: center; flex-wrap: wrap; }
   .dots button {
@@ -132,6 +134,8 @@
     <button id="btn-play" title="自动播放">▶ 播放</button>
     <button id="btn-next" title="下一帧">▶|</button>
     <span class="step-ind" id="step-ind">1 / 10</span>
+    <span class="frame-title" id="cap-title"></span>
+    <span class="qmark" id="qmark" title="">❓</span>
     <span class="key-hint">← → 键翻页 · 每帧对应源码里的一小步</span>
     <div class="dots" id="dots"></div>
   </div>
@@ -238,9 +242,9 @@
         <text x="995" y="330" text-anchor="middle" fill="#8ea3bd" font-size="11">效果：每搬一个，链序反转一次</text>
       </g>
 
-      <!-- ===== 下左：源码面板 ===== -->
+      <!-- ===== 下：源码面板（全宽） ===== -->
       <g>
-        <rect x="40" y="440" width="520" height="178" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+        <rect x="40" y="440" width="1080" height="178" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
         <text x="60" y="466" fill="#8ea3bd" font-size="11">JDK 7 · transfer()（do-while 逐节点搬家）</text>
         <rect id="code-hl" x="52" y="474" width="496" height="24" rx="4" fill="rgba(34,211,238,0.14)" opacity="0"/>
         <text x="64" y="490" fill="#7d8db0" font-size="13">do {</text>
@@ -249,17 +253,6 @@
         <text x="72" y="568" fill="#f1f5f9" font-size="13">③ newTable[i] = e;          <tspan fill="#7d8db0">// 自己当头</tspan></text>
         <text x="72" y="594" fill="#f1f5f9" font-size="13">④ e = next;</text>
         <text x="64" y="612" fill="#7d8db0" font-size="13">} while (e != null);</text>
-      </g>
-
-      <!-- ===== 下右：解说面板 ===== -->
-      <g>
-        <rect x="588" y="440" width="532" height="178" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
-        <text x="608" y="466" fill="#8ea3bd" font-size="11" id="cap-title">解说</text>
-        <text x="608" y="494" fill="#f8fafc" font-size="14" font-weight="600" id="cap-0"></text>
-        <text x="608" y="520" fill="#cbd5e1" font-size="13" id="cap-1"></text>
-        <text x="608" y="546" fill="#cbd5e1" font-size="13" id="cap-2"></text>
-        <text x="608" y="572" fill="#cbd5e1" font-size="13" id="cap-3"></text>
-        <text x="608" y="598" fill="#a5b4cc" font-size="13" id="cap-4"></text>
       </g>
     </svg>
   </div>
@@ -485,9 +478,9 @@ function render(i) {
   // 老表状态
   $('old-state').textContent = i >= 4 ? 'T2 已把 table 指向新表（左表作废）' : '';
   $('old-state2').textContent = i >= 5 ? 'T1 还在搬它记忆里的旧链' : '';
-  // 解说
-  $('cap-title').textContent = '解说 · ' + f.title;
-  for (let k = 0; k < 5; k++) $('cap-' + k).textContent = f.cap[k] || '';
+  // 解说：帧标题进控件栏，全文挂 ❓ 悬停提示，页面无文字块
+  $('cap-title').textContent = f.title;
+  $('qmark').title = f.cap.join('\n');
   // 控件
   $('step-ind').textContent = (i + 1) + ' / ' + F.length;
   $('btn-prev').disabled = i === 0;

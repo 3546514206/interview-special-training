@@ -53,14 +53,30 @@
   .controls button:hover { border-color: #64748b; }
   .controls button:disabled { opacity: 0.35; cursor: default; }
   .step-ind { font-size: 14px; color: #cbd5e1; min-width: 70px; }
+  .frame-title { font-size: 14px; color: #a78bfa; font-weight: 700; }
+  .qmark { cursor: help; font-size: 15px; color: #7d8db0; }
   .key-hint { font-size: 12px; color: #64748b; }
   .dots { display: flex; gap: 7px; margin-left: auto; align-items: center; flex-wrap: wrap; }
   .dots button { width: 14px; height: 14px; border-radius: 50%; padding: 0; background: #1e293b; border: 1px solid #334155; cursor: pointer; }
   .dots button.cur { background: #a78bfa; border-color: #a78bfa; }
   .dots button:hover { border-color: #a78bfa; }
 
-  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 18px; }
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
   svg.diagram { display: block; width: 100%; height: auto; }
+
+  /* 解说：默认收起，点标题才展开，页面保持干净 */
+  details.caption-box {
+    background: #0f172a; border: 1px solid #1e293b; border-radius: 10px;
+    padding: 10px 20px; margin-bottom: 16px;
+  }
+  details.caption-box summary {
+    cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px;
+  }
+  details.caption-box summary::-webkit-details-marker { display: none; }
+  details.caption-box summary::after { content: '▸ 展开解说'; color: #64748b; font-size: 12px; margin-left: auto; }
+  details.caption-box[open] summary::after { content: '▾ 收起'; }
+  .caption-title { font-size: 14px; color: #a78bfa; font-weight: 700; }
+  .caption-body { font-size: 15px; color: #cbd5e1; line-height: 1.85; margin-top: 10px; }
 
   .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
   .card { background: rgba(15, 23, 42, 0.6); border: 1px solid #1e293b; border-radius: 10px; padding: 16px 18px; }
@@ -101,12 +117,14 @@
     <button id="btn-play" title="自动播放">▶ 播放</button>
     <button id="btn-next" title="下一帧">▶|</button>
     <span class="step-ind" id="step-ind">1 / 11</span>
+    <span class="frame-title" id="cap-title"></span>
+    <span class="qmark" id="qmark" title="">❓</span>
     <span class="key-hint">← → 键翻页 · 每帧一小步</span>
     <div class="dots" id="dots"></div>
   </div>
 
   <div class="diagram-card">
-    <svg class="diagram" viewBox="0 0 1160 800" xmlns="http://www.w3.org/2000/svg">
+    <svg class="diagram" viewBox="0 0 1160 668" xmlns="http://www.w3.org/2000/svg">
       <defs>
         <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
           <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
@@ -120,13 +138,10 @@
         <marker id="arrHi" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
           <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24"/>
         </marker>
-        <marker id="arrCyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-          <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/>
-        </marker>
       </defs>
 
-      <rect width="1160" height="800" fill="#020617"/>
-      <rect width="1160" height="800" fill="url(#grid)"/>
+      <rect width="1160" height="668" fill="#020617"/>
+      <rect width="1160" height="668" fill="url(#grid)"/>
 
       <!-- ===== 源码面板 ===== -->
       <g>
@@ -186,8 +201,7 @@
         <text x="60" y="308" fill="#f1f5f9" font-size="14" font-weight="600">老表 table（cap=16）</text>
         <text x="876" y="308" text-anchor="end" fill="#8ea3bd" font-size="11" id="old-note">size=12 = threshold：压线未超</text>
         <g id="old-cells"></g>
-        <!-- 桶1 的链（挂在桶1下方） -->
-        <line x1="136" y1="368" x2="138" y2="386" stroke="#8ea3bd" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="136" y1="368" x2="138" y2="384" stroke="#8ea3bd" stroke-width="1.5" marker-end="url(#arr)"/>
         <g id="chips"></g>
         <rect id="e-ring" x="112" y="382" width="50" height="42" rx="8" fill="none" stroke="#22d3ee" stroke-width="2.2" opacity="0"/>
         <text x="560" y="410" text-anchor="middle" fill="#cbd5e1" font-size="14" font-weight="600" id="decide" opacity="0"></text>
@@ -211,18 +225,8 @@
         <text x="100" y="574" fill="#f1f5f9" font-size="14" font-weight="600">新表 newTable（cap=32）</text>
         <text x="900" y="574" text-anchor="end" fill="#8ea3bd" font-size="11">格子数翻倍 → 桶17 恰好落在老表一半宽度的位置</text>
         <g id="new-cells"></g>
-        <text x="112" y="646" text-anchor="middle" fill="#34d399" font-size="12" font-weight="700" id="new-lab-1">桶1 : 1→33</text>
-        <text x="512" y="646" text-anchor="middle" fill="#fbbf24" font-size="12" font-weight="700" id="new-lab-17">桶17 : 17→49</text>
-      </g>
-
-      <!-- ===== 解说面板 ===== -->
-      <g>
-        <rect x="40" y="662" width="1080" height="126" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
-        <text x="60" y="686" fill="#8ea3bd" font-size="11" id="cap-title">解说</text>
-        <text x="60" y="712" fill="#f8fafc" font-size="14" font-weight="600" id="cap-0"></text>
-        <text x="60" y="738" fill="#cbd5e1" font-size="13" id="cap-1"></text>
-        <text x="60" y="764" fill="#cbd5e1" font-size="13" id="cap-2"></text>
-        <text x="60" y="788" fill="#a5b4cc" font-size="13" id="cap-3"></text>
+        <text x="112" y="650" text-anchor="middle" fill="#34d399" font-size="12" font-weight="700" id="new-lab-1" opacity="0">桶1 : 1→33</text>
+        <text x="512" y="650" text-anchor="middle" fill="#fbbf24" font-size="12" font-weight="700" id="new-lab-17" opacity="0">桶17 : 17→49</text>
       </g>
     </svg>
   </div>
@@ -266,83 +270,72 @@ const F = [
 { code:-1, cap:'16', size:'12', thr:'12', pct:'75%', bin:null, e:null, moved:[], lo:[], hi:[],
   place:false, nc:{}, nt:false, oldNote:'size=12 = threshold：压线未超', gc:false,
   title:'第 0 帧 · 开局：12 件压线',
-  cap:['老表 cap=16。12 件东西：桶1 摞了 1→17→33→49（链长4），桶2~9 各 1 件。',
-       'size=12 = threshold（16×0.75）——满的程度 12/16 = 75%，刚好压线。',
-       '触发条件是 &gt;（严格大于）：12 &gt; 12 不成立，所以此刻还不扩。',
+  note:['老表 cap=16，桶1 摞了 1→17→33→49，桶2~9 各 1 件：size=12 = threshold，满的程度 75%。',
+       '触发条件是严格大于：12 > 12 不成立，此刻还不扩。',
        '所有数字来自实验 5 的真实输出。'] },
 { code:0, cap:'16', size:'13', thr:'12', pct:'81%', bin:null, e:null, moved:[], lo:[], hi:[],
   place:false, nc:{}, nt:false, oldNote:'第13件已进桶10 · 81% 短暂超载', gc:false,
   title:'第 1 帧 · 第 13 次 put 触发',
-  cap:['put(key=10)：key 10 先正常落进桶 10，然后 putVal 末行判断：',
-       '++size = 13 &gt; threshold = 12 成立 → 调 resize()。',
-       '注意顺序：先插元素、后判断——扩容发生在这次 put 的内部。',
-       '扩容前的一瞬间，16 格里装着 13 件（81%），随后立刻翻倍压回。'] },
+  note:['put(key=10)：key 10 先落进桶 10，然后 putVal 末行判断 ++size=13 > 12 成立，调 resize()。',
+       '先插元素、后判断——扩容发生在这次 put 的内部。',
+       '扩容前一瞬 16 格装 13 件（81%），随后立刻翻倍压回。'] },
 { code:2, cap:'16→32', size:'13', thr:'12→24', pct:'41%', bin:null, e:null, moved:[], lo:[], hi:[],
   place:false, nc:{}, nt:true, oldNote:'新表已造好，东西还都在老表', gc:false,
   title:'第 2 帧 · 定新尺寸，造空新表',
-  cap:['resize() 开场三件事：newCap = 16&lt;&lt;1 = 32，newThr = 12&lt;&lt;1 = 24，',
-       'new Node[32] 造一张全空的新表挂到 table。',
-       '此刻新表全空、老表原封未动——东西还睡在老表里。',
-       'JDK8 没有后台线程搬家，就是当前线程在这次 put 里一口气搬完。'] },
+  note:['resize() 开场：newCap = 16<<1 = 32，newThr = 12<<1 = 24，new Node[32] 造全空新表。',
+       '此刻新表全空、老表原封未动。',
+       '没有后台线程搬家，就是当前线程在这次 put 里一口气搬完。'] },
 { code:4, cap:'32', size:'13', thr:'24', pct:'41%', bin:{k:1,bits:'000001',hi:false}, e:1, moved:[], lo:[1], hi:[],
   place:false, nc:{}, nt:true, oldNote:'搬家循环 · 逐节点问一句', gc:false,
   title:'第 3 帧 · 桶1 的 e=1 → lo 链',
-  cap:['开始搬桶1 的链，逐节点只问一句：hash &amp; 16（oldCap）= ？',
-       'e=1：二进制 000001，16 那一位是 0 → 尾插进 lo 链。',
-       '第一个节点既是头也是尾：loHead = loTail = 1。',
-       '右上二进制面板：亮块就是 16 那一位，它决定去留。'] },
+  note:['搬桶1 的链，逐节点只问一句：hash & 16 = ？',
+       'e=1：二进制 000001，16 那一位是 0 → 尾插进 lo 链，loHead = loTail = 1。',
+       '右上二进制面板：亮块就是判决位。'] },
 { code:4, cap:'32', size:'13', thr:'24', pct:'41%', bin:{k:17,bits:'010001',hi:true}, e:17, moved:[1], lo:[1], hi:[17],
   place:false, nc:{}, nt:true, oldNote:'搬家循环 · 1 已进 lo', gc:false,
   title:'第 4 帧 · e=17 → hi 链',
-  cap:['e=17：010001，16 那一位是 1 → 尾插进 hi 链。',
-       '1 和 17 差在哪？就差 16 这一位——扩容后它俩注定分家。',
-       '旧下标 hash&amp;15 相同（都是 1），新下标 hash&amp;31 差 16。',
-       '这就是“原位 或 原位+oldCap”的全部秘密。'] },
+  note:['e=17：010001，16 那一位是 1 → 尾插进 hi 链。',
+       '1 和 17 就差 16 这一位：旧下标 &15 都是 1，新下标 &31 差 16。',
+       '这就是「原位 或 原位+oldCap」的全部秘密。'] },
 { code:4, cap:'32', size:'13', thr:'24', pct:'41%', bin:{k:33,bits:'100001',hi:false}, e:33, moved:[1,17], lo:[1,33], hi:[17],
   place:false, nc:{}, nt:true, oldNote:'搬家循环 · 尾插不反转', gc:false,
   title:'第 5 帧 · e=33 → lo，尾插保序',
-  cap:['e=33：100001，16 那一位是 0 → lo。',
-       '尾插：接在 loTail（节点1）后面，lo 链 = 1→33。',
-       '顺序没反！老表里 1 在 33 前面，新链里还是 1 在前面。',
-       'JDK7 头插在这一步会把链反转——为另一张动图的悲剧埋下伏笔。'] },
+  note:['e=33：100001，16 那一位是 0 → lo，尾插接在 1 后面：lo = 1→33。',
+       '顺序没反！老表里 1 在 33 前面，新链里还是——尾插保序。',
+       'JDK7 头插在这一步会把链反转，为另一张动图埋下伏笔。'] },
 { code:4, cap:'32', size:'13', thr:'24', pct:'41%', bin:{k:49,bits:'110001',hi:true}, e:49, moved:[1,17,33], lo:[1,33], hi:[17,49],
   place:false, nc:{}, nt:true, oldNote:'桶1 分完：2+2', gc:false,
   title:'第 6 帧 · e=49 → hi，桶1 分完',
-  cap:['e=49：110001，16 位是 1 → hi，接在 17 后面：hi 链 = 17→49。',
-       '桶1 的 4 个节点分完：lo 两个（1,33）、hi 两个（17,49）。',
-       '尾插让两条新链都保持原相对顺序——注释里的 preserve order。',
-       '到此一条长链已经拆成两条短链，查询平均链长减半。'] },
+  note:['e=49：110001，16 位是 1 → hi，接在 17 后面：hi = 17→49。',
+       '桶1 分完：lo 两个（1,33）、hi 两个（17,49），长链拆成两条短链。',
+       '两条新链都保持原相对顺序——注释里的 preserve order。'] },
 { code:5, cap:'32', size:'13', thr:'24', pct:'41%', bin:null, e:null, moved:[1,17,33,49], lo:[1,33], hi:[17,49],
   place:true, nc:{'1':'1·33','17':'17·49'}, nt:true, oldNote:'lo→桶1 · hi→桶1+16', gc:false,
   title:'第 7 帧 · 归位：原位 / 原位+16',
-  cap:['loHead 放 newTab[1]（原位），hiHead 放 newTab[1+16=17]（原位+oldCap）。',
-       '为什么只有两种去处？新下标 hash&amp;31 只比旧下标 hash&amp;15 多看 16 那一位：',
-       '位=0 → 下标不变；位=1 → 下标恰好 +16。不用重新计算 hash。',
-       '下方新表里，桶17 正好落在老表宽度一半的位置——32 格对齐 16 格。'] },
+  note:['loHead 放 newTab[1]（原位），hiHead 放 newTab[1+16=17]（原位+oldCap）。',
+       '为什么只有两种去处？新下标 &31 只比旧下标 &15 多看 16 那一位：位=0 下标不变，位=1 恰好 +16。',
+       '不用重新计算 hash，位运算定去留。'] },
 { code:-1, cap:'32', size:'13', thr:'24', pct:'41%', bin:null, e:null, moved:[1,17,33,49], lo:[1,33], hi:[17,49],
   place:true, nc:{'1':'1·33','17':'17·49','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9','10':'10'},
   nt:true, oldNote:'其余桶原样平移', gc:false,
   title:'第 8 帧 · 其余桶：单节点直接放',
-  cap:['桶2~10 都是单节点，没有链可拆：hash &amp; 31 直接定位。',
-       'key 2~10 都小于 16，&amp;31 后还是自己 → 全部落回原下标。',
-       '整个扩容只有桶1 发生了“1 拆 2”，其它桶原样平移。',
-       '（若桶里是红黑树，split() 同样按 16 位分流，≤6 个节点还会退化回链表。）'] },
+  note:['桶2~10 都是单节点，没链可拆：hash & 31 直接定位，key 2~10 都落回原下标。',
+       '整个扩容只有桶1 发生了「1 拆 2」，其它桶原样平移。',
+       '（红黑树桶走 split() 同样分流，节点 ≤6 时退化回链表。）'] },
 { code:-1, cap:'32', size:'13', thr:'24', pct:'41%', bin:null, e:null, moved:[1,17,33,49], lo:[1,33], hi:[17,49],
   place:true, nc:{'1':'1·33','17':'17·49','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9','10':'10'},
   nt:true, oldNote:'已交接', gc:true,
   title:'第 9 帧 · 交接，老表整个 GC',
-  cap:['搬完交接：table 指向新表（第 2 帧就挂好了），resize 返回。',
+  note:['搬完交接：table 指向新表（第 2 帧就挂好了），resize 返回，这次 put 才真正结束。',
        '老表再无人引用，整体丢给 GC——源码里 oldTab[j]=null 顺手断链。',
-       '此刻：size=13、capacity=32、threshold=24。',
-       '这次 put 到这里才真正结束。'] },
+       '此刻 size=13、capacity=32、threshold=24。'] },
 { code:-1, cap:'32', size:'13', thr:'24', pct:'41%', bin:null, e:null, moved:[1,17,33,49], lo:[1,33], hi:[17,49],
   place:true, nc:{'1':'1·33','17':'17·49','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9','10':'10'},
   nt:true, oldNote:'稳定态：41%', gc:true,
   title:'第 10 帧 · 尾声：41%，均摊 O(1)',
-  cap:['满的程度 = 13/32 ≈ 41%——刚扩完，离新门槛 24 还很远。',
-       '下次触发在第 25 个 put：间隔 12→24→48，翻倍增长。',
-       '搬运总成本 ≈ n + n/2 + n/4 + … ≈ 2n，平摊到每次 put → 均摊 O(1)。',
-       '同场景若换 JDK7 头插：链被反转，并发下就是另一张动图的死循环。'] },
+  note:['满的程度 = 13/32 ≈ 41%——刚扩完，离新门槛 24 还很远。',
+       '下次触发在第 25 个 put：间隔 12→24→48 翻倍，搬运总成本 ≈ 2n，均摊 O(1)。',
+       '同场景换 JDK7 头插：链被反转，并发下就是另一张动图的死循环。'] },
 ];
 
 /* ============ 静态构件 ============ */
@@ -458,12 +451,11 @@ function render(i) {
     $('bin-res').setAttribute('fill', '#cbd5e1');
   }
   // 老表格内容
-  $('oc-1').textContent = i === 0 ? '4件↓' : '搬走中';
+  $('oc-1').textContent = i === 0 ? '4件↓' : (i >= 7 ? '已拆' : '搬走中');
   $('oc-10').textContent = i >= 1 ? '10' : '·';
   $('oc-1-box').setAttribute('opacity', i >= 7 ? 0.4 : 1);
   $('gc-mark').setAttribute('opacity', f.gc ? 1 : 0);
   $('gc-text').setAttribute('opacity', f.gc ? 1 : 0);
-  $('oldtab').setAttribute('opacity', 1);
   // 链 chips：已搬的变暗，当前 e 高亮
   KEYS.forEach(k => {
     const moved = f.moved.includes(k);
@@ -506,9 +498,11 @@ function render(i) {
   // 新表
   $('newtab').setAttribute('opacity', f.nt ? 1 : 0.12);
   for (let c = 0; c < 32; c++) $('nc-' + c).textContent = f.nc[c] || '';
-  // 解说
-  $('cap-title').textContent = '解说 · ' + f.title;
-  for (let k = 0; k < 4; k++) $('cap-' + k).innerHTML = f.cap[k] || '';
+  $('new-lab-1').setAttribute('opacity', f.place ? 1 : 0);
+  $('new-lab-17').setAttribute('opacity', f.place ? 1 : 0);
+  // 解说：帧标题进控件栏，全文挂 ❓ 悬停提示，页面无文字块
+  $('cap-title').textContent = f.title;
+  $('qmark').title = f.note.join('\n');
   // 控件
   $('step-ind').textContent = (i + 1) + ' / ' + F.length;
   $('btn-prev').disabled = i === 0;
