@@ -5,8 +5,10 @@
 统一运行方式（在项目根目录）：
 
 ```bash
-mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.lab.q01.Q01HashMapLab
+mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.fliggyp6.q01.Q01HashMapLab
 ```
+
+> **目录规则**：包名按岗位分层 `edu.zjnu.interview.<岗位>`，本仓库岗位 = `fliggyp6`（飞猪 P6 Java 后端）。以后新增岗位（如 `alibabap7`）平级新建目录，互不干扰。
 
 ## 实验索引
 
