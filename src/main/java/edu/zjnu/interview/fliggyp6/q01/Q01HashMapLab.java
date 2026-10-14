@@ -20,6 +20,7 @@ public class Q01HashMapLab {
         step1_powerOfTwoAndBitMod();
         step2_treeifyNeedsArray64();
         step3_resizeSplit();
+        step5_resizeObserve();
     }
 
     /** 1. 为什么容量取 2 的幂: (n-1)&hash == hash%n，但位运算更快 */
@@ -80,6 +81,29 @@ public class Q01HashMapLab {
         }
         printTableState(map, "数组64 + 同桶9个key");
         System.out.println(">> 面试点: 此时桶内节点类型是 TreeNode (红黑树), 查询 O(logN)\n");
+    }
+
+    /** 5. 观察一次完整扩容: 第13次put触发(putVal路径), 同链节点按 hash&oldCap 分流 */
+    static void step5_resizeObserve() throws Exception {
+        System.out.println("=== 实验5: 亲眼观察扩容 (第13次put, putVal路径) ===");
+        HashMap<Integer, Integer> map = new HashMap<>(16);
+
+        // 12 个 key: 1,17,33,49 在容量16下同落桶1 (Integer的hashCode=值本身, 小整数扰动后不变)
+        map.put(1, 1); map.put(17, 1); map.put(33, 1); map.put(49, 1);
+        for (int k = 2; k <= 9; k++) map.put(k, k);   // 8个 => 共12个, 到门槛
+
+        System.out.printf("第12个put后: size=%d threshold=12 数组=%d%n", map.size(), tableLen(map));
+        printTableState(map, "扩容前");
+
+        map.put(10, 10);  // 第13个: ++size=13 > 12 => resize, 16->32
+        System.out.printf("第13个put后: size=%d 数组=%d%n", map.size(), tableLen(map));
+        printTableState(map, "扩容后");
+
+        // 桶1那条链的4个key去哪了: hash&16==0 留原位, ==16 去桶1+16
+        for (int k : new int[]{1, 17, 33, 49}) {
+            System.out.printf("key %-3d hash&oldCap=%-2d 桶%d -> 桶%d%n", k, k & 16, k & 15, k & 31);
+        }
+        System.out.println(">> 面试点: 扩容=数组翻倍+老链拆两条(hash&oldCap分流), 免重新hash\n");
     }
 
     // ---------- 工具 ----------
