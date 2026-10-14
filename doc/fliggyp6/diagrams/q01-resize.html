@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JDK8 resize() 扩容逐帧演示</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #020617;
+    font-family: 'JetBrains Mono', monospace;
+    color: #e2e8f0;
+    display: flex;
+    justify-content: center;
+    padding: 24px 16px;
+    min-height: 100vh;
+  }
+  .container { width: 1320px; max-width: 100%; }
+
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #a78bfa; animation: pulse 2s infinite; }
+  @keyframes pulse {
+    0%   { box-shadow: 0 0 0 0 rgba(167,139,250,0.6); }
+    70%  { box-shadow: 0 0 0 10px rgba(167,139,250,0); }
+    100% { box-shadow: 0 0 0 0 rgba(167,139,250,0); }
+  }
+  .header h1 { font-size: 21px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 13px; color: #7d8db0; margin-top: 5px; }
+  .toolbar { position: relative; }
+  .toolbar-toggle {
+    background: none; border: 1px solid #334155; color: #94a3b8;
+    border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 16px; font-family: inherit;
+  }
+  .toolbar-toggle:hover { color: #e2e8f0; border-color: #475569; }
+  .toolbar-actions { display: none; position: absolute; right: 0; top: 38px; gap: 6px; z-index: 10; }
+  .toolbar.open .toolbar-actions { display: flex; }
+  .toolbar-actions button {
+    background: #0f172a; border: 1px solid #334155; color: #cbd5e1;
+    border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit;
+  }
+  .toolbar-actions button:hover { color: #f1f5f9; border-color: #64748b; }
+  @media print { .toolbar { display: none !important; } }
+
+  .controls { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .controls button {
+    background: #0f172a; border: 1px solid #334155; color: #e2e8f0;
+    border-radius: 6px; padding: 7px 16px; cursor: pointer; font-size: 14px; font-family: inherit;
+  }
+  .controls button:hover { border-color: #64748b; }
+  .controls button:disabled { opacity: 0.35; cursor: default; }
+  .step-ind { font-size: 14px; color: #cbd5e1; min-width: 70px; }
+  .key-hint { font-size: 12px; color: #64748b; }
+  .dots { display: flex; gap: 7px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+  .dots button { width: 14px; height: 14px; border-radius: 50%; padding: 0; background: #1e293b; border: 1px solid #334155; cursor: pointer; }
+  .dots button.cur { background: #a78bfa; border-color: #a78bfa; }
+  .dots button:hover { border-color: #a78bfa; }
+
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 18px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+  .card { background: rgba(15, 23, 42, 0.6); border: 1px solid #1e293b; border-radius: 10px; padding: 16px 18px; }
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+  .card-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; }
+  .card ul { list-style: none; }
+  .card li { font-size: 13px; color: #a5b4cc; line-height: 1.75; }
+  .card li b { color: #e2e8f0; font-weight: 600; }
+
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>Q1 · JDK8 resize() 扩容逐帧演示</h1>
+        <div class="subtitle">第13次put触发 → 32格新表 → 桶1拆两条（hash&amp;oldCap 分流 · 尾插保序）→ 归位交接（数字来自 Q01HashMapLab 实验5）</div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbar').classList.toggle('open')">⋯</button>
+      <div class="toolbar-actions">
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="btn-reset" title="回到第 0 帧">⏮</button>
+    <button id="btn-prev" title="上一帧">◀</button>
+    <button id="btn-play" title="自动播放">▶ 播放</button>
+    <button id="btn-next" title="下一帧">▶|</button>
+    <span class="step-ind" id="step-ind">1 / 11</span>
+    <span class="key-hint">← → 键翻页 · 每帧一小步</span>
+    <div class="dots" id="dots"></div>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1160 800" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+        <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#8ea3bd"/>
+        </marker>
+        <marker id="arrLo" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#34d399"/>
+        </marker>
+        <marker id="arrHi" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24"/>
+        </marker>
+        <marker id="arrCyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/>
+        </marker>
+      </defs>
+
+      <rect width="1160" height="800" fill="#020617"/>
+      <rect width="1160" height="800" fill="url(#grid)"/>
+
+      <!-- ===== 源码面板 ===== -->
+      <g>
+        <rect x="40" y="96" width="450" height="184" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+        <text x="60" y="120" fill="#8ea3bd" font-size="11">关键行（putVal 末行 + resize / 搬家循环）</text>
+        <rect id="code-hl" x="52" y="114" width="426" height="24" rx="4" fill="rgba(34,211,238,0.14)" opacity="0"/>
+        <text x="64" y="136" fill="#f1f5f9" font-size="13">if (++size &gt; threshold)   <tspan fill="#7d8db0">// 13 &gt; 12</tspan></text>
+        <text x="64" y="158" fill="#f1f5f9" font-size="13">    resize();</text>
+        <text x="64" y="180" fill="#f1f5f9" font-size="13">newCap = oldCap &lt;&lt; 1;   <tspan fill="#7d8db0">// 16→32</tspan></text>
+        <text x="64" y="202" fill="#f1f5f9" font-size="13">newThr = oldThr &lt;&lt; 1;   <tspan fill="#7d8db0">// 12→24</tspan></text>
+        <text x="64" y="224" fill="#f1f5f9" font-size="13">if ((e.hash &amp; oldCap) == 0) 尾插lo else 尾插hi</text>
+        <text x="64" y="246" fill="#f1f5f9" font-size="13">newTab[j] = loHead;  newTab[j+oldCap] = hiHead;</text>
+      </g>
+
+      <!-- ===== 状态面板 ===== -->
+      <g>
+        <rect x="510" y="96" width="300" height="184" rx="10" fill="rgba(30,41,59,0.4)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4,4"/>
+        <text x="660" y="120" text-anchor="middle" fill="#f1f5f9" font-size="13" font-weight="600">三个量（你已拿下的那三个）</text>
+        <rect x="530" y="134" width="125" height="60" rx="8" fill="#0f172a" stroke="#475569"/>
+        <text x="592" y="157" text-anchor="middle" fill="#8ea3bd" font-size="11">capacity 格子数</text>
+        <text x="592" y="181" text-anchor="middle" fill="#22d3ee" font-size="17" font-weight="700" id="st-cap">16</text>
+        <rect x="665" y="134" width="125" height="60" rx="8" fill="#0f172a" stroke="#475569"/>
+        <text x="727" y="157" text-anchor="middle" fill="#8ea3bd" font-size="11">size 件数</text>
+        <text x="727" y="181" text-anchor="middle" fill="#a78bfa" font-size="17" font-weight="700" id="st-size">12</text>
+        <rect x="530" y="202" width="125" height="60" rx="8" fill="#0f172a" stroke="#475569"/>
+        <text x="592" y="225" text-anchor="middle" fill="#8ea3bd" font-size="11">threshold 门槛</text>
+        <text x="592" y="249" text-anchor="middle" fill="#fbbf24" font-size="17" font-weight="700" id="st-thr">12</text>
+        <rect x="665" y="202" width="125" height="60" rx="8" fill="#0f172a" stroke="#475569"/>
+        <text x="727" y="225" text-anchor="middle" fill="#8ea3bd" font-size="11">满的程度 s÷c</text>
+        <text x="727" y="249" text-anchor="middle" fill="#fb7185" font-size="17" font-weight="700" id="st-pct">75%</text>
+      </g>
+
+      <!-- ===== 二进制判决面板 ===== -->
+      <g>
+        <rect x="830" y="96" width="290" height="184" rx="10" fill="rgba(30,41,59,0.4)" stroke="#22d3ee" stroke-width="1" stroke-dasharray="4,4"/>
+        <text x="975" y="120" text-anchor="middle" fill="#f1f5f9" font-size="13" font-weight="600">判决位：hash &amp; 16</text>
+        <text x="975" y="142" text-anchor="middle" fill="#8ea3bd" font-size="11" id="bin-key">搬桶1时看这里</text>
+        <rect id="bin-hl" x="888" y="158" width="28" height="30" rx="4" fill="rgba(52,211,153,0.18)" stroke="#34d399" stroke-width="1.5" opacity="0"/>
+        <text x="866" y="181" fill="#f1f5f9" font-size="18" font-weight="700" text-anchor="middle" id="bin-0"></text>
+        <text x="902" y="181" fill="#f1f5f9" font-size="18" font-weight="700" text-anchor="middle" id="bin-1"></text>
+        <text x="938" y="181" fill="#f1f5f9" font-size="18" font-weight="700" text-anchor="middle" id="bin-2"></text>
+        <text x="974" y="181" fill="#f1f5f9" font-size="18" font-weight="700" text-anchor="middle" id="bin-3"></text>
+        <text x="1010" y="181" fill="#f1f5f9" font-size="18" font-weight="700" text-anchor="middle" id="bin-4"></text>
+        <text x="1046" y="181" fill="#f1f5f9" font-size="18" font-weight="700" text-anchor="middle" id="bin-5"></text>
+        <text x="866" y="206" text-anchor="middle" fill="#64748b" font-size="10">32</text>
+        <text x="902" y="206" text-anchor="middle" fill="#fbbf24" font-size="10" font-weight="700">16</text>
+        <text x="938" y="206" text-anchor="middle" fill="#64748b" font-size="10">8</text>
+        <text x="974" y="206" text-anchor="middle" fill="#64748b" font-size="10">4</text>
+        <text x="1010" y="206" text-anchor="middle" fill="#64748b" font-size="10">2</text>
+        <text x="1046" y="206" text-anchor="middle" fill="#64748b" font-size="10">1</text>
+        <text x="975" y="240" text-anchor="middle" fill="#cbd5e1" font-size="13" font-weight="600" id="bin-res">亮的那一位（16）= 判决依据</text>
+        <text x="975" y="262" text-anchor="middle" fill="#8ea3bd" font-size="11">位=0 → lo（留原位）· 位=1 → hi（去 +16）</text>
+      </g>
+
+      <!-- ===== 老表 ===== -->
+      <g id="oldtab">
+        <text x="60" y="308" fill="#f1f5f9" font-size="14" font-weight="600">老表 table（cap=16）</text>
+        <text x="876" y="308" text-anchor="end" fill="#8ea3bd" font-size="11" id="old-note">size=12 = threshold：压线未超</text>
+        <g id="old-cells"></g>
+        <!-- 桶1 的链（挂在桶1下方） -->
+        <line x1="136" y1="368" x2="138" y2="386" stroke="#8ea3bd" stroke-width="1.5" marker-end="url(#arr)"/>
+        <g id="chips"></g>
+        <rect id="e-ring" x="112" y="382" width="50" height="42" rx="8" fill="none" stroke="#22d3ee" stroke-width="2.2" opacity="0"/>
+        <text x="560" y="410" text-anchor="middle" fill="#cbd5e1" font-size="14" font-weight="600" id="decide" opacity="0"></text>
+        <rect id="gc-mark" x="52" y="288" width="848" height="150" rx="10" fill="none" stroke="#fb7185" stroke-width="2" stroke-dasharray="8,5" opacity="0"/>
+        <text x="560" y="440" text-anchor="middle" fill="#fb7185" font-size="14" font-weight="700" id="gc-text" opacity="0">老表整体交给 GC ♻️</text>
+      </g>
+
+      <!-- ===== lo / hi 分流链 ===== -->
+      <g id="lo-row">
+        <text x="430" y="481" text-anchor="end" fill="#34d399" font-size="13" font-weight="600">lo 链（位=0 · 留原位）</text>
+        <g id="lo-chips"></g>
+      </g>
+      <g id="hi-row">
+        <text x="430" y="531" text-anchor="end" fill="#fbbf24" font-size="13" font-weight="600">hi 链（位=1 · 去 +16）</text>
+        <g id="hi-chips"></g>
+      </g>
+      <g id="stage-arrows"></g>
+
+      <!-- ===== 新表 ===== -->
+      <g id="newtab">
+        <text x="100" y="574" fill="#f1f5f9" font-size="14" font-weight="600">新表 newTable（cap=32）</text>
+        <text x="900" y="574" text-anchor="end" fill="#8ea3bd" font-size="11">格子数翻倍 → 桶17 恰好落在老表一半宽度的位置</text>
+        <g id="new-cells"></g>
+        <text x="112" y="646" text-anchor="middle" fill="#34d399" font-size="12" font-weight="700" id="new-lab-1">桶1 : 1→33</text>
+        <text x="512" y="646" text-anchor="middle" fill="#fbbf24" font-size="12" font-weight="700" id="new-lab-17">桶17 : 17→49</text>
+      </g>
+
+      <!-- ===== 解说面板 ===== -->
+      <g>
+        <rect x="40" y="662" width="1080" height="126" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+        <text x="60" y="686" fill="#8ea3bd" font-size="11" id="cap-title">解说</text>
+        <text x="60" y="712" fill="#f8fafc" font-size="14" font-weight="600" id="cap-0"></text>
+        <text x="60" y="738" fill="#cbd5e1" font-size="13" id="cap-1"></text>
+        <text x="60" y="764" fill="#cbd5e1" font-size="13" id="cap-2"></text>
+        <text x="60" y="788" fill="#a5b4cc" font-size="13" id="cap-3"></text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#fb7185"></div><h3>触发与翻倍</h3></div>
+      <ul>
+        <li>• <b>++size &gt; threshold</b>（严格大于：12 件不扩、13 件才扩）</li>
+        <li>• 触发后 capacity ×2、threshold ×2（16/12 → 32/24）</li>
+        <li>• 扩完只装 41% → 单次 put 永远只扩一次 → <b>均摊 O(1)</b></li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#22d3ee"></div><h3>分流免 rehash</h3></div>
+      <ul>
+        <li>• 只看 hash 的 <b>oldCap 那一位</b>（16）：0 → 原位，1 → 原位+16</li>
+        <li>• 新下标 hash&amp;31 只比旧下标 hash&amp;15 多看这一位</li>
+        <li>• 位运算代替重新取模，一条长链拆两条短链</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#34d399"></div><h3>尾插保序</h3></div>
+      <ul>
+        <li>• loTail / hiTail <b>尾插</b>，链内顺序不变（preserve order）</li>
+        <li>• JDK7 头插搬一条链 = 反转一条链 → 并发成环</li>
+        <li>• 单线程下每节点只搬一次，结构性成不了环</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>q01 · JDK8 resize() 逐帧演示 · 数字与实验5一致</span>
+    <span>飞猪 P6 Java 面试特训 · 配套 Q01HashMapLab</span>
+  </div>
+</div>
+
+<script>
+/* ============ 帧数据 ============ */
+const F = [
+{ code:-1, cap:'16', size:'12', thr:'12', pct:'75%', bin:null, e:null, moved:[], lo:[], hi:[],
+  place:false, nc:{}, nt:false, oldNote:'size=12 = threshold：压线未超', gc:false,
+  title:'第 0 帧 · 开局：12 件压线',
+  cap:['老表 cap=16。12 件东西：桶1 摞了 1→17→33→49（链长4），桶2~9 各 1 件。',
+       'size=12 = threshold（16×0.75）——满的程度 12/16 = 75%，刚好压线。',
+       '触发条件是 &gt;（严格大于）：12 &gt; 12 不成立，所以此刻还不扩。',
+       '所有数字来自实验 5 的真实输出。'] },
+{ code:0, cap:'16', size:'13', thr:'12', pct:'81%', bin:null, e:null, moved:[], lo:[], hi:[],
+  place:false, nc:{}, nt:false, oldNote:'第13件已进桶10 · 81% 短暂超载', gc:false,
+  title:'第 1 帧 · 第 13 次 put 触发',
+  cap:['put(key=10)：key 10 先正常落进桶 10，然后 putVal 末行判断：',
+       '++size = 13 &gt; threshold = 12 成立 → 调 resize()。',
+       '注意顺序：先插元素、后判断——扩容发生在这次 put 的内部。',
+       '扩容前的一瞬间，16 格里装着 13 件（81%），随后立刻翻倍压回。'] },
+{ code:2, cap:'16→32', size:'13', thr:'12→24', pct:'41%', bin:null, e:null, moved:[], lo:[], hi:[],
+  place:false, nc:{}, nt:true, oldNote:'新表已造好，东西还都在老表', gc:false,
+  title:'第 2 帧 · 定新尺寸，造空新表',
+  cap:['resize() 开场三件事：newCap = 16&lt;&lt;1 = 32，newThr = 12&lt;&lt;1 = 24，',
+       'new Node[32] 造一张全空的新表挂到 table。',
+       '此刻新表全空、老表原封未动——东西还睡在老表里。',
+       'JDK8 没有后台线程搬家，就是当前线程在这次 put 里一口气搬完。'] },
+{ code:4, cap:'32', size:'13', thr:'24', pct:'41%', bin:{k:1,bits:'000001',hi:false}, e:1, moved:[], lo:[1], hi:[],
+  place:false, nc:{}, nt:true, oldNote:'搬家循环 · 逐节点问一句', gc:false,
+  title:'第 3 帧 · 桶1 的 e=1 → lo 链',
+  cap:['开始搬桶1 的链，逐节点只问一句：hash &amp; 16（oldCap）= ？',
+       'e=1：二进制 000001，16 那一位是 0 → 尾插进 lo 链。',
+       '第一个节点既是头也是尾：loHead = loTail = 1。',
+       '右上二进制面板：亮块就是 16 那一位，它决定去留。'] },
+{ code:4, cap:'32', size:'13', thr:'24', pct:'41%', bin:{k:17,bits:'010001',hi:true}, e:17, moved:[1], lo:[1], hi:[17],
+  place:false, nc:{}, nt:true, oldNote:'搬家循环 · 1 已进 lo', gc:false,
+  title:'第 4 帧 · e=17 → hi 链',
+  cap:['e=17：010001，16 那一位是 1 → 尾插进 hi 链。',
+       '1 和 17 差在哪？就差 16 这一位——扩容后它俩注定分家。',
+       '旧下标 hash&amp;15 相同（都是 1），新下标 hash&amp;31 差 16。',
+       '这就是“原位 或 原位+oldCap”的全部秘密。'] },
+{ code:4, cap:'32', size:'13', thr:'24', pct:'41%', bin:{k:33,bits:'100001',hi:false}, e:33, moved:[1,17], lo:[1,33], hi:[17],
+  place:false, nc:{}, nt:true, oldNote:'搬家循环 · 尾插不反转', gc:false,
+  title:'第 5 帧 · e=33 → lo，尾插保序',
+  cap:['e=33：100001，16 那一位是 0 → lo。',
+       '尾插：接在 loTail（节点1）后面，lo 链 = 1→33。',
+       '顺序没反！老表里 1 在 33 前面，新链里还是 1 在前面。',
+       'JDK7 头插在这一步会把链反转——为另一张动图的悲剧埋下伏笔。'] },
+{ code:4, cap:'32', size:'13', thr:'24', pct:'41%', bin:{k:49,bits:'110001',hi:true}, e:49, moved:[1,17,33], lo:[1,33], hi:[17,49],
+  place:false, nc:{}, nt:true, oldNote:'桶1 分完：2+2', gc:false,
+  title:'第 6 帧 · e=49 → hi，桶1 分完',
+  cap:['e=49：110001，16 位是 1 → hi，接在 17 后面：hi 链 = 17→49。',
+       '桶1 的 4 个节点分完：lo 两个（1,33）、hi 两个（17,49）。',
+       '尾插让两条新链都保持原相对顺序——注释里的 preserve order。',
+       '到此一条长链已经拆成两条短链，查询平均链长减半。'] },
+{ code:5, cap:'32', size:'13', thr:'24', pct:'41%', bin:null, e:null, moved:[1,17,33,49], lo:[1,33], hi:[17,49],
+  place:true, nc:{'1':'1·33','17':'17·49'}, nt:true, oldNote:'lo→桶1 · hi→桶1+16', gc:false,
+  title:'第 7 帧 · 归位：原位 / 原位+16',
+  cap:['loHead 放 newTab[1]（原位），hiHead 放 newTab[1+16=17]（原位+oldCap）。',
+       '为什么只有两种去处？新下标 hash&amp;31 只比旧下标 hash&amp;15 多看 16 那一位：',
+       '位=0 → 下标不变；位=1 → 下标恰好 +16。不用重新计算 hash。',
+       '下方新表里，桶17 正好落在老表宽度一半的位置——32 格对齐 16 格。'] },
+{ code:-1, cap:'32', size:'13', thr:'24', pct:'41%', bin:null, e:null, moved:[1,17,33,49], lo:[1,33], hi:[17,49],
+  place:true, nc:{'1':'1·33','17':'17·49','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9','10':'10'},
+  nt:true, oldNote:'其余桶原样平移', gc:false,
+  title:'第 8 帧 · 其余桶：单节点直接放',
+  cap:['桶2~10 都是单节点，没有链可拆：hash &amp; 31 直接定位。',
+       'key 2~10 都小于 16，&amp;31 后还是自己 → 全部落回原下标。',
+       '整个扩容只有桶1 发生了“1 拆 2”，其它桶原样平移。',
+       '（若桶里是红黑树，split() 同样按 16 位分流，≤6 个节点还会退化回链表。）'] },
+{ code:-1, cap:'32', size:'13', thr:'24', pct:'41%', bin:null, e:null, moved:[1,17,33,49], lo:[1,33], hi:[17,49],
+  place:true, nc:{'1':'1·33','17':'17·49','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9','10':'10'},
+  nt:true, oldNote:'已交接', gc:true,
+  title:'第 9 帧 · 交接，老表整个 GC',
+  cap:['搬完交接：table 指向新表（第 2 帧就挂好了），resize 返回。',
+       '老表再无人引用，整体丢给 GC——源码里 oldTab[j]=null 顺手断链。',
+       '此刻：size=13、capacity=32、threshold=24。',
+       '这次 put 到这里才真正结束。'] },
+{ code:-1, cap:'32', size:'13', thr:'24', pct:'41%', bin:null, e:null, moved:[1,17,33,49], lo:[1,33], hi:[17,49],
+  place:true, nc:{'1':'1·33','17':'17·49','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9','10':'10'},
+  nt:true, oldNote:'稳定态：41%', gc:true,
+  title:'第 10 帧 · 尾声：41%，均摊 O(1)',
+  cap:['满的程度 = 13/32 ≈ 41%——刚扩完，离新门槛 24 还很远。',
+       '下次触发在第 25 个 put：间隔 12→24→48，翻倍增长。',
+       '搬运总成本 ≈ n + n/2 + n/4 + … ≈ 2n，平摊到每次 put → 均摊 O(1)。',
+       '同场景若换 JDK7 头插：链被反转，并发下就是另一张动图的死循环。'] },
+];
+
+/* ============ 静态构件 ============ */
+const NS = 'http://www.w3.org/2000/svg';
+const $ = id => document.getElementById(id);
+const KEYS = [1, 17, 33, 49];
+const CHIP_X = { 1: 115, 17: 180, 33: 245, 49: 310 };
+const lineY = [136, 158, 180, 202, 224, 246];
+let cur = 0, timer = null;
+
+function el(tag, attrs, parent) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  (parent || $('stage-arrows')).appendChild(n);
+  return n;
+}
+
+/* 老表 16 格 */
+(function buildOld() {
+  const g = $('old-cells');
+  for (let i = 0; i < 16; i++) {
+    const x = 60 + i * 51;
+    const box = el('rect', { x, y: 322, width: 50, height: 46, rx: 6,
+      fill: i === 1 ? 'rgba(76,29,149,0.4)' : '#0f172a',
+      stroke: i === 1 ? '#a78bfa' : '#334155', 'stroke-width': i === 1 ? 1.8 : 1 }, g);
+    if (i === 1) box.id = 'oc-1-box';
+    el('text', { x: x + 25, y: 338, 'text-anchor': 'middle', fill: '#64748b',
+      'font-size': 10 }, g).textContent = i;
+    const t = el('text', { x: x + 25, y: 360, 'text-anchor': 'middle',
+      fill: '#f1f5f9', 'font-size': 12 }, g);
+    t.id = 'oc-' + i;
+    t.textContent = '·';
+  }
+})();
+/* 桶1 的 4 个链节点 chip */
+(function buildChips() {
+  const g = $('chips');
+  KEYS.forEach((k, idx) => {
+    const x = CHIP_X[k];
+    el('rect', { x, y: 386, width: 50, height: 42, rx: 8, fill: 'rgba(76,29,149,0.4)',
+      stroke: '#a78bfa', 'stroke-width': 1.5 }, g).id = 'chip-box-' + k;
+    el('text', { x: x + 25, y: 413, 'text-anchor': 'middle', fill: '#f1f5f9',
+      'font-size': 15, 'font-weight': 700 }, g).id = 'chip-' + k;
+    $('chip-' + k).textContent = k;
+    if (idx < 3) el('path', { d: `M ${x + 50} 407 L ${CHIP_X[KEYS[idx+1]] - 3} 407`,
+      stroke: '#8ea3bd', 'stroke-width': 1.6, fill: 'none', 'marker-end': 'url(#arr)' }, g);
+  });
+})();
+/* 新表 32 格 */
+(function buildNew() {
+  const g = $('new-cells');
+  for (let i = 0; i < 32; i++) {
+    const x = 100 + i * 25;
+    el('rect', { x, y: 588, width: 24, height: 40, rx: 4, fill: '#0f172a', stroke: '#334155' }, g).id = 'nc-box-' + i;
+    if (i % 8 === 0 || i === 31) el('text', { x: x + 12, y: 582, 'text-anchor': 'middle',
+      fill: '#64748b', 'font-size': 10 }, g).textContent = i;
+    const t = el('text', { x: x + 12, y: 614, 'text-anchor': 'middle', fill: '#f1f5f9',
+      'font-size': 10.5 }, g);
+    t.id = 'nc-' + i;
+    t.textContent = '';
+  }
+  ['1', '17'].forEach(i => { $('nc-box-' + i).setAttribute('stroke', i === '1' ? '#34d399' : '#fbbf24'); });
+})();
+
+/* ============ 每帧渲染 ============ */
+function drawRow(rowId, chipsId, keys, color) {
+  const g = $(chipsId); g.innerHTML = '';
+  const y = rowId === 'lo' ? 460 : 510;
+  keys.forEach((k, i) => {
+    const x = 460 + i * 56;
+    el('rect', { x, y, width: 46, height: 36, rx: 8, fill: rowId === 'lo' ? 'rgba(6,78,59,0.5)' : 'rgba(120,53,15,0.4)',
+      stroke: color, 'stroke-width': 1.6 }, g);
+    el('text', { x: x + 23, y: y + 24, 'text-anchor': 'middle', fill: '#f1f5f9',
+      'font-size': 15, 'font-weight': 700 }, g).textContent = k;
+    if (i > 0) el('path', { d: `M ${x - 10} ${y + 18} L ${x - 2} ${y + 18}`,
+      stroke: color, 'stroke-width': 1.6, fill: 'none', 'marker-end': `url(#${rowId === 'lo' ? 'arrLo' : 'arrHi'})` }, g);
+  });
+  if (keys.length) {
+    const tx = 460 + (keys.length - 1) * 56 + 23;
+    el('text', { x: tx, y: y - 8, 'text-anchor': 'middle', fill: color, 'font-size': 10 }, g).textContent = rowId + 'Tail ↓';
+  }
+}
+
+function render(i) {
+  const f = F[i]; cur = i;
+  // 状态面板
+  $('st-cap').textContent = f.cap; $('st-size').textContent = f.size;
+  $('st-thr').textContent = f.thr; $('st-pct').textContent = f.pct;
+  $('old-note').textContent = f.oldNote;
+  // 代码高亮
+  const hl = $('code-hl');
+  if (f.code >= 0) { hl.setAttribute('opacity', 1); hl.setAttribute('y', lineY[f.code] - 17); }
+  else hl.setAttribute('opacity', 0);
+  // 二进制面板
+  const bh = $('bin-hl');
+  if (f.bin) {
+    bh.setAttribute('opacity', 1);
+    bh.setAttribute('fill', f.bin.hi ? 'rgba(251,191,36,0.2)' : 'rgba(52,211,153,0.2)');
+    bh.setAttribute('stroke', f.bin.hi ? '#fbbf24' : '#34d399');
+    for (let b = 0; b < 6; b++) {
+      const t = $('bin-' + b);
+      t.textContent = f.bin.bits[b];
+      t.setAttribute('fill', b === 1 ? (f.bin.hi ? '#fbbf24' : '#34d399') : '#f1f5f9');
+    }
+    $('bin-key').textContent = `key=${f.bin.k} 的 hash（就是它自己）`;
+    $('bin-res').textContent = `hash & 16 = ${f.bin.hi ? '16 → hi 链' : '0 → lo 链'}`;
+    $('bin-res').setAttribute('fill', f.bin.hi ? '#fbbf24' : '#34d399');
+  } else {
+    bh.setAttribute('opacity', 0);
+    for (let b = 0; b < 6; b++) $('bin-' + b).textContent = '';
+    $('bin-key').textContent = '搬桶1时看这里';
+    $('bin-res').textContent = '亮的那一位（16）= 判决依据';
+    $('bin-res').setAttribute('fill', '#cbd5e1');
+  }
+  // 老表格内容
+  $('oc-1').textContent = i === 0 ? '4件↓' : '搬走中';
+  $('oc-10').textContent = i >= 1 ? '10' : '·';
+  $('oc-1-box').setAttribute('opacity', i >= 7 ? 0.4 : 1);
+  $('gc-mark').setAttribute('opacity', f.gc ? 1 : 0);
+  $('gc-text').setAttribute('opacity', f.gc ? 1 : 0);
+  $('oldtab').setAttribute('opacity', 1);
+  // 链 chips：已搬的变暗，当前 e 高亮
+  KEYS.forEach(k => {
+    const moved = f.moved.includes(k);
+    $('chip-box-' + k).setAttribute('opacity', moved ? 0.25 : 1);
+    $('chip-' + k).setAttribute('opacity', moved ? 0.25 : 1);
+  });
+  const ring = $('e-ring');
+  if (f.e) { ring.setAttribute('opacity', 1); ring.setAttribute('x', CHIP_X[f.e] - 3); }
+  else ring.setAttribute('opacity', 0);
+  // 判决文本
+  const dec = $('decide');
+  if (f.bin) {
+    dec.setAttribute('opacity', 1);
+    dec.textContent = `e=${f.e} → hash & 16 = ${f.bin.hi ? '16' : '0'}`;
+    dec.setAttribute('fill', f.bin.hi ? '#fbbf24' : '#34d399');
+  } else dec.setAttribute('opacity', 0);
+  // lo / hi 链
+  drawRow('lo', 'lo-chips', f.lo, '#34d399');
+  drawRow('hi', 'hi-chips', f.hi, '#fbbf24');
+  // 动态箭头：e chip → 对应链尾
+  $('stage-arrows').innerHTML = '';
+  if (f.e && f.bin) {
+    const ex = CHIP_X[f.e] + 25;
+    const rowKeys = f.bin.hi ? f.hi : f.lo;
+    const ty = f.bin.hi ? 510 : 460;
+    const tx = 460 + (rowKeys.length - 1) * 56 + 23;
+    el('path', { d: `M ${ex} 430 C ${ex} 452, ${tx} ${ty - 40}, ${tx} ${ty - 4}`,
+      stroke: f.bin.hi ? '#fbbf24' : '#34d399', 'stroke-width': 2, fill: 'none',
+      'marker-end': `url(#${f.bin.hi ? 'arrHi' : 'arrLo'})`, 'stroke-dasharray': '5,4' });
+  }
+  // F7 归位箭头
+  if (f.place) {
+    const loX = 460 + (f.lo.length - 1) * 56 + 23;
+    el('path', { d: `M ${loX} 500 C ${loX} 560, 137 540, 124 584`,
+      stroke: '#34d399', 'stroke-width': 2.2, fill: 'none', 'marker-end': 'url(#arrLo)' });
+    const hiX = 460 + (f.hi.length - 1) * 56 + 23;
+    el('path', { d: `M ${hiX} 550 C ${hiX} 572, 524 560, 521 584`,
+      stroke: '#fbbf24', 'stroke-width': 2.2, fill: 'none', 'marker-end': 'url(#arrHi)' });
+  }
+  // 新表
+  $('newtab').setAttribute('opacity', f.nt ? 1 : 0.12);
+  for (let c = 0; c < 32; c++) $('nc-' + c).textContent = f.nc[c] || '';
+  // 解说
+  $('cap-title').textContent = '解说 · ' + f.title;
+  for (let k = 0; k < 4; k++) $('cap-' + k).innerHTML = f.cap[k] || '';
+  // 控件
+  $('step-ind').textContent = (i + 1) + ' / ' + F.length;
+  $('btn-prev').disabled = i === 0;
+  $('btn-next').disabled = i === F.length - 1;
+  document.querySelectorAll('#dots button').forEach((d, k) => d.classList.toggle('cur', k === i));
+}
+
+/* ============ 控件 ============ */
+const dots = $('dots');
+F.forEach((_, k) => {
+  const b = document.createElement('button');
+  b.onclick = () => { stopPlay(); render(k); };
+  dots.appendChild(b);
+});
+$('btn-prev').onclick = () => { stopPlay(); if (cur > 0) render(cur - 1); };
+$('btn-next').onclick = () => { stopPlay(); if (cur < F.length - 1) render(cur + 1); };
+$('btn-reset').onclick = () => { stopPlay(); render(0); };
+$('btn-play').onclick = togglePlay;
+function togglePlay() {
+  if (timer) return stopPlay();
+  if (cur >= F.length - 1) render(0);
+  $('btn-play').textContent = '⏸ 暂停';
+  timer = setInterval(() => {
+    if (cur >= F.length - 1) return stopPlay();
+    render(cur + 1);
+  }, 2400);
+}
+function stopPlay() {
+  if (timer) { clearInterval(timer); timer = null; $('btn-play').textContent = '▶ 播放'; }
+}
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { stopPlay(); if (cur < F.length - 1) render(cur + 1); }
+  if (e.key === 'ArrowLeft')  { stopPlay(); if (cur > 0) render(cur - 1); }
+});
+const m = location.hash.match(/f=(\d+)/);
+render(m ? Math.min(F.length - 1, +m[1]) : 0);
+
+/* ============ 导出工具条 ============ */
+function capture() {
+  const el = document.getElementById('report-container');
+  const r = el.getBoundingClientRect();
+  return html2canvas(document.body, {
+    x: r.left - 32, y: r.top - 32,
+    width: r.width + 64, height: r.height + 64,
+    scale: 2, backgroundColor: '#020617',
+    ignoreElements: n => n.closest && n.closest('.toolbar')
+  });
+}
+function copyAsImage() {
+  capture().then(c => c.toBlob(b => navigator.clipboard.write([new ClipboardItem({ 'image/png': b })])));
+}
+function downloadPNG() {
+  capture().then(c => {
+    const a = document.createElement('a');
+    a.download = 'q01-resize.png'; a.href = c.toDataURL('image/png'); a.click();
+  });
+}
+function downloadPDF() {
+  capture().then(c => {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: c.width >= c.height ? 'l' : 'p', unit: 'px', format: [c.width, c.height] });
+    pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, c.width, c.height);
+    pdf.save('q01-resize.pdf');
+  });
+}
+</script>
+</body>
+</html>

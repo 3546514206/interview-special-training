@@ -50,6 +50,16 @@
 >
 > 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
 
+**【配图 · JDK8 resize() 扩容逐帧（动图 · 11 帧）】**
+
+![JDK8 resize 扩容逐帧（静态帧：第 7 帧 · lo/hi 归位）](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q01-resize.png)
+
+> 🎬 **动图版**（浏览器打开 → ▶ 自动播放 / ←→ 逐帧 / 可导出 PNG·PDF）：[fliggyp6/diagrams/q01-resize.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q01-resize.html)
+>
+> 一图看懂扩容全程：12 件压线 → 第 13 次 put 触发（`++size > threshold`，**> 不是 ≥**）→ 32 格新表 + 门槛翻倍 → 桶1 长链按 `hash & oldCap` 逐节点分流（右上二进制面板亮的就是判决位）→ lo 留桶1、hi 去桶17（原位+16）→ 尾插保序 → 老表整体 GC → 扩完仅 41%（间隔 12→24→48 翻倍，均摊 O(1)）。数字与实验 5 输出完全一致。
+>
+> 📌 绝对路径注意事项同上一张图
+
 **【配图 · JDK7 头插法并发扩容成环（动图 · 10 帧逐步播放）】**
 
 ![JDK7 头插法并发扩容成环（静态帧：第 7 帧 · 关键一箭环焊死）](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q01-jdk7-cycle.png)
