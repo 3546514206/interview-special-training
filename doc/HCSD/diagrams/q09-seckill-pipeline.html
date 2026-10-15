@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Q9 · 秒杀流量漏斗与库存三层防线</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', 'PingFang SC', 'Microsoft YaHei', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; }
+  .container { width: 1240px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #34d399; }
+  .header h1 { font-size: 20px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 12px; color: #7d8db0; margin-top: 5px; }
+  .toolbar button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; margin-left: 6px; }
+  .toolbar button:hover { color: #f1f5f9; border-color: #64748b; }
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 14px 18px; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; margin-bottom: 8px; }
+  .card p, .card li { font-size: 13px; color: #a5b4cc; line-height: 1.8; }
+  .card ul { list-style: none; }
+  .card b { color: #e2e8f0; }
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>秒杀库存扣减链路 · 流量漏斗 + 三层防线 + 热点行对策</h1>
+        <div class="subtitle">系统全景见飞猪篇 Q25；本图聚焦库存链路——2020 双11 订单创建峰值 58.3 万笔/秒（已核实）背景下的热点行治理</div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button onclick="copyAsImage()">复制图片</button>
+      <button onclick="downloadPNG()">导出 PNG</button>
+    </div>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1200 760" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#7d8db0"/>
+        </marker>
+        <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/>
+        </marker>
+      </defs>
+
+      <!-- 漏斗 -->
+      <text x="600" y="30" text-anchor="middle" fill="#f1f5f9" font-size="16" font-weight="700">① 流量漏斗：每层削一个数量级</text>
+      <g font-size="12.5" text-anchor="middle">
+        <path d="M 150 60 L 1050 60 L 930 108 L 270 108 Z" fill="rgba(34,211,238,.12)" stroke="#22d3ee"/>
+        <text x="600" y="88" fill="#22d3ee">亿级曝光（页面/推送触达）</text>
+        <path d="M 270 118 L 930 118 L 820 166 L 380 166 Z" fill="rgba(167,139,250,.12)" stroke="#a78bfa"/>
+        <text x="600" y="146" fill="#a78bfa">千万级点击（答题/验证码再削一波）</text>
+        <path d="M 380 176 L 820 176 L 715 224 L 485 224 Z" fill="rgba(251,191,36,.12)" stroke="#fbbf24"/>
+        <text x="600" y="204" fill="#fbbf24">百万级提交（网关限流后到达应用）</text>
+        <path d="M 485 234 L 715 234 L 640 282 L 560 282 Z" fill="rgba(52,211,153,.12)" stroke="#34d399"/>
+        <text x="600" y="262" fill="#34d399">数十万级有效扣减</text>
+      </g>
+
+      <!-- 三层防线 -->
+      <text x="600" y="326" text-anchor="middle" fill="#f1f5f9" font-size="16" font-weight="700">② 库存三层防线</text>
+      <g font-size="13" text-anchor="middle">
+        <rect x="80" y="350" width="300" height="96" rx="10" fill="rgba(34,211,238,.08)" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="230" y="380" fill="#22d3ee" font-weight="700">性能层 · Redis + Lua</text>
+        <text x="230" y="404" fill="#a5b4cc" font-size="12">if stock&gt;0 then decr</text>
+        <text x="230" y="426" fill="#7d8db0" font-size="12">一次往返 · 单线程串行 · 10万QPS级</text>
+
+        <rect x="450" y="350" width="300" height="96" rx="10" fill="rgba(167,139,250,.08)" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="600" y="380" fill="#a78bfa" font-weight="700">吞吐层 · MQ 异步落单</text>
+        <text x="600" y="404" fill="#a5b4cc" font-size="12">预扣成功 → 发消息即返回</text>
+        <text x="600" y="426" fill="#7d8db0" font-size="12">订单服务按消费能力追 · 前端"排队中"</text>
+
+        <rect x="820" y="350" width="300" height="96" rx="10" fill="rgba(52,211,153,.08)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="970" y="380" fill="#34d399" font-weight="700">正确性层 · DB 行锁</text>
+        <text x="970" y="404" fill="#a5b4cc" font-size="12">update ... where n&gt;0</text>
+        <text x="970" y="426" fill="#7d8db0" font-size="12">影响行数=0 即售罄 · 物理不超卖</text>
+
+        <line x1="380" y1="398" x2="450" y2="398" stroke="#7d8db0" stroke-width="2" marker-end="url(#arr)"/>
+        <line x1="750" y1="398" x2="820" y2="398" stroke="#7d8db0" stroke-width="2" marker-end="url(#arr)"/>
+      </g>
+      <text x="600" y="486" text-anchor="middle" fill="#fbbf24" font-size="12.5">降级路径：Redis 不可用 → DB 行锁 + 入口限流（宁慢勿超）</text>
+
+      <!-- 热点行 -->
+      <text x="600" y="530" text-anchor="middle" fill="#f1f5f9" font-size="16" font-weight="700">③ 热点行对策（P7/P8 层）</text>
+      <g font-size="13" text-anchor="middle">
+        <rect x="80" y="554" width="340" height="120" rx="10" fill="rgba(15,23,42,.8)" stroke="#334155"/>
+        <text x="250" y="584" fill="#f1f5f9" font-weight="700">库存分片</text>
+        <text x="250" y="610" fill="#a5b4cc" font-size="12">100 件 → stock_1..stock_10</text>
+        <text x="250" y="632" fill="#a5b4cc" font-size="12">扣完一片切下一片</text>
+        <text x="250" y="656" fill="#7d8db0" font-size="12">热点分散 N 份 · 写放大 N 倍</text>
+
+        <rect x="440" y="554" width="340" height="120" rx="10" fill="rgba(15,23,42,.8)" stroke="#334155"/>
+        <text x="610" y="584" fill="#f1f5f9" font-weight="700">热点更新排队 / 合并</text>
+        <text x="610" y="610" fill="#a5b4cc" font-size="12">同行 update 内存排队（阿里思路）</text>
+        <text x="610" y="632" fill="#a5b4cc" font-size="12">按序批量提交</text>
+        <text x="610" y="656" fill="#7d8db0" font-size="12">降低锁竞争与 redo 刷盘</text>
+
+        <rect x="800" y="554" width="340" height="120" rx="10" fill="rgba(15,23,42,.8)" stroke="#334155"/>
+        <text x="970" y="584" fill="#f1f5f9" font-weight="700">资格预分配</text>
+        <text x="970" y="610" fill="#a5b4cc" font-size="12">内存价签 / 令牌先到先得</text>
+        <text x="970" y="632" fill="#a5b4cc" font-size="12">资格再异步兑换库存</text>
+        <text x="970" y="656" fill="#7d8db0" font-size="12">极端热点专用</text>
+      </g>
+
+      <!-- 底部问题 -->
+      <g font-size="12.5">
+        <rect x="80" y="700" width="1060" height="40" rx="8" fill="rgba(251,191,36,.05)" stroke="#92600a" stroke-dasharray="6 4"/>
+        <text x="600" y="725" text-anchor="middle" fill="#fbbf24">InnoDB 行锁语义：同一行 update 在锁队列串行，单行吞吐约千级 QPS —— 这就是热点行必须治理的原因</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <h3>为什么 Lua 而不是分布式锁</h3>
+      <ul>
+        <li>锁：加锁 + 解锁<b>两次网络往返</b>，其余线程自旋</li>
+        <li>Lua：<b>一次往返</b>，Redis 单线程执行脚本天然串行</li>
+        <li>脚本要短（长脚本阻塞全部请求）；集群模式 key 需同 slot</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>闭环补数（必答项）</h3>
+      <ul>
+        <li>预扣成功 + 订单失败 = 少卖，与超卖同为资损</li>
+        <li>延迟消息回补库存 + 对账 job 兜底差异</li>
+        <li>下单去重：唯一业务单号</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Redis 与 DB 的一致性定位</h3>
+      <ul>
+        <li>Redis 是<b>资格判定层</b>，不是账本</li>
+        <li>最终账以 DB 为准，差异由对账修正</li>
+        <li>表述为"按层次退化"，不是"缓存绝对正确"</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>天猫高工 P6-P8 答卷 v2 · Q9 配图</span>
+    <span>58.3 万笔/秒：2020 双11 订单创建峰值（多源核实）</span>
+  </div>
+</div>
+
+<script>
+function shoot() { return html2canvas(document.getElementById('report-container'), { backgroundColor: '#020617', scale: 2 }); }
+async function downloadPNG() { const c = await shoot(); const a = document.createElement('a'); a.download = 'q09-seckill-pipeline.png'; a.href = c.toDataURL('image/png'); a.click(); }
+async function copyAsImage() { const c = await shoot(); const blob = await new Promise(r => c.toBlob(r, 'image/png')); await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); }
+</script>
+</body>
+</html>

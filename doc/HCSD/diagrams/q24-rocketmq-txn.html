@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Q24 · RocketMQ 事务消息状态机</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', 'PingFang SC', 'Microsoft YaHei', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; }
+  .container { width: 1240px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #34d399; }
+  .header h1 { font-size: 20px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 12px; color: #7d8db0; margin-top: 5px; }
+  .toolbar button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; margin-left: 6px; }
+  .toolbar button:hover { color: #f1f5f9; border-color: #64748b; }
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 14px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 14px 18px; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; margin-bottom: 8px; }
+  .card p, .card li { font-size: 13px; color: #a5b4cc; line-height: 1.8; }
+  .card ul { list-style: none; }
+  .card b { color: #e2e8f0; }
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>RocketMQ 事务消息 · half 消息 + 回查的状态机</h1>
+        <div class="subtitle">解决"业务库与 MQ 双写不一致"：本地事务与消息发送的原子性 · 回查 60s 间隔 × 最多 15 次，超限默认回滚（已核实）</div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button onclick="copyAsImage()">复制图片</button>
+      <button onclick="downloadPNG()">导出 PNG</button>
+    </div>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1200 700" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#7d8db0"/>
+        </marker>
+        <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/>
+        </marker>
+        <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#f87171"/>
+        </marker>
+        <marker id="arrY" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#fbbf24"/>
+        </marker>
+        <marker id="arrC" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#22d3ee"/>
+        </marker>
+      </defs>
+
+      <!-- 参与者 -->
+      <g font-size="13" text-anchor="middle">
+        <rect x="100" y="56" width="180" height="44" rx="10" fill="rgba(34,211,238,.08)" stroke="#22d3ee" stroke-width="1.4"/>
+        <text x="190" y="83" fill="#22d3ee" font-weight="700">Producer 生产者</text>
+        <rect x="480" y="56" width="220" height="44" rx="10" fill="rgba(251,191,36,.08)" stroke="#fbbf24" stroke-width="1.4"/>
+        <text x="590" y="83" fill="#fbbf24" font-weight="700">Broker · half topic（不可见）</text>
+        <rect x="900" y="56" width="200" height="44" rx="10" fill="rgba(52,211,153,.08)" stroke="#34d399" stroke-width="1.4"/>
+        <text x="1000" y="83" fill="#34d399" font-weight="700">真实 topic · 消费者</text>
+        <rect x="100" y="330" width="180" height="44" rx="10" fill="rgba(167,139,250,.08)" stroke="#a78bfa" stroke-width="1.4"/>
+        <text x="190" y="357" fill="#a78bfa" font-weight="700">本地事务（业务 DB）</text>
+      </g>
+
+      <!-- 主流程 -->
+      <g font-size="12.5">
+        <line x1="280" y1="78" x2="480" y2="78" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrC)"/>
+        <text x="380" y="68" text-anchor="middle" fill="#22d3ee">① 发送 half 消息（对消费者不可见）</text>
+
+        <line x1="590" y1="100" x2="220" y2="330" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrY)"/>
+        <text x="330" y="200" text-anchor="middle" fill="#fbbf24">② ACK half 已存 → 执行本地事务</text>
+
+        <line x1="280" y1="352" x2="480" y2="120" stroke="#34d399" stroke-width="2" marker-end="url(#arrG)"/>
+        <text x="410" y="252" text-anchor="middle" fill="#34d399">③ commit（事务成功）</text>
+
+        <line x1="280" y1="370" x2="480" y2="95" stroke="#f87171" stroke-width="2" stroke-dasharray="7 5" marker-end="url(#arrR)"/>
+        <text x="330" y="300" text-anchor="middle" fill="#f87171">③' rollback（事务失败）</text>
+
+        <line x1="700" y1="78" x2="900" y2="78" stroke="#34d399" stroke-width="2" marker-end="url(#arrG)"/>
+        <text x="800" y="68" text-anchor="middle" fill="#34d399">④ 消息转正 → 正常投递</text>
+
+        <text x="800" y="100" text-anchor="middle" fill="#7d8db0" font-size="12">rollback → half 消息删除，业务侧无感知</text>
+      </g>
+
+      <!-- 回查循环 -->
+      <g font-size="12.5" text-anchor="middle">
+        <rect x="480" y="440" width="220" height="44" rx="22" fill="rgba(248,113,113,.06)" stroke="#7f1d1d" stroke-dasharray="6 4"/>
+        <text x="590" y="467" fill="#f87171" font-weight="700">生产者宕机 / 未确认</text>
+
+        <line x1="590" y1="100" x2="590" y2="440" stroke="#f87171" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arrR)"/>
+        <text x="600" y="415" fill="#f87171" text-anchor="start">half 长期未确认</text>
+
+        <!-- 回查箭头 -->
+        <path d="M 700 462 L 300 462 L 300 374" fill="none" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrY)"/>
+        <text x="500" y="452" fill="#fbbf24">⑤ Broker 回查 checkLocalTransaction</text>
+
+        <!-- 回查参数框 -->
+        <rect x="100" y="500" width="600" height="76" rx="10" fill="rgba(251,191,36,.05)" stroke="#92600a"/>
+        <text x="400" y="528" fill="#fbbf24" font-weight="700">transactionCheckInterval = 60s · transactionCheckMax = 15 次（默认，已核实）</text>
+        <text x="400" y="556" fill="#a5b4cc" font-size="12">回查实现要点：能按消息 key 查到本地事务执行记录（事务日志表）并返回 commit / rollback / unknown</text>
+
+        <!-- 超限 -->
+        <rect x="760" y="500" width="340" height="76" rx="10" fill="rgba(248,113,113,.06)" stroke="#7f1d1d"/>
+        <text x="930" y="528" fill="#f87171" font-weight="700">超过 15 次仍未确认 → 默认回滚</text>
+        <text x="930" y="556" fill="#a5b4cc" font-size="12">宁可丢弃也不投递不确定消息（默认策略，可定制）</text>
+      </g>
+
+      <!-- 底部语义 -->
+      <g font-size="12.5" text-anchor="middle">
+        <rect x="100" y="606" width="1000" height="64" rx="10" fill="rgba(52,211,153,.04)" stroke="#065f46"/>
+        <text x="600" y="632" fill="#34d399" font-weight="700">语义边界：保证"本地事务与消息发送"的原子性 —— 是最终一致方案，不是分布式强一致</text>
+        <text x="600" y="658" fill="#a5b4cc" font-size="12">消费侧仍需幂等（重试必产生重复投递）；Kafka 的事务是生产端跨分区原子写，两者同名不同义</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <h3>为什么 half 消息不可见</h3>
+      <ul>
+        <li>half 存于系统内部 topic（RMQ_SYS_TRANS_HALF_TOPIC），不在真实 topic 中</li>
+        <li>commit 时把消息搬到真实 topic 才对消费者可见</li>
+        <li>rollback 时删除；期间还有一个 op half topic 记录处理状态</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>工程要点</h3>
+      <ul>
+        <li>本地事务表必须能<b>按消息 key 反查执行结果</b>，回查才有依据</li>
+        <li>回查默认 60s 一次、最多 15 次 → 事务状态要尽快确认，不能依赖回查兜底常态化</li>
+        <li>可靠性配置组合：SYNC_FLUSH + SYNC_MASTER 才是金融级；默认异步刷盘 + 异步复制为性能取向</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>天猫高工 P6-P8 答卷 v2 · Q24 配图</span>
+    <span>存储模型：CommitLog 混写顺序写 + ConsumeQueue 索引（详见答卷正文）</span>
+  </div>
+</div>
+
+<script>
+function shoot() { return html2canvas(document.getElementById('report-container'), { backgroundColor: '#020617', scale: 2 }); }
+async function downloadPNG() { const c = await shoot(); const a = document.createElement('a'); a.download = 'q24-rocketmq-txn.png'; a.href = c.toDataURL('image/png'); a.click(); }
+async function copyAsImage() { const c = await shoot(); const blob = await new Promise(r => c.toBlob(r, 'image/png')); await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); }
+</script>
+</body>
+</html>
