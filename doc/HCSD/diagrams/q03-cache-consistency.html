@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Q3 · 缓存一致性 · 先更 DB 后删缓存 vs 先删缓存后更 DB</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', 'PingFang SC', 'Microsoft YaHei', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; }
+  .container { width: 1240px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #34d399; }
+  .header h1 { font-size: 20px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 12px; color: #7d8db0; margin-top: 5px; }
+  .toolbar button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; margin-left: 6px; }
+  .toolbar button:hover { color: #f1f5f9; border-color: #64748b; }
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-bottom: 14px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 14px 18px; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; margin-bottom: 8px; }
+  .card p, .card li { font-size: 13px; color: #a5b4cc; line-height: 1.8; }
+  .card ul { list-style: none; }
+  .card b { color: #e2e8f0; }
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+  .em { color: #34d399; } .warn { color: #fbbf24; } .bad { color: #f87171; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>Cache Aside · 写路径并发时序对比</h1>
+        <div class="subtitle">先更新 DB 再删缓存（推荐） vs 先删缓存再更新 DB（反例） · 时序决定不一致窗口的大小</div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button onclick="copyAsImage()">复制图片</button>
+      <button onclick="downloadPNG()">导出 PNG</button>
+    </div>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1200 640" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#7d8db0"/>
+        </marker>
+        <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/>
+        </marker>
+        <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#f87171"/>
+        </marker>
+      </defs>
+
+      <!-- 标题行 -->
+      <text x="300" y="34" text-anchor="middle" fill="#34d399" font-size="17" font-weight="700">推荐：先更 DB → 再删缓存</text>
+      <text x="900" y="34" text-anchor="middle" fill="#f87171" font-size="17" font-weight="700">反例：先删缓存 → 再更 DB</text>
+      <line x1="600" y1="10" x2="600" y2="620" stroke="#1e293b" stroke-width="1.5"/>
+
+      <!-- 左侧泳道 -->
+      <g>
+        <rect x="40" y="56" width="1000" height="0" fill="none"/>
+        <!-- 参与者 -->
+        <g font-size="13" text-anchor="middle">
+          <rect x="80" y="56" width="90" height="30" rx="6" fill="#0f172a" stroke="#334155"/><text x="125" y="76" fill="#22d3ee">写请求 W</text>
+          <rect x="220" y="56" width="90" height="30" rx="6" fill="#0f172a" stroke="#334155"/><text x="265" y="76" fill="#a78bfa">读请求 R</text>
+          <rect x="360" y="56" width="90" height="30" rx="6" fill="#0f172a" stroke="#334155"/><text x="405" y="76" fill="#94a3b8">Cache</text>
+          <rect x="500" y="56" width="90" height="30" rx="6" fill="#0f172a" stroke="#334155"/><text x="545" y="76" fill="#94a3b8">DB</text>
+        </g>
+        <!-- 生命线 -->
+        <g stroke="#1e293b" stroke-dasharray="4 4">
+          <line x1="125" y1="86" x2="125" y2="560"/><line x1="265" y1="86" x2="265" y2="560"/>
+          <line x1="405" y1="86" x2="405" y2="560"/><line x1="545" y1="86" x2="545" y2="560"/>
+        </g>
+        <!-- 顺序 -->
+        <g font-size="12.5" fill="#a5b4cc">
+          <line x1="125" y1="120" x2="540" y2="120" stroke="#34d399" stroke-width="2" marker-end="url(#arrG)"/><text x="330" y="112" text-anchor="middle" fill="#34d399">① 更新 DB（新值 v2）</text>
+          <line x1="125" y1="160" x2="400" y2="160" stroke="#34d399" stroke-width="2" marker-end="url(#arrG)"/><text x="262" y="152" text-anchor="middle" fill="#34d399">② 删除缓存 key</text>
+          <!-- 正常并发读 -->
+          <line x1="265" y1="205" x2="400" y2="205" stroke="#7d8db0" stroke-width="1.8" marker-end="url(#arr)"/><text x="332" y="197" text-anchor="middle">③ R 读 miss</text>
+          <line x1="265" y1="245" x2="540" y2="245" stroke="#7d8db0" stroke-width="1.8" marker-end="url(#arr)"/><text x="402" y="237" text-anchor="middle">④ R 查 DB → 得 v2（已更新）</text>
+          <line x1="265" y1="285" x2="400" y2="285" stroke="#7d8db0" stroke-width="1.8" marker-end="url(#arr)"/><text x="332" y="277" text-anchor="middle">⑤ R 回填 v2 ✓</text>
+        </g>
+        <!-- 风险窗口说明 -->
+        <rect x="70" y="330" width="520" height="200" rx="10" fill="rgba(251,191,36,.05)" stroke="#92600a" stroke-dasharray="6 4"/>
+        <text x="90" y="360" fill="#fbbf24" font-size="14" font-weight="700">理论上的不一致条件（多条件叠加，概率极低）</text>
+        <text x="90" y="392" fill="#a5b4cc" font-size="12.5">缓存恰好过期 → R 读 miss 查到旧值 v1</text>
+        <text x="90" y="420" fill="#a5b4cc" font-size="12.5">→ R 尚未回填 → W 完整执行完 更DB+删缓存</text>
+        <text x="90" y="448" fill="#a5b4cc" font-size="12.5">→ R 才把 v1 回填 → 不一致（毫秒级窗口）</text>
+        <text x="90" y="482" fill="#fbbf24" font-size="12.5">要求"读慢于写"，普通业务节奏难以触发</text>
+        <text x="90" y="510" fill="#7d8db0" font-size="12">兜底：TTL 过期 / 延迟双删 / binlog 删缓存</text>
+      </g>
+
+      <!-- 右侧泳道 -->
+      <g>
+        <g font-size="13" text-anchor="middle">
+          <rect x="640" y="56" width="90" height="30" rx="6" fill="#0f172a" stroke="#334155"/><text x="685" y="76" fill="#22d3ee">写请求 W</text>
+          <rect x="780" y="56" width="90" height="30" rx="6" fill="#0f172a" stroke="#334155"/><text x="825" y="76" fill="#a78bfa">读请求 R</text>
+          <rect x="920" y="56" width="90" height="30" rx="6" fill="#0f172a" stroke="#334155"/><text x="965" y="76" fill="#94a3b8">Cache</text>
+          <rect x="1060" y="56" width="90" height="30" rx="6" fill="#0f172a" stroke="#334155"/><text x="1105" y="76" fill="#94a3b8">DB</text>
+        </g>
+        <g stroke="#1e293b" stroke-dasharray="4 4">
+          <line x1="685" y1="86" x2="685" y2="560"/><line x1="825" y1="86" x2="825" y2="560"/>
+          <line x1="965" y1="86" x2="965" y2="560"/><line x1="1105" y1="86" x2="1105" y2="560"/>
+        </g>
+        <g font-size="12.5">
+          <line x1="685" y1="120" x2="960" y2="120" stroke="#f87171" stroke-width="2" marker-end="url(#arrR)"/><text x="822" y="112" text-anchor="middle" fill="#f87171">① 删除缓存 key</text>
+          <line x1="825" y1="160" x2="960" y2="160" stroke="#7d8db0" stroke-width="1.8" marker-end="url(#arr)"/><text x="892" y="152" text-anchor="middle" fill="#a5b4cc">② R 读 miss</text>
+          <line x1="825" y1="200" x2="1100" y2="200" stroke="#7d8db0" stroke-width="1.8" marker-end="url(#arr)"/><text x="962" y="192" text-anchor="middle" fill="#a5b4cc">③ R 查 DB → 得 v1（尚未更新）</text>
+          <line x1="685" y1="240" x2="1100" y2="240" stroke="#f87171" stroke-width="2" marker-end="url(#arrR)"/><text x="892" y="232" text-anchor="middle" fill="#f87171">④ W 更新 DB → v2</text>
+          <line x1="825" y1="280" x2="960" y2="280" stroke="#f87171" stroke-width="2" marker-end="url(#arrR)"/><text x="892" y="272" text-anchor="middle" fill="#f87171">⑤ R 回填 v1（旧值）✗</text>
+        </g>
+        <rect x="630" y="330" width="560" height="200" rx="10" fill="rgba(248,113,113,.05)" stroke="#7f1d1d"/>
+        <text x="650" y="360" fill="#f87171" font-size="14" font-weight="700">不一致窗口：③~⑤ 全程（写事务时长）</text>
+        <text x="650" y="392" fill="#a5b4cc" font-size="12.5">只要一个读请求落在"删完、DB 未更完"之间</text>
+        <text x="650" y="420" fill="#a5b4cc" font-size="12.5">旧值即被回填，普通业务节奏即可触发</text>
+        <text x="650" y="448" fill="#a5b4cc" font-size="12.5">持续到 TTL 过期或下次写触发删除</text>
+        <text x="650" y="482" fill="#f87171" font-size="12.5">触发难度比左侧低一个数量级以上 → 不采用</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <h3>为什么"删缓存"而不是"更新缓存"</h3>
+      <ul>
+        <li><b>乱序覆盖</b>：并发写时 A 的旧值后到，覆盖 B 的新值</li>
+        <li><b>懒加载</b>：删除幂等，下次读自然回填最新值</li>
+        <li>写多读少场景下，更新缓存产生大量无效计算</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>延迟双删</h3>
+      <ul>
+        <li>更 DB → 删缓存 → 等待 → 再删一次</li>
+        <li>间隔 = <b>主从延迟 + buffer</b>（通常几百 ms）</li>
+        <li>消灭"从库旧数据被读请求回填"的窗口；读走主库可省略</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>binlog 订阅（Canal）</h3>
+      <ul>
+        <li>伪装 MySQL 从库收 binlog → 解析 → 删缓存</li>
+        <li><b>业务零侵入、不丢变更</b>，准实时（秒级）</li>
+        <li>删除失败由下一条 binlog 重放补偿</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>一致性的准确定位</h3>
+      <ul>
+        <li>缓存层给出的是<b>最终一致</b>的工程权衡</li>
+        <li>面试中声称"100% 一致"是错误表述</li>
+        <li>强一致需读写分布式锁串行化，吞吐倒退一个量级，仅资金类极小范围使用</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>天猫高工 P6-P8 答卷 v2 · Q3 配图</span>
+    <span>时序图依据：Cache Aside 模式标准分析</span>
+  </div>
+</div>
+
+<script>
+function shoot() { return html2canvas(document.getElementById('report-container'), { backgroundColor: '#020617', scale: 2 }); }
+async function downloadPNG() { const c = await shoot(); const a = document.createElement('a'); a.download = 'q03-cache-consistency.png'; a.href = c.toDataURL('image/png'); a.click(); }
+async function copyAsImage() { const c = await shoot(); const blob = await new Promise(r => c.toBlob(r, 'image/png')); await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); }
+</script>
+</body>
+</html>

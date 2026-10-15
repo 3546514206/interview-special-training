@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Q20 · 全链路压测：染色贯穿与影子隔离</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', 'PingFang SC', 'Microsoft YaHei', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; }
+  .container { width: 1240px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #34d399; }
+  .header h1 { font-size: 20px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 12px; color: #7d8db0; margin-top: 5px; }
+  .toolbar button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; margin-left: 6px; }
+  .toolbar button:hover { color: #f1f5f9; border-color: #64748b; }
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 14px 18px; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; margin-bottom: 8px; }
+  .card p, .card li { font-size: 13px; color: #a5b4cc; line-height: 1.8; }
+  .card ul { list-style: none; }
+  .card b { color: #e2e8f0; }
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>全链路压测 · 流量染色贯穿 + 影子隔离 + 出口拦截</h1>
+        <div class="subtitle">生产环境真题真做：应用/DB/缓存/MQ 全真实，压测数据与真实数据同环境不同存储</div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button onclick="copyAsImage()">复制图片</button>
+      <button onclick="downloadPNG()">导出 PNG</button>
+    </div>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1200 700" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#7d8db0"/>
+        </marker>
+        <marker id="arrP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#fbbf24"/>
+        </marker>
+        <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/>
+        </marker>
+        <marker id="arrR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#f87171"/>
+        </marker>
+      </defs>
+
+      <!-- 染色流量路径 -->
+      <text x="600" y="32" text-anchor="middle" fill="#f1f5f9" font-size="16" font-weight="700">① 染色标识全链路透传（每个组件都能识别压测流量）</text>
+      <g font-size="13" text-anchor="middle">
+        <rect x="60" y="80" width="150" height="64" rx="10" fill="rgba(251,191,36,.1)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="135" y="108" fill="#fbbf24" font-weight="700">施压集群</text>
+        <text x="135" y="130" fill="#a5b4cc" font-size="12">入口打标 test=1</text>
+
+        <rect x="270" y="80" width="130" height="64" rx="10" fill="rgba(15,23,42,.8)" stroke="#334155"/>
+        <text x="335" y="108" fill="#e2e8f0" font-weight="700">网关</text>
+        <text x="335" y="130" fill="#7d8db0" font-size="12">识别并透传标识</text>
+
+        <rect x="460" y="80" width="130" height="64" rx="10" fill="rgba(34,211,238,.08)" stroke="#22d3ee"/>
+        <text x="525" y="108" fill="#22d3ee" font-weight="700">服务 A</text>
+        <text x="525" y="130" fill="#7d8db0" font-size="12">RPC 上下文透传</text>
+
+        <rect x="650" y="80" width="130" height="64" rx="10" fill="rgba(167,139,250,.08)" stroke="#a78bfa"/>
+        <text x="715" y="108" fill="#a78bfa" font-weight="700">服务 B</text>
+        <text x="715" y="130" fill="#7d8db0" font-size="12">trace baggage 传递</text>
+
+        <rect x="840" y="80" width="130" height="64" rx="10" fill="rgba(52,211,153,.08)" stroke="#34d399"/>
+        <text x="905" y="108" fill="#34d399" font-weight="700">服务 C</text>
+        <text x="905" y="130" fill="#7d8db0" font-size="12">异步线程传递</text>
+
+        <line x1="210" y1="112" x2="270" y2="112" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrP)"/>
+        <line x1="400" y1="112" x2="460" y2="112" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrP)"/>
+        <line x1="590" y1="112" x2="650" y2="112" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrP)"/>
+        <line x1="780" y1="112" x2="840" y2="112" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrP)"/>
+        <text x="600" y="66" fill="#fbbf24" font-size="12" text-anchor="middle">── 染色标识随调用链贯穿：RPC header / trace baggage / 线程上下文 ──</text>
+      </g>
+
+      <!-- 影子隔离层 -->
+      <text x="600" y="196" text-anchor="middle" fill="#f1f5f9" font-size="16" font-weight="700">② 影子隔离：同环境、不同存储（容量结论不失真的前提）</text>
+      <g font-size="13" text-anchor="middle">
+        <!-- 数据库 -->
+        <rect x="110" y="230" width="300" height="120" rx="10" fill="rgba(15,23,42,.85)" stroke="#334155"/>
+        <text x="260" y="258" fill="#e2e8f0" font-weight="700">MySQL（同实例）</text>
+        <rect x="140" y="276" width="110" height="34" rx="6" fill="rgba(52,211,153,.12)" stroke="#34d399"/><text x="195" y="298" fill="#34d399" font-size="12">order（真实）</text>
+        <rect x="270" y="276" width="110" height="34" rx="6" fill="rgba(251,191,36,.12)" stroke="#fbbf24"/><text x="325" y="298" fill="#fbbf24" font-size="12">order_test</text>
+        <text x="260" y="336" fill="#7d8db0" font-size="12">影子表结构/索引/数据量级与真实一致</text>
+
+        <!-- MQ -->
+        <rect x="460" y="230" width="280" height="120" rx="10" fill="rgba(15,23,42,.85)" stroke="#334155"/>
+        <text x="600" y="258" fill="#e2e8f0" font-weight="700">MQ（同集群）</text>
+        <rect x="485" y="276" width="110" height="34" rx="6" fill="rgba(52,211,153,.12)" stroke="#34d399"/><text x="540" y="298" fill="#34d399" font-size="12">topic_order</text>
+        <rect x="610" y="276" width="110" height="34" rx="6" fill="rgba(251,191,36,.12)" stroke="#fbbf24"/><text x="665" y="298" fill="#fbbf24" font-size="12">topic_test</text>
+        <text x="600" y="336" fill="#7d8db0" font-size="12">压测消息进影子 topic</text>
+
+        <!-- Redis -->
+        <rect x="790" y="230" width="300" height="120" rx="10" fill="rgba(15,23,42,.85)" stroke="#334155"/>
+        <text x="940" y="258" fill="#e2e8f0" font-weight="700">Redis（同实例）</text>
+        <rect x="815" y="276" width="120" height="34" rx="6" fill="rgba(52,211,153,.12)" stroke="#34d399"/><text x="875" y="298" fill="#34d399" font-size="12">key: sku_123</text>
+        <rect x="950" y="276" width="120" height="34" rx="6" fill="rgba(251,191,36,.12)" stroke="#fbbf24"/><text x="1010" y="298" fill="#fbbf24" font-size="12">test_sku_123</text>
+        <text x="940" y="336" fill="#7d8db0" font-size="12">压测 key 加前缀隔离</text>
+
+        <line x1="525" y1="144" x2="260" y2="230" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrP)" stroke-dasharray="5 4"/>
+        <line x1="715" y1="144" x2="600" y2="230" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrP)" stroke-dasharray="5 4"/>
+        <line x1="905" y1="144" x2="940" y2="230" stroke="#fbbf24" stroke-width="1.6" marker-end="url(#arrP)" stroke-dasharray="5 4"/>
+      </g>
+
+      <!-- 出口拦截 -->
+      <text x="600" y="400" text-anchor="middle" fill="#f1f5f9" font-size="16" font-weight="700">③ 出口拦截：压测流量绝不产生真实副作用（资损与合规红线）</text>
+      <g font-size="13" text-anchor="middle">
+        <rect x="200" y="430" width="800" height="70" rx="10" fill="rgba(248,113,113,.07)" stroke="#7f1d1d"/>
+        <text x="600" y="458" fill="#f87171" font-weight="700">短信 / 推送 / 支付 / 三方 HTTP 调用</text>
+        <text x="600" y="484" fill="#a5b4cc" font-size="12">命中染色标识 → 全部转向挡板（stub 记录与返回，不发出真实请求）</text>
+        <line x1="905" y1="350" x2="600" y2="430" stroke="#f87171" stroke-width="1.6" marker-end="url(#arrR)" stroke-dasharray="5 4"/>
+      </g>
+
+      <!-- 施压策略 -->
+      <text x="600" y="540" text-anchor="middle" fill="#f1f5f9" font-size="16" font-weight="700">④ 阶梯加压与生产保护</text>
+      <g font-size="13" text-anchor="middle">
+        <rect x="140" y="570" width="60" height="44" rx="8" fill="rgba(34,211,238,.1)" stroke="#22d3ee"/><text x="170" y="597" fill="#22d3ee" font-size="13">1x</text>
+        <rect x="360" y="570" width="60" height="44" rx="8" fill="rgba(167,139,250,.1)" stroke="#a78bfa"/><text x="390" y="597" fill="#a78bfa" font-size="13">3x</text>
+        <rect x="580" y="570" width="60" height="44" rx="8" fill="rgba(251,191,36,.1)" stroke="#fbbf24"/><text x="610" y="597" fill="#fbbf24" font-size="13">5x</text>
+        <line x1="200" y1="592" x2="360" y2="592" stroke="#7d8db0" stroke-width="2" marker-end="url(#arr)"/>
+        <line x1="420" y1="592" x2="580" y2="592" stroke="#7d8db0" stroke-width="2" marker-end="url(#arr)"/>
+        <line x1="640" y1="592" x2="800" y2="592" stroke="#7d8db0" stroke-width="2" marker-end="url(#arr)"/>
+        <rect x="800" y="570" width="340" height="44" rx="8" fill="rgba(52,211,153,.07)" stroke="#065f46"/>
+        <text x="970" y="590" fill="#34d399" font-size="12" font-weight="700">每档观察：CPU · RT · 错误率</text>
+        <text x="970" y="606" fill="#7d8db0" font-size="12">慢查询 · 主从延迟 · MQ 堆积</text>
+        <text x="400" y="650" fill="#7d8db0" font-size="12">生产保护：限流优先保真实用户 · 压测窗口避峰 · 一键停止随时可用</text>
+        <text x="400" y="676" fill="#fbbf24" font-size="12">产出：最先到达容量上限的组件清单 + 扩容/预案清单</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <h3>为什么必须生产环境</h3>
+      <ul>
+        <li>测试环境的数据量级、索引分布、硬件规格与真实差异巨大</li>
+        <li>容量结论的失真主要来自<b>数据分布与规格差异</b></li>
+        <li>影子表与真实表同构是结论可信的前提</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>影子表如何跟随结构变更</h3>
+      <ul>
+        <li>DDL 平台在真实表变更时<b>自动对影子表执行同步 DDL</b></li>
+        <li>结构漂移的影子表会使压测结论失真</li>
+        <li>压测后影子数据按规约清理</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>为什么只压单接口不够</h3>
+      <ul>
+        <li>级联效应：缓存 miss 风暴 → DB 慢查询 → 连接池耗尽 → MQ 堆积反压</li>
+        <li>系统性雪崩只有<b>完整链路</b>才能暴露</li>
+        <li>跨服务资源竞争（共享 DB/连接池）是单接口视角的盲区</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>天猫高工 P6-P8 答卷 v2 · Q20 配图</span>
+    <span>染色 / 影子 / 拦截 / 阶梯：大促全链路压测标准设计</span>
+  </div>
+</div>
+
+<script>
+function shoot() { return html2canvas(document.getElementById('report-container'), { backgroundColor: '#020617', scale: 2 }); }
+async function downloadPNG() { const c = await shoot(); const a = document.createElement('a'); a.download = 'q20-full-link-loadtest.png'; a.href = c.toDataURL('image/png'); a.click(); }
+async function copyAsImage() { const c = await shoot(); const blob = await new Promise(r => c.toBlob(r, 'image/png')); await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); }
+</script>
+</body>
+</html>

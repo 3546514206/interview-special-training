@@ -48,7 +48,7 @@
 
 > 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q01-hashmap.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q01-hashmap.html)
 >
-> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 ``（去掉绝对前缀）
 
 **【配图 · put 源码逐帧走读（动图 · 25 帧 · 零基础版 · 阅读阶梯第一级）】**
 
@@ -160,7 +160,7 @@
 
 > 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q03-aqs.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q03-aqs.html)
 >
-> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 ``（去掉绝对前缀）
 
 ---
 
@@ -206,7 +206,7 @@
 
 > 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q04-lock-upgrade.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q04-lock-upgrade.html)
 >
-> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 ``（去掉绝对前缀）
 
 ---
 
@@ -618,7 +618,7 @@
 
 > 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q13-mvcc.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q13-mvcc.html)
 >
-> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 ``（去掉绝对前缀）
 
 ---
 
@@ -861,7 +861,7 @@
 
 > 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q18-kafka-exactly-once.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q18-kafka-exactly-once.html)
 >
-> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 ``（去掉绝对前缀）
 
 ---
 
@@ -997,7 +997,7 @@
 
 > 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q20-circular-dependency.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q20-circular-dependency.html)
 >
-> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 ``（去掉绝对前缀）
 
 ---
 
@@ -1303,7 +1303,7 @@
 
 > 高清交互版（可复制 / 导出 PNG·PDF）：[fliggyp6/diagrams/q25-seckill.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q25-seckill.html)
 >
-> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
+> 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 ``（去掉绝对前缀）
 
 ---
 

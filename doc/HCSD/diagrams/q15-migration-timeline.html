@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Q15 · 亿级数据平滑迁移五步时间线</title>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', 'PingFang SC', 'Microsoft YaHei', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; }
+  .container { width: 1240px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #34d399; }
+  .header h1 { font-size: 20px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 12px; color: #7d8db0; margin-top: 5px; }
+  .toolbar button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; margin-left: 6px; }
+  .toolbar button:hover { color: #f1f5f9; border-color: #64748b; }
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 14px 18px; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; margin-bottom: 8px; }
+  .card p, .card li { font-size: 13px; color: #a5b4cc; line-height: 1.8; }
+  .card ul { list-style: none; }
+  .card b { color: #e2e8f0; }
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>亿级数据平滑迁移 · 五步时间线</h1>
+        <div class="subtitle">核心原则：增量承接（Canal/双写）必须前置于存量搬迁 —— 顺序颠倒则搬迁时段增量丢失</div>
+      </div>
+    </div>
+    <div class="toolbar">
+      <button onclick="copyAsImage()">复制图片</button>
+      <button onclick="downloadPNG()">导出 PNG</button>
+    </div>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1200 620" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#34d399"/>
+        </marker>
+      </defs>
+
+      <!-- 主时间轴 -->
+      <line x1="80" y1="120" x2="1120" y2="120" stroke="#334155" stroke-width="3" marker-end="url(#arrG)"/>
+      <text x="600" y="44" text-anchor="middle" fill="#f1f5f9" font-size="16" font-weight="700">时间 →（业务全程无感，双写贯穿）</text>
+
+      <!-- 阶段节点 -->
+      <g text-anchor="middle" font-size="12.5">
+        <!-- P0 -->
+        <circle cx="140" cy="120" r="10" fill="#fbbf24"/>
+        <text x="140" y="90" fill="#fbbf24" font-weight="700" font-size="13">P0 位点/双写启动</text>
+        <rect x="60" y="150" width="180" height="150" rx="10" fill="rgba(251,191,36,.07)" stroke="#92600a"/>
+        <text x="150" y="180" fill="#a5b4cc">启动 Canal 收 binlog</text>
+        <text x="150" y="206" fill="#a5b4cc">或业务双写新库</text>
+        <text x="150" y="232" fill="#fbbf24">记录 binlog 位点</text>
+        <text x="150" y="258" fill="#7d8db0" font-size="12">增量先被承接，</text>
+        <text x="150" y="278" fill="#7d8db0" font-size="12">存量丢失窗口关闭</text>
+
+        <!-- P1 -->
+        <circle cx="360" cy="120" r="10" fill="#22d3ee"/>
+        <text x="360" y="90" fill="#22d3ee" font-weight="700" font-size="13">P1 存量搬迁</text>
+        <rect x="270" y="150" width="180" height="150" rx="10" fill="rgba(34,211,238,.07)" stroke="#155e75"/>
+        <text x="360" y="180" fill="#a5b4cc">按 id 区间切片</text>
+        <text x="360" y="206" fill="#a5b4cc">每批约 1 万行</text>
+        <text x="360" y="232" fill="#22d3ee">限速：盯主从延迟</text>
+        <text x="360" y="258" fill="#7d8db0" font-size="12">与 IO util；</text>
+        <text x="360" y="278" fill="#7d8db0" font-size="12">水位表断点续跑</text>
+
+        <!-- P2 -->
+        <circle cx="580" cy="120" r="10" fill="#a78bfa"/>
+        <text x="580" y="90" fill="#a78bfa" font-weight="700" font-size="13">P2 对账</text>
+        <rect x="490" y="150" width="180" height="150" rx="10" fill="rgba(167,139,250,.07)" stroke="#4c1d95"/>
+        <text x="580" y="180" fill="#a5b4cc">全量：分片 checksum</text>
+        <text x="580" y="206" fill="#a5b4cc">增量：实时抽样比对</text>
+        <text x="580" y="232" fill="#a78bfa">按内容不按行数</text>
+        <text x="580" y="258" fill="#7d8db0" font-size="12">差异定位到分片，</text>
+        <text x="580" y="278" fill="#7d8db0" font-size="12">修复任务按片执行</text>
+
+        <!-- P3 -->
+        <circle cx="800" cy="120" r="10" fill="#34d399"/>
+        <text x="800" y="90" fill="#34d399" font-weight="700" font-size="13">P3 灰度切读</text>
+        <rect x="710" y="150" width="180" height="150" rx="10" fill="rgba(52,211,153,.07)" stroke="#065f46"/>
+        <text x="800" y="180" fill="#a5b4cc">配置中心开关</text>
+        <text x="800" y="206" fill="#34d399">1% → 10% → 100%</text>
+        <text x="800" y="232" fill="#a5b4cc">每档观察：RT /</text>
+        <text x="800" y="258" fill="#7d8db0" font-size="12">错误率 / 对账差异；</text>
+        <text x="800" y="278" fill="#7d8db0" font-size="12">异常即回切</text>
+
+        <!-- P4 -->
+        <circle cx="1020" cy="120" r="10" fill="#f87171"/>
+        <text x="1020" y="90" fill="#f87171" font-weight="700" font-size="13">P4 切写收尾</text>
+        <rect x="930" y="150" width="180" height="150" rx="10" fill="rgba(248,113,113,.07)" stroke="#7f1d1d"/>
+        <text x="1020" y="180" fill="#a5b4cc">新库主写、旧库停写</text>
+        <text x="1020" y="206" fill="#f87171">双写保留一个完整</text>
+        <text x="1020" y="232" fill="#f87171">业务周期（月结/大促）</text>
+        <text x="1020" y="258" fill="#7d8db0" font-size="12">期满旧库降级归档；</text>
+        <text x="1020" y="278" fill="#7d8db0" font-size="12">切写前必须演练回滚</text>
+      </g>
+
+      <!-- 回滚带 -->
+      <g font-size="12.5">
+        <rect x="80" y="340" width="640" height="56" rx="10" fill="rgba(52,211,153,.05)" stroke="#065f46" stroke-dasharray="6 4"/>
+        <text x="400" y="364" text-anchor="middle" fill="#34d399" font-weight="700">P0~P3 期间回滚：开关拨回旧库（秒级，读流量即刻回切）</text>
+        <text x="400" y="386" text-anchor="middle" fill="#7d8db0" font-size="12">双写一直保留，旧库数据始终最新</text>
+
+        <rect x="740" y="340" width="380" height="56" rx="10" fill="rgba(248,113,113,.05)" stroke="#7f1d1d"/>
+        <text x="930" y="364" text-anchor="middle" fill="#f87171" font-weight="700">P4 之后回滚：需反向双写重建旧库</text>
+        <text x="930" y="386" text-anchor="middle" fill="#7d8db0" font-size="12">成本陡增 → 切写是唯一不可轻退的点</text>
+      </g>
+
+      <!-- 底部：常见错误 -->
+      <g font-size="12.5">
+        <rect x="80" y="430" width="1040" height="160" rx="10" fill="rgba(251,191,36,.04)" stroke="#92600a"/>
+        <text x="110" y="462" fill="#fbbf24" font-weight="700" font-size="14">高频错误（面试易错点）</text>
+        <text x="110" y="494" fill="#a5b4cc">❌ "先搬完存量再开始双写" —— 搬迁耗时数小时，期间增量全部丢失；位点/双写必须前置</text>
+        <text x="110" y="524" fill="#a5b4cc">❌ "对账比一下行数就行" —— 行数一致内容不一致是真实事故形态；必须按内容 checksum</text>
+        <text x="110" y="554" fill="#a5b4cc">❌ "迁移完成马上下线旧库" —— 至少保留一个完整业务周期，周期性任务（月结/大促）只有真实周期能暴露问题</text>
+        <text x="110" y="582" fill="#7d8db0" font-size="12">双写失败进补偿队列重试，禁止静默丢弃；Canal 方案天然具备 binlog 重放补偿能力</text>
+      </g>
+    </svg>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <h3>Canal 原理</h3>
+      <ul>
+        <li>伪装 MySQL slave，走主从复制协议拉 binlog（ROW 格式）</li>
+        <li>解析变更投递 MQ，下游消费写新库</li>
+        <li>业务代码<b>零侵入</b></li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>对账 checksum 高效实现</h3>
+      <ul>
+        <li>按主键区间分段聚合 sum(crc32(concat(列)))</li>
+        <li>段级差异先定位，再逐行根因</li>
+        <li>增量部分按 binlog 序号窗口比对</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>切写前的演练</h3>
+      <ul>
+        <li>回滚路径完整走一遍（反向双写脚本、开关、监控）</li>
+        <li>演练是切写的前置条件，不是可选项</li>
+        <li>切换时点选低峰，值班就位</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>天猫高工 P6-P8 答卷 v2 · Q15 配图</span>
+    <span>五步法与主流大厂迁移方案一致（双写 + 灰度切读）</span>
+  </div>
+</div>
+
+<script>
+function shoot() { return html2canvas(document.getElementById('report-container'), { backgroundColor: '#020617', scale: 2 }); }
+async function downloadPNG() { const c = await shoot(); const a = document.createElement('a'); a.download = 'q15-migration-timeline.png'; a.href = c.toDataURL('image/png'); a.click(); }
+async function copyAsImage() { const c = await shoot(); const blob = await new Promise(r => c.toBlob(r, 'image/png')); await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); }
+</script>
+</body>
+</html>
