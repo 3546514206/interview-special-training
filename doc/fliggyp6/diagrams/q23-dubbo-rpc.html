@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dubbo RPC 通讯全过程 · 零基础版</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; min-height: 100vh; }
+  .container { width: 1320px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #34d399; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.6); } 70% { box-shadow: 0 0 0 10px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
+  .header h1 { font-size: 21px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 13px; color: #7d8db0; margin-top: 5px; }
+  .toolbar { position: relative; }
+  .toolbar-toggle { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 16px; font-family: inherit; }
+  .toolbar-toggle:hover { color: #e2e8f0; border-color: #475569; }
+  .toolbar-actions { display: none; position: absolute; right: 0; top: 38px; gap: 6px; z-index: 10; }
+  .toolbar.open .toolbar-actions { display: flex; }
+  .toolbar-actions button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; }
+  .toolbar-actions button:hover { color: #f1f5f9; border-color: #64748b; }
+  @media print { .toolbar { display: none !important; } }
+  .controls { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .controls button { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; padding: 7px 16px; cursor: pointer; font-size: 14px; font-family: inherit; }
+  .controls button:hover { border-color: #64748b; }
+  .controls button:disabled { opacity: 0.35; cursor: default; }
+  .step-ind { font-size: 14px; color: #cbd5e1; min-width: 70px; }
+  .frame-title { font-size: 14px; color: #34d399; font-weight: 700; }
+  .qmark { cursor: help; font-size: 15px; color: #7d8db0; }
+  .key-hint { font-size: 12px; color: #64748b; }
+  .dots { display: flex; gap: 6px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+  .dots button { width: 11px; height: 11px; border-radius: 50%; padding: 0; background: #1e293b; border: 1px solid #334155; cursor: pointer; }
+  .dots button.cur { background: #34d399; border-color: #34d399; }
+  .dots button:hover { border-color: #34d399; }
+  .legend { display: flex; gap: 18px; align-items: center; font-size: 12px; color: #a5b4cc; margin-bottom: 10px; flex-wrap: wrap; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 16px 18px; }
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+  .card-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; }
+  .card ul { list-style: none; }
+  .card li { font-size: 13px; color: #a5b4cc; line-height: 1.75; }
+  .card li b { color: #e2e8f0; font-weight: 600; }
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>Dubbo RPC 入门 · 一次远程调用的完整旅程</h1>
+        <div class="subtitle">零基础可读：先认角色 → 看启动三步 → 跟一次调用穿十层 → 监控与容错收尾 · 每个术语第一次出现都有白话解释</div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbar').classList.toggle('open')">⋯</button>
+      <div class="toolbar-actions">
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="btn-reset">⏮</button>
+    <button id="btn-prev">◀</button>
+    <button id="btn-play">▶ 播放</button>
+    <button id="btn-next">▶|</button>
+    <span class="step-ind" id="step-ind">1 / 33</span>
+    <span class="frame-title" id="cap-title"></span>
+    <span class="qmark" id="qmark" title="">❓</span>
+    <span class="key-hint">← → 键翻页 · ❓ 悬停看本帧讲解</span>
+    <div class="dots" id="dots"></div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw" style="background:#a78bfa"></span>紫色 = Registry 注册中心（问路处）</span>
+    <span><span class="sw" style="background:#22d3ee"></span>青色 = Consumer 消费者（发起调用）</span>
+    <span><span class="sw" style="background:#34d399"></span>绿色 = Provider 提供者（真正干活）</span>
+    <span><span class="sw" style="background:#fb923c"></span>橙色 = Monitor 监控中心（记考勤）</span>
+    <span><span class="sw" style="background:#fbbf24"></span>黄色 = 线上数据 / 报文</span>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1160 620" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+        <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#8ea3bd"/>
+        </marker>
+        <marker id="arrA" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24"/>
+        </marker>
+        <marker id="arrV" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#a78bfa"/>
+        </marker>
+        <marker id="arrO" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#fb923c"/>
+        </marker>
+        <marker id="arrC" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/>
+        </marker>
+      </defs>
+      <rect width="1160" height="620" fill="#020617"/>
+      <rect width="1160" height="620" fill="url(#grid)"/>
+
+      <!-- 事件横幅 -->
+      <text id="ev" x="580" y="40" text-anchor="middle" fill="#f8fafc" font-size="17" font-weight="700"></text>
+
+      <!-- 主舞台：每帧重绘 -->
+      <g id="stage"></g>
+
+      <!-- 术语卡 -->
+      <g>
+        <rect x="40" y="412" width="1080" height="74" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+        <text x="60" y="436" fill="#7d8db0" font-size="11">术语卡（本帧新出现的词，白话解释）</text>
+        <text x="60" y="464" fill="#e2e8f0" font-size="13.5" font-weight="600" id="term"></text>
+      </g>
+
+      <!-- 全程六站 -->
+      <g>
+        <rect x="40" y="498" width="1080" height="106" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+        <text x="60" y="524" fill="#7d8db0" font-size="11">Dubbo 全程六站（走到哪亮到哪）</text>
+        <g id="steps"></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#a78bfa"></div><h3>启动三步</h3></div>
+      <ul>
+        <li>• <b>⓪ 注册</b>（提供者挂牌）→ <b>① 订阅</b>（消费者要名单）→ <b>② 推送</b>（地址入本地缓存）</li>
+        <li>• 注册中心<b>只管问路</b>：真正调用走 ③ 号线直连，不经过它</li>
+        <li>• 提供者宕机 → 临时节点消失 → 自动摘除；注册中心挂了 → <b>本地缓存照常调</b></li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#fbbf24"></div><h3>调用穿十层</h3></div>
+      <ul>
+        <li>• 消费者侧：<b>代理 → 集群(选机器) → 过滤 → 编码序列化 → Netty</b></li>
+        <li>• 提供者侧：<b>解码 → 线程池 → 过滤 → 反射真方法</b>，响应原路返回</li>
+        <li>• 一条 TCP 长连接多路复用，靠 <b>requestId</b> 配对：同步调用 = 伪同步</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#34d399"></div><h3>面试高频</h3></div>
+      <ul>
+        <li>• 注册中心全挂？→ <b>能调</b>（直连 + 内存/磁盘缓存）</li>
+        <li>• 默认容错 failover 重试 2 次 → <b>写操作注意幂等</b></li>
+        <li>• IO 线程只收发，业务进线程池（fixed 200）——<b>慢调用不拖垮网络</b></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>q23 · Dubbo RPC 通讯全过程 · 33 帧 · 零基础版（以 Apache Dubbo 2.7 经典架构为基准）</span>
+    <span>飞猪 P6 Java 面试特训 · 衔接 Q23 Dubbo SPI</span>
+  </div>
+</div>
+
+<script>
+/* ============ 帧数据 ============ */
+const F = [
+{ t:'第 0 帧 · 看图须知：这张图讲什么', mode:'intro', step:-1,
+  ev:'Dubbo RPC 通讯全过程 · 零基础可读',
+  term:'RPC（Remote Procedure Call，远程过程调用）：调用另一台机器上的方法，写起来像调本地方法一样。',
+  note:['这张图讲 Dubbo：两个 Java 服务之间怎么互相调用。全程 33 帧，每帧只讲一小步。',
+        '四个角色先记脸熟：注册中心（问路处）、消费者（发起调用的一方）、提供者（真正干活的一方）、监控中心（记考勤的）。',
+        '底部「全程六站」是行程单，走到哪亮到哪；右上角 ❓ 悬停可看本帧详细讲解。'] },
+{ t:'第 1 帧 · 概念：本地调用 vs 远程调用', mode:'def2', step:-1,
+  d1:['本地调用（同一个 JVM 里）',[['int age = user.getAge();','对象就在本进程内存里'],['一步到位，微秒级','网络？不存在的']]],
+  d2:['远程调用（跨机器）',[['int n = stockService.get(id);','方法在另一台机器的进程里'],['看着像本地，实际跨了网络','中间的活全被框架藏掉了']]],
+  ev:'同一行代码：变量在眼前 vs 对象在千里之外',
+  term:'JVM：一个 Java 进程。本地调用 = 不出进程；远程调用 = 数据要出机器、走网络。',
+  note:['左边：对象和自己写在同一个进程里，调用就是 CPU 跳过去执行，微秒级。',
+        '右边：stockService 的实现住在另一台机器上。代码长得一样，但中间隔着网络。',
+        '让右边「看起来像左边」，就是 RPC 框架的全部工作——Dubbo 是其中一员。'] },
+{ t:'第 2 帧 · 定义：RPC 到底做了什么', mode:'def', step:-1,
+  dt:'RPC = Remote Procedure Call（远程过程调用）',
+  ds:[['你说：stockService.deduct(1001, 2);','业务代码：一行普通的接口调用'],
+      ['框架：查地址 → 挑一台机器 → 编码 → 发送','全部自动，业务无感'],
+      ['对方：解码 → 找到实现类 → 执行方法','在千里之外替你跑这段逻辑'],
+      ['回程：结果编码 → 发回 → 还原成对象','你拿到的返回值像本地一样自然']],
+  ev:'把「跨机器调用」伪装成「本地方法调用」',
+  term:'接口（interface）：只声明方法不写实现。消费者拿接口，提供者写实现——两边共同的暗号。',
+  note:['RPC 不是某项技术，而是一种「障眼法」：把网络细节全部藏掉。',
+        '要藏的活不少：对方在哪（服务发现）、找谁干（负载均衡）、怎么说（序列化与协议）、对方不回话怎么办（超时重试）。',
+        'Dubbo 把这些活分成了固定的层，第三幕会一层层钻进去。'] },
+{ t:'第 3 帧 · 定义：Dubbo 是什么', mode:'def', step:-1,
+  dt:'角色定义卡 · Dubbo（Apache 顶级项目）',
+  ds:[['出身：阿里 2011 开源，2019 毕业','成为 Apache 顶级项目（Apache Dubbo）'],
+      ['定位：高性能 Java RPC 框架','三大能力见下三行'],
+      ['① 服务发现：注册中心管理地址','加机器/摘机器，自动感知'],
+      ['② 远程调用：dubbo 协议 + Netty','单条 TCP 长连接，NIO 异步'],
+      ['③ 服务治理：负载均衡/容错/监控','内置多种策略，SPI 可全部替换'],
+      ['本图基准：Dubbo 2.7 接口级注册','3.x 应用级模型暂不展开']],
+  ev:'阿里造的 RPC 框架：微服务之间的「电话网络」',
+  term:'SPI（Service Provider Interface）：组件插拔机制——Dubbo 里协议、负载均衡、过滤器全是 SPI 扩展点（详见答卷 Q23）。',
+  note:['飞猪/淘系大量服务跑在 Dubbo（或其同源分支）上，面试默认你懂它的调用链路。',
+        'Dubbo 最著名的一张图就是「角色关系图」：注册中心在上，消费者和提供者在下——下一帧就是它。',
+        '记住三个关键词：服务发现、远程调用、服务治理。整张图都在展开这三件事。'] },
+{ t:'第 4 帧 · 架构：角色关系图（Dubbo 最著名的一张图）', mode:'topo', step:-1, g:{},
+  ev:'四角色五条线：⓪注册 ①订阅 ②推送 ③直连调用 ④统计上报',
+  term:'先认脸：紫=注册中心、青=消费者、绿=提供者、橙=监控。后面每帧只点亮相关的一条线。',
+  note:['这张图是 Dubbo 官方文档的首页图。面试让你「讲讲 Dubbo」，画的就是它。',
+        '关键认知①：注册中心只在「找路」时用；真正调用时消费者直连提供者（③号线），不经过注册中心。',
+        '关键认知②：监控只收统计数据，不参与调用。核心只有 ⓪①②③ 四条线。'] },
+{ t:'第 5 帧 · 定义：Provider 服务提供者', mode:'def', step:-1,
+  dt:'角色定义卡 · Provider（提供者 = 后厨）',
+  ds:[['身份：真正干活的服务','sayHello 的实现类住在这里'],
+      ['启动时做两件事：','① 暴露接口，监听端口（默认 20880）'],
+      ['','② 向注册中心登记地址（register）'],
+      ['收到请求：解码 → 调用实现类 → 回包','处理过程在第 24-26 帧逐层展开'],
+      ['类比：餐厅后厨','接单、做菜、出餐']],
+  ev:'提供者 = 暴露接口 + 登记地址 + 处理请求',
+  term:'暴露（export）：把「接口 + 实现类 + 端口」打包成可被远程调用的服务，并开始监听端口。',
+  note:['提供者启动时把自己的地址（ip:port）登记到注册中心，这就是 ⓪ 号线。',
+        '登记的实质是一个节点路径：/dubbo/UserService/providers/10.0.0.1:20880。',
+        '你写的业务代码（sayHello 的实现）就住在这台机器上。'] },
+{ t:'第 6 帧 · 定义：Consumer 服务消费者', mode:'def', step:-1,
+  dt:'角色定义卡 · Consumer（消费者 = 前台）',
+  ds:[['身份：发起调用的一方','想用 UserService 的那个服务'],
+      ['启动时做两件事：','① 订阅所需服务（subscribe）'],
+      ['','② 收下地址列表，缓存到本地'],
+      ['调用时：挑一台 → 发请求 → 等回话','「挑一台」= 负载均衡，第 18 帧'],
+      ['类比：点餐的前台','看菜单下单、等出餐']],
+  ev:'消费者 = 订阅 + 缓存地址 + 发起调用',
+  term:'订阅（subscribe）：在注册中心留话「这个服务我有兴趣，地址变了要通知我」。',
+  note:['消费者代码里只写接口，不写实现——实现从远程拿。',
+        '地址列表缓存在本地内存（还会落盘），注册中心挂了也还能用（第 14 帧专门讲）。',
+        '调用动作由动态代理代发，业务代码毫无感知——第 16 帧钻进去看。'] },
+{ t:'第 7 帧 · 定义：Registry 注册中心', mode:'def', step:-1,
+  dt:'角色定义卡 · Registry（注册中心 = 电话簿）',
+  ds:[['身份：全城的电话簿','只存「谁提供什么服务、地址是啥」'],
+      ['常见实现：ZooKeeper / Nacos /','Redis / Consul（SPI 可切换）'],
+      ['两件事：登记（写入）+ 推送（变更通知）','提供者上下线，消费者立刻知道'],
+      ['不参与调用！','地址发出去之后它就退场了'],
+      ['类比：114 查号台','问完号，打电话是你俩直连']],
+  ev:'注册中心 = 电话簿：只管问路，不管打电话',
+  term:'ZooKeeper：树状结构的分布式协调组件，Dubbo 常用注册中心；Nacos：阿里出品，注册+配置二合一。',
+  note:['注册中心的价值：地址集中管理 + 变更实时推送——加机器不用改任何消费者的配置。',
+        '它要是不在了：已缓存的地址还能用，只是感知不到新变化（面试高频，第 14 帧展开）。',
+        '注册中心与注册中心之间不通信；每个提供者/消费者独立连它。'] },
+{ t:'第 8 帧 · 定义：Monitor 监控中心', mode:'def', step:-1,
+  dt:'角色定义卡 · Monitor（监控中心 = 考勤员）',
+  ds:[['身份：考勤员','只收报表，不碰业务'],
+      ['统计什么：调用次数、成功/失败、耗时','双方各自在内存里累计'],
+      ['怎么报：定时每分钟发一次','（异步旁路，不拖慢调用）'],
+      ['用来干嘛：大盘、告警、排障','「哪个服务慢了」一目了然'],
+      ['类比：物业抄表','每月来一次，不影响你用电']],
+  ev:'监控 = 每分钟上报调用次数和耗时',
+  term:'埋点：在调用链路上顺手记一笔（谁、调了谁、多久）。Dubbo 的记录动作就在 Filter 里完成。',
+  note:['监控数据走旁路：Filter 记数 → 定时汇总上报，主流程不等它。',
+        'Monitor 挂了完全不影响调用——四个角色里唯一「可有可无」的。',
+        '生产里更常用外接方案（Prometheus + Grafana 等），Monitor 是框架自带的简版。'] },
+{ t:'第 9 帧 · 启动第 1 步：提供者注册', mode:'topo', step:0, g:{reg:1},
+  ev:'⓪ register：Provider 启动 → 向注册中心登记 ip:port',
+  term:'注册的实质：在 ZooKeeper 的 /dubbo/UserService/providers/ 下创建一个临时节点。',
+  note:['提供者启动完成两件事：监听 20880 端口（准备接单）+ 向注册中心登记（挂牌营业）。',
+        '登记的是临时节点：进程活着节点就在，进程一死节点自动消失——宕机自动摘牌，不用人工清理。',
+        '本图右侧有两个实例（两个小方块），所以登记两条地址。'] },
+{ t:'第 10 帧 · 启动第 2 步：消费者订阅', mode:'topo', step:1, g:{reg:1,sub:1},
+  ev:'① subscribe：Consumer 启动 → 向注册中心要服务地址',
+  term:'订阅 ≠ 拉一次就走，而是「订阅 + 长连接监听」：地址一变，推送立刻到。',
+  note:['消费者启动时拿着接口全名去找注册中心：我要 UserService 的提供者名单。',
+        '同时留一句：「名单有变化记得通知我」——为下一步的推送铺路。',
+        '如果此时一个提供者都没有：默认启动报错（check=true），可配 check=false 允许先启动。'] },
+{ t:'第 11 帧 · 启动第 3 步：注册中心推送地址', mode:'topo', step:2, g:{reg:1,sub:1,noti:1,cache:1},
+  ev:'② notify：地址列表 [10.0.0.1, 10.0.0.2] → 存入消费者本地缓存',
+  term:'本地缓存：地址列表在消费者内存里存一份、磁盘上再存一份——双保险。',
+  note:['注册中心把名单推给消费者，消费者存进本地缓存（左侧对话框里那两条地址）。',
+        '之后名单再变（加机器/宕机），注册中心基于长连接继续推送，消费者刷新缓存。',
+        '到这里「找路」完成。注意：此后调用走 ③ 号线，与注册中心无关。'] },
+{ t:'第 12 帧 · 概念：为什么需要注册中心', mode:'def2', step:2,
+  d1:['写死地址（原始社会）',[['url = "10.0.0.1:20880"','换机器=改所有调用方配置'],['加机器不能自动分担流量','新机器没人知道'],['宕机只能干等超时','调用方一脸懵']]],
+  d2:['注册中心（电话簿）',[['地址集中存，要用时来查','换机器=换条登记，调用方无感'],['加机器自动进名单','流量自动分给它'],['宕机节点自动消失','名单实时刷新，绕开它']]],
+  ev:'三行对比：写死地址的痛，注册中心全治了',
+  term:'服务发现：不写死地址，运行期自动查 + 自动更新——微服务的地基。',
+  note:['假设订单服务要调库存服务，库存服务部署了 3 台。写死地址意味着 3 个 ip 硬编码进订单服务的配置。',
+        '扩容到 5 台？改配置、发版。某台挂了？调用方还在傻傻地调它。',
+        '注册中心把「地址管理」从代码里摘出去：登记、发现、变更推送，全自动。'] },
+{ t:'第 13 帧 · 运行期：一台提供者宕机了', mode:'topo', step:2, g:{reg:1,sub:1,noti:1,cache:1,dead:1},
+  ev:'10.0.0.2 宕机 → 节点消失 → 推送新名单 → 消费者缓存更新',
+  term:'临时节点：随 ZooKeeper 会话生灭。会话一断（进程死/网络断），节点自动删除。',
+  note:['看右侧：10.0.0.2 挂了（灰块打叉）。ZooKeeper 上它的临时节点随会话一起消失。',
+        '注册中心监测到变化，立刻给所有订阅者推送新名单 [10.0.0.1]。',
+        '消费者的本地缓存被刷新——整条链路没有任何人工介入。这就是「自动摘除」。'] },
+{ t:'第 14 帧 · 面试高频：注册中心全挂了，还能调吗？', mode:'def', step:2,
+  dt:'答案：能！调用不经过注册中心',
+  ds:[['调用走的是 ③ 号线：直连','消费者↔提供者的 TCP 长连接还握着'],
+      ['本地内存缓存了地址列表','列表还落了盘，消费者重启也能恢复'],
+      ['受影响的只是「感知」','新上的机器发现不了、宕机的绕不开'],
+      ['所以：注册中心是弱依赖','极端场景甚至可以主动降级摘除它']],
+  ev:'注册中心挂了：照常调。只是「地址变更」的感知没了',
+  term:'弱依赖：挂了只降级、不致命。架构上应把注册中心做成弱依赖。',
+  note:['面试标准答法：能。因为调用是直连的，注册中心只在启动/地址变更时起作用。',
+        '追问「消费者也重启了呢？」——磁盘上有缓存文件，照样能起来并按缓存地址调用。',
+        '反过来提醒：注册中心恢复后要能自动重连并校正名单（Dubbo 会做）。'] },
+{ t:'第 15 帧 · 调用开始：业务代码只有一行', mode:'def', step:3,
+  dt:'消费者侧代码（调用入口）',
+  ds:[['@Reference','Dubbo 的注入注解（类似 @Autowired）'],
+      ['private UserService userService;','只声明接口，没有实现类'],
+      ['String r = userService.sayHello("world");','就这一行——远程调用的全部入口'],
+      ['// r == "hi, world"','回话像本地返回一样自然']],
+  ev:'userService.sayHello("world") —— 魔法从这里开始',
+  term:'@Reference：Dubbo 注入远程代理的注解。赋给 userService 的不是实现类，是一个「代理对象」。',
+  note:['注意：userService 不是 new 出来的，也没有实现类——它是个替身（代理）。',
+        '调 sayHello 时，真正执行的是代理内部的远程调用流程。',
+        '下面几帧跟着这次调用一层层往下钻：消费者六层 → 网络 → 提供者六层。'] },
+{ t:'第 16 帧 · 第 1 层：Proxy 代理——替身演员', mode:'layers', step:3,
+  L:[0], pay:['Invocation：{ 接口: UserService','方法: sayHello, 参数: ["world"] }'], at:'Proxy 层',
+  ev:'代理拦截方法调用 → 打包成 Invocation（一张调用说明书）',
+  term:'动态代理：运行期凭接口生成替身类。Dubbo 默认用 javassist 直接生成字节码（比 JDK 代理快）。',
+  note:['代理把「调了哪个方法、什么参数」打包成 Invocation 对象——标准的调用说明书。',
+        '从此往下传的都是这份说明书，与业务代码再无瓜葛。',
+        '面试考点：为什么用 javassist 不用 JDK 动态代理？——生成字节码直接调用，反射开销更小。'] },
+{ t:'第 17 帧 · 第 2 层：Cluster——先查名单再过滤', mode:'layers', step:3,
+  L:[1], pay:['候选名单（Directory）：','10.0.0.1:20880 / 10.0.0.2:20880','路由规则（Router）：全部通过'], at:'Cluster 层',
+  ev:'Directory 拿名单 → Router 按规则筛一遍',
+  term:'Invoker：一台提供者的「可调用化身」。名单里有几台，就有几个 Invoker。',
+  note:['Directory：从本地缓存拿候选名单——第 11 帧存下的那份，每台提供者包成一个 Invoker。',
+        'Router：按规则过滤——灰度发布、分组隔离、读写分离都靠它（服务治理的抓手）。',
+        '筛完还剩几台，交给下一层去「挑一个」。'] },
+{ t:'第 18 帧 · 第 2 层（续）：LoadBalance——二选一', mode:'layers', step:3,
+  L:[1], pick:1, pay:['两台都活着，挑谁？','random（默认）：按权重随机','→ 本次选中 10.0.0.2'], at:'Cluster 层',
+  ev:'负载均衡选中 10.0.0.2 —— 本次由它接单',
+  term:'负载均衡策略：random 随机（默认）/ roundrobin 轮询 / leastactive 最少活跃 / consistenthash 一致性哈希。',
+  note:['默认 random：按权重随机，调用量越大越均匀——简单且够用。',
+        'leastactive 适合「机器能力不均」的场景：谁手上活少派给谁。',
+        '选完如果调用失败，还有容错兜底（failover，第 30 帧）。'] },
+{ t:'第 19 帧 · 第 3 层：Filter 链——机场安检', mode:'layers', step:3,
+  L:[2], pay:['Invocation 依次过检：','附加隐式参数 / 记开始时间 / mock 检查','全部通过 → 放行'], at:'Filter 层',
+  ev:'一串过滤器过一遍：埋点、传参、兜底逻辑',
+  term:'Filter：Dubbo 的拦截器机制（SPI 扩展点）——监控埋点、隐式传参、限流熔断都挂在这层。',
+  note:['请求发出前要过一串 Filter，像登机前的多道安检。',
+        'Monitor 的计时埋点就在这层：记下「几点发出、发给谁」。',
+        '面试关联：和 Web 里的 Servlet Filter、Spring 拦截器同一个思想——AOP。'] },
+{ t:'第 20 帧 · 第 4 层：序列化 + 组装请求', mode:'layers', step:3,
+  L:[3], pay:['Invocation --hessian2--> 字节','Request { id=1, 版本, 方法名, 参数 }','body 就绪，等待上车'], at:'Protocol 层',
+  ev:'对象变字节（hessian2）→ 封装成 Request（带自增 id）',
+  term:'序列化：Java 对象 → 可上网传输的字节流。默认 hessian2（跨语言、体积小）。',
+  note:['网络里只有字节，没有对象——发送前必须序列化。',
+        'Request 是 Dubbo 的请求信封：装着调用说明书 + 一个自增 id。',
+        'id 是关键伏笔：一条连接上多个请求并存，响应要靠 id 配对（第 21/28 帧揭晓）。'] },
+{ t:'第 21 帧 · 报文解剖：16 字节协议头', mode:'hdr', step:3,
+  ev:'dubbo 报文 = 16 字节定长头 + 变长 body —— 魔数定界，长度切包',
+  term:'协议头：报文开头的固定格式说明区。TCP 只管送字节，「切包」要靠协议自己。',
+  note:['魔数 0xdabb：每个报文的开场暗号，对不上说明字节流错位了。',
+        'request id 占 8 字节：一条连接上同时飞着多个请求，响应靠 id 认领。',
+        'body 长度占 4 字节：解码器据此知道「这个包到哪结束」——TCP 粘包/拆包就这样解决。',
+        '面试加分：为什么用单条长连接？小报文、高频调用，建连成本摊薄后效率最高。'] },
+{ t:'第 22 帧 · 第 5 层：Exchange——编号挂账', mode:'layers', step:3,
+  L:[4], pay:['Request{id=1} 已登记','DefaultFuture(1) 挂起等待','业务线程：future.get() 阻塞中'], at:'Exchange 层',
+  ev:'Exchange：给请求编号挂账 —— 调用线程开始在 future.get() 上等待',
+  term:'Exchange 信息交换层：把「异步的网络」包装成「看起来同步的调用」。',
+  note:['业务代码写的是同步风格，网络却是异步的——中间的翻译官就是 DefaultFuture。',
+        '请求发出前登记一个 DefaultFuture（编号 1）；调用线程在它上面 get() 挂起。',
+        '响应回来谁叫醒它？——id 配对，第 28 帧演给你看。'] },
+{ t:'第 23 帧 · 第 6 层：Transport——上网发送', mode:'layers', step:3,
+  L:[5], wire:'req', pay:['16B 头 + body 字节','写入 Netty 长连接 Channel','异步！发出后不干等'], at:'Transport 层',
+  ev:'请求字节上了 TCP 长连接，飞向 10.0.0.2:20880',
+  term:'Netty：高性能网络框架（NIO）。长连接：一条连接反复用，不用每次握手。',
+  note:['NIO 异步发送：业务线程把字节交给 Netty 就回去等 Future，不阻塞在网络写上。',
+        '这条连接是复用的：之前的请求和这个请求可以同飞一条连接（多路复用，靠 id 区分）。',
+        '消费者侧六层走完。接下来字节到达提供者，开始往上穿。'] },
+{ t:'第 24 帧 · 提供者第 1 站：收包 + 解码', mode:'layers', step:3,
+  R:[5,4], pay:['字节流 → 按协议头切包','反序列化(hessian2) → Invocation','Request{id=1} 完整还原'], at:'Transport/Codec',
+  ev:'Netty 收到字节 → 按头切包 → 还原成 Invocation',
+  term:'解码器：按魔数对齐、按 16 字节头取元信息、按 body 长度切出实体、反序列化。',
+  note:['TCP 是字节流，不保留消息边界——一次 read 可能含半个包或两个半包（粘包/拆包）。',
+        '解码器按第 21 帧的协议头干活：先找魔数对齐，再读头，按长度取出 body。',
+        '字节 → hessian2 反序列化 → Invocation，和消费者出发时一模一样。'] },
+{ t:'第 25 帧 · 提供者第 2 站：交给业务线程池', mode:'layers', step:3,
+  R:[3], pay:['IO 线程：只管收发字节','Dispatcher 把请求派发进线程池','业务线程：执行真正的调用'], at:'线程池',
+  ev:'IO 线程不干活，只递包裹 —— 业务逻辑在线程池里跑',
+  term:'线程派发（Dispatcher）：决定哪些事在 IO 线程做、哪些丢给线程池。默认 all：请求全部进池。',
+  note:['Netty 的 IO 线程是全场共享的贵重资源，被慢业务占住 = 所有请求卡死。',
+        '所以收到请求立刻转手给业务线程池（默认 fixed 200 线程），IO 线程回去继续收发。',
+        '面试高频：为什么要有线程派发？——网络与业务隔离，慢调用不拖垮 IO。'] },
+{ t:'第 26 帧 · 提供者第 3 站：过滤 + 执行真方法', mode:'layers', step:3,
+  R:[2,1,0], pay:['Provider Filter：计数 / 超时检查','Invoker 定位 UserServiceImpl','sayHello("world") 真的跑起来了'], at:'Impl',
+  ev:'过滤器过检 → Invoker 调用 → 你写的业务代码执行',
+  term:'Invoker（服务端）：实现类的可调用包装——用反射或生成的字节码调用真方法。',
+  note:['服务端也有一串 Filter（监控计时的另一半就记在这）。',
+        'Invoker 找到实现类 UserServiceImpl，调用 sayHello——到这里才碰到业务代码。',
+        '返回 "hi, world"。接下来的问题：怎么把它送回消费者手里（下一帧）。'] },
+{ t:'第 27 帧 · 回程：响应原路返回', mode:'layers', step:4,
+  R:[0,1,2,3,4,5], wire:'resp', pay:['Result{"hi, world"} → 字节','Response { id=1, status=20 OK }','16B 头 + body → 写回同一条连接'], at:'回程',
+  ev:'结果序列化 → 封 Response（同一个 id=1）→ 原路发回',
+  term:'Response：响应信封。status=20 表示成功；id 与请求一致——认亲的关键。',
+  note:['回程是去程的镜像：序列化 → 组装 Response → Netty 写回。',
+        '注意 id 还是 1：一条连接上飞着 N 个请求，靠 id 区分谁是谁。',
+        '响应走同一条 TCP 连接（双向通信），不需要再建连。'] },
+{ t:'第 28 帧 · 到站：id 配对，唤醒等待线程', mode:'layers', step:4,
+  L:[4], wire:'done', pay:['收到 Response{id=1}','按 id 找到 DefaultFuture(1)','complete → 唤醒 get() → 返回值到手'], at:'Exchange 层',
+  ev:'id=1 认领 DefaultFuture(1) → 业务线程醒来，拿到 "hi, world"',
+  term:'「同步」的真相：业务线程只是被挂起等通知；网络全程异步——同步调用是包装出来的（伪同步）。',
+  note:['响应回到消费者，按 id 找到当初登记的 DefaultFuture，把结果填进去。',
+        '挂在 get() 上的业务线程被唤醒，拿到 "hi, world"——第 15 帧那行代码至此返回。',
+        '面试一句话：Dubbo 的同步调用是伪同步——底层 NIO 全异步，靠 Future 转同步。'] },
+{ t:'第 29 帧 · ④ 号线：监控上报', mode:'topo', step:5, g:{reg:1,sub:1,noti:1,inv:1,cnt:1,cache:1},
+  ev:'④ count：双方每分钟向 Monitor 上报调用次数 / 耗时',
+  term:'上报内容：谁调了谁、成功几次失败几次、平均耗时——大盘和告警的数据源。',
+  note:['调用链上的 Filter 一直在偷偷记账：次数 + 耗时，累计在内存里。',
+        '每分钟定时汇总发一次给 Monitor——异步旁路，不影响调用速度。',
+        '至此官方图五条线（⓪①②③④）全部点亮，只剩容错没讲。'] },
+{ t:'第 30 帧 · 容错：调失败了怎么办（Failover）', mode:'def', step:5,
+  dt:'FailoverCluster（默认容错策略：失败转移）',
+  ds:[['第 1 次调用 10.0.0.2 → 超时 ✗','默认超时 1000ms'],
+      ['自动换一台：10.0.0.1 → 重试','retries=2：最多再试 2 次（共 3 次）'],
+      ['还不行？抛 RpcException','由上层决定降级 / 告警'],
+      ['⚠ 重试 = 再执行一遍方法！','写操作必须幂等，否则扣两次库存']],
+  ev:'失败自动换机重试——但千万注意幂等',
+  term:'幂等：同一操作做 1 次和做 N 次结果相同。查询天然幂等；扣库存这种写操作要小心。',
+  note:['failover 对「读」友好，对「非幂等写」危险——这是最常考的陷阱。',
+        '其他策略一句话：failfast 立刻报错（适合写）、failsafe 吞异常（日志类）、forking 并行调多台。',
+        '面试常追问：为什么默认重试 2 次？网络抖动大多一次就恢复；但业务要自己评估能否承受重复执行。'] },
+{ t:'第 31 帧 · 回顾：五条线串一遍', mode:'topo', step:-1, g:{reg:1,sub:1,noti:1,inv:1,cnt:1,cache:1},
+  ev:'⓪注册 ①订阅 ②推送 ③直连 ④上报 —— 全部点亮',
+  term:'面试标准叙事：先讲启动三步（⓪①②），再讲调用（③，穿十层），最后补监控与容错（④）。',
+  note:['启动期：提供者登记（⓪），消费者订阅（①）收名单（②）——注册中心只管问路。',
+        '运行期：直连调用（③）——代理→集群→过滤→编码→网络→解码→线程池→真方法，原路返回。',
+        '旁路：监控（④）每分钟上报；失败有 failover 兜底。三段说圆，这题就拿满了。'] },
+{ t:'第 32 帧 · 彩蛋：面试高频三连问', mode:'def', step:-1,
+  dt:'面试三连问速答（把 33 帧收进口袋）',
+  ds:[['Q1 注册中心全挂？→ 能调','直连 + 本地缓存（内存+磁盘）'],
+      ['Q2 一条连接怎么并发？→ id 配对','请求带自增 id，响应原 id 认领'],
+      ['Q3 同步还是异步？→ 伪同步','底层 NIO 全异步，Future 转同步'],
+      ['加练：为什么要 16B 定长头？','魔数定界 + 长度切包，治粘包'],
+      ['加练：默认线程池？','fixed 200，IO 与业务隔离'],
+      ['延伸：这些组件全是 SPI','协议/负载/过滤/容错皆可换（Q23）']],
+  ev:'三问三答 + 两个加练——覆盖 80% 的追问方向',
+  term:'SPI：Dubbo 的插件机制——图里每个「层」都是 SPI 扩展点，可整体替换（衔接答卷 Q23）。',
+  note:['答不上时回到两大认知：注册中心只管问路；同步是包装出来的。',
+        '把第 4 帧的角色图 + 第 21 帧的协议头画在白板上，基本就是满分结构。',
+        '下一站：答卷 Q23 的 Dubbo SPI——看看这些层是怎么被「插」进去的。'] },
+];
+
+/* ============ 静态构件 ============ */
+const NS = 'http://www.w3.org/2000/svg';
+const $ = id => document.getElementById(id);
+const D = s => String(s).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');   // 帧数据经 textContent 渲染，不解码实体
+let cur = 0, timer = null;
+
+const STEPS = ['⓪ 提供者注册', '① 消费者订阅', '② 推送地址', '③ 直连调用·穿十层', '④ 响应返回', '⑤ 监控与容错'];
+const C_REG = '#a78bfa', C_CON = '#22d3ee', C_PRO = '#34d399', C_MON = '#fb923c', C_PKT = '#fbbf24';
+
+function mk(tag, attrs, parent) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  parent.appendChild(n);
+  return n;
+}
+function txt(parent, x, y, str, fill, size, opts) {
+  const o = Object.assign({ x, y, fill, 'font-size': size }, opts || {});
+  const t = mk('text', o, parent);
+  t.textContent = D(str);
+  return t;
+}
+
+/* 六站行程单 */
+(function buildSteps() {
+  const g = $('steps');
+  STEPS.forEach((s, i) => {
+    const x = 60 + i * 176;
+    mk('rect', { x, y: 538, width: 168, height: 40, rx: 8, fill: '#0f172a', stroke: '#334155', 'stroke-width': 1, id: 'sb-' + i }, g);
+    txt(g, x + 84, 563, s, '#a5b4cc', 12.5, { 'text-anchor': 'middle', id: 'st-' + i });
+  });
+})();
+
+/* ============ 舞台渲染 ============ */
+const stage = $('stage');
+function drawStage(f) {
+  stage.innerHTML = '';
+  ({ intro: drawIntro, def: drawDef, def2: drawDef2, topo: drawTopo, layers: drawLayers, hdr: drawHdr })[f.mode || 'intro'](f, stage);
+}
+
+/* ---- 须知帧 ---- */
+function drawIntro(f, g) {
+  txt(g, 580, 120, '看图须知 · 3 分钟看懂这张图', '#f1f5f9', 20, { 'text-anchor': 'middle', 'font-weight': 700 });
+  txt(g, 580, 162, 'RPC = 调用另一台机器上的方法，写起来像调本地方法一样', '#cbd5e1', 14, { 'text-anchor': 'middle' });
+  txt(g, 580, 190, '本图跟一次调用走完全程：找到对方 → 说清需求 → 收到回话', '#cbd5e1', 14, { 'text-anchor': 'middle' });
+  txt(g, 580, 218, '底部「全程六站」是行程单；右上角 ❓ 悬停有本帧讲解', '#7d8db0', 12.5, { 'text-anchor': 'middle' });
+  const roles = [
+    ['Registry 注册中心', '问路处（电话簿）', C_REG],
+    ['Consumer 消费者', '发起调用的一方', C_CON],
+    ['Provider 提供者', '真正干活的一方', C_PRO],
+    ['Monitor 监控中心', '记考勤（只收报表）', C_MON]];
+  roles.forEach((r, i) => {
+    const x = 158 + i * 220;
+    mk('rect', { x, y: 268, width: 200, height: 76, rx: 10, fill: '#0f172a', stroke: r[2], 'stroke-width': 1.6 }, g);
+    txt(g, x + 100, 296, r[0], r[2], 13, { 'text-anchor': 'middle', 'font-weight': 700 });
+    txt(g, x + 100, 320, r[1], '#a5b4cc', 11, { 'text-anchor': 'middle' });
+  });
+  txt(g, 580, 386, '故事背景：订单服务（消费者）要调用户服务的 sayHello —— 出发！', '#94a3b8', 12.5, { 'text-anchor': 'middle' });
+}
+
+/* ---- 定义卡（单栏） ---- */
+function drawDef(f, g) {
+  mk('rect', { x: 90, y: 92, width: 980, height: 272, rx: 12, fill: '#0f172a', stroke: C_REG, 'stroke-width': 1.8 }, g);
+  txt(g, 120, 126, f.dt, C_REG, 14, { 'font-weight': 700 });
+  f.ds.forEach((row, j) => {
+    const y = 162 + j * 34;
+    txt(g, 120, y, row[0], '#f1f5f9', 13.5);
+    if (row[1]) txt(g, 640, y, '// ' + row[1], '#7d8db0', 11.5);
+  });
+}
+
+/* ---- 对比卡（双栏） ---- */
+function drawDef2(f, g) {
+  [[70, f.d1], [590, f.d2]].forEach(([x, d]) => {
+    mk('rect', { x, y: 92, width: 500, height: 272, rx: 12, fill: '#0f172a', stroke: '#475569', 'stroke-width': 1.4 }, g);
+    txt(g, x + 24, 124, d[0], '#f1f5f9', 13.5, { 'font-weight': 700 });
+    d[1].forEach((row, j) => {
+      const y = 156 + j * 56;
+      txt(g, x + 24, y, row[0], '#e2e8f0', 12.5);
+      txt(g, x + 24, y + 20, row[1], '#7d8db0', 11);
+    });
+  });
+  txt(g, 580, 390, '同一行代码的两种命运 —— 中间的差距就是 RPC 框架要填的坑', '#94a3b8', 12, { 'text-anchor': 'middle' });
+}
+
+/* ---- 拓扑图（官方角色关系图） ---- */
+function drawTopo(f, g) {
+  const o = f.g || {};
+  const box = (x, y, w, h, color, t1, t2) => {
+    mk('rect', { x, y, width: w, height: h, rx: 10, fill: '#0f172a', stroke: color, 'stroke-width': 1.8 }, g);
+    txt(g, x + w / 2, y + 24, t1, color, 14, { 'text-anchor': 'middle', 'font-weight': 700 });
+    txt(g, x + w / 2, y + 42, t2, '#8ea3bd', 11, { 'text-anchor': 'middle' });
+  };
+  box(430, 64, 300, 66, C_REG, 'Registry 注册中心', 'ZooKeeper / Nacos · 电话簿');
+  if (o.reg) txt(g, 580, 122, '/dubbo/UserService/providers → [10.0.0.1, 10.0.0.2]', '#c4b5fd', 10.5, { 'text-anchor': 'middle' });
+  box(44, 196, 296, 128, C_CON, 'Consumer 服务消费者', 'order-service（发起调用）');
+  box(820, 196, 296, 128, C_PRO, 'Provider 服务提供者', 'user-service × 2 实例（干活）');
+  box(430, 320, 300, 56, C_MON, 'Monitor 监控中心', '每分钟收一次统计报表');
+
+  /* 消费者侧：本地地址缓存 */
+  if (o.cache) {
+    mk('rect', { x: 62, y: 252, width: 260, height: 60, rx: 8, fill: 'rgba(8,51,68,0.45)', stroke: C_CON, 'stroke-width': 1.2, 'stroke-dasharray': '4,3' }, g);
+    txt(g, 74, 270, '地址列表（本地缓存·内存+磁盘）', '#67e8f9', 10.5);
+    txt(g, 74, 288, '10.0.0.1:20880  ✓ 在线', '#a5b4cc', 11.5);
+    txt(g, 74, 304, o.dead ? '10.0.0.2:20880  ✗ 已摘除' : '10.0.0.2:20880  ✓ 在线', o.dead ? '#64748b' : '#a5b4cc', 11.5);
+  }
+  /* 提供者侧：两个实例 */
+  const chip = (x, label, dead) => {
+    mk('rect', { x, y: 252, width: 130, height: 46, rx: 8, fill: dead ? '#1e293b' : 'rgba(6,78,59,0.5)', stroke: dead ? '#475569' : C_PRO, 'stroke-width': 1.2 }, g);
+    txt(g, x + 65, 272, label, dead ? '#64748b' : '#a7f3d0', 11, { 'text-anchor': 'middle' });
+    txt(g, x + 65, 290, dead ? '宕机' : ':20880', dead ? '#64748b' : '#6ee7b7', 10.5, { 'text-anchor': 'middle' });
+  };
+  chip(838, '实例① 10.0.0.1', false);
+  chip(978, '实例② 10.0.0.2', !!o.dead);
+
+  /* 五条线：lit 时高亮，否则幽灵态 */
+  const line = (on, d, color, dash, label, lx, ly, anchor) => {
+    mk('path', { d, stroke: color, 'stroke-width': on ? 2.4 : 1.2, fill: 'none', opacity: on ? 1 : 0.13,
+      'stroke-dasharray': dash || 'none', 'marker-end': 'url(#' + (color === C_PKT ? 'arrA' : color === C_REG ? 'arrV' : color === C_MON ? 'arrO' : color === C_CON ? 'arrC' : 'arr') + ')' }, g);
+    const t = txt(g, lx, ly, label, color, 11.5, { 'font-weight': 700, 'text-anchor': anchor || 'middle' });
+    t.setAttribute('opacity', on ? 1 : 0.13);
+  };
+  line(!!o.reg, 'M 845 196 Q 845 128 736 110', C_REG, null, '⓪ register 注册', 812, 150);
+  line(!!o.sub, 'M 339 196 Q 339 128 424 110', C_CON, null, '① subscribe 订阅', 340, 150);
+  line(!!o.noti, 'M 428 128 Q 396 152 372 188', C_REG, '5,4', '② notify 推送地址', 424, 182);
+  line(!!o.inv, 'M 340 262 L 816 262', C_PKT, null, o.inv ? '③ invoke 直连调用（不经注册中心）' : '③ invoke', 580, 250);
+  line(!!o.cnt, 'M 220 324 L 424 344', C_MON, '5,4', '④ count 统计', 280, 330);
+  line(!!o.cnt, 'M 940 324 L 736 344', C_MON, '5,4', '', 0, 0);
+  if (o.cnt) txt(g, 580, 312, '每分钟一次 · 异步旁路', '#fb923c', 10.5, { 'text-anchor': 'middle' });
+}
+
+/* ---- 调用分层图 ---- */
+const LAY_L = [
+  ['Proxy 代理层', '把接口调用变成 Invocation'],
+  ['Cluster 集群层', 'Directory → Router → 负载均衡'],
+  ['Filter 过滤器链', '隐式传参 / 埋点 / 兜底'],
+  ['Protocol 编码+序列化', 'Request + hessian2 字节'],
+  ['Exchange 请求-响应', 'DefaultFuture 挂账等待'],
+  ['Transport 传输', 'Netty · TCP 长连接']];
+const LAY_R = [
+  ['Impl 真实实现', 'sayHello 里你写的业务代码'],
+  ['Invoker 反射调用', '定位实现类并调用方法'],
+  ['Filter 过滤器链', '服务端拦截：计数/超时'],
+  ['业务线程池', 'IO 只收发，业务在这跑'],
+  ['Codec 解码+反序列化', '按协议头切包 → 还原对象'],
+  ['Transport 传输', '收请求 / 写响应']];
+
+function drawLayers(f, g) {
+  txt(g, 175, 68, 'Consumer 消费者侧（请求自上而下）', C_CON, 12.5, { 'text-anchor': 'middle', 'font-weight': 700 });
+  txt(g, 985, 68, 'Provider 提供者侧（请求自下而上）', C_PRO, 12.5, { 'text-anchor': 'middle', 'font-weight': 700 });
+
+  /* 请求主路（画在最底层，被盒子盖住，缝隙里露头指示方向） */
+  mk('path', { d: 'M 175 74 L 175 328 L 985 328 L 985 72', stroke: C_PKT, 'stroke-width': 2, fill: 'none', opacity: 0.28, 'stroke-dasharray': '6,5', 'marker-end': 'url(#arrA)' }, g);
+
+  const stack = (x, rows, hl, color, up) => {
+    rows.forEach((r, i) => {
+      const y = 78 + i * 46, on = hl && hl.includes(i);
+      mk('rect', { x, y, width: 250, height: 40, rx: 8, fill: on ? 'rgba(30,41,59,0.9)' : '#0f172a', stroke: on ? C_PKT : '#334155', 'stroke-width': on ? 2.2 : 1.1 }, g);
+      txt(g, x + 14, y + 17, r[0], on ? '#fde68a' : '#cbd5e1', 12, { 'font-weight': on ? 700 : 400 });
+      txt(g, x + 14, y + 32, r[1], on ? '#a5b4cc' : '#5b6b8c', 9.5);
+      if (i < 5) {   /* 缝隙小箭头：指示请求方向 */
+        const gy = y + 40, cx = x + 125;
+        const pts = up ? `${cx - 4} ${gy + 5}, ${cx + 4} ${gy + 5}, ${cx} ${gy}` : `${cx - 4} ${gy + 1}, ${cx + 4} ${gy + 1}, ${cx} ${gy + 6}`;
+        mk('polygon', { points: pts, fill: C_PKT, opacity: 0.75 }, g);
+      }
+    });
+  };
+  stack(50, LAY_L, f.L, C_CON, false);
+  stack(860, LAY_R, f.R, C_PRO, true);
+
+  /* TCP 管道 + 报文 */
+  mk('rect', { x: 300, y: 314, width: 560, height: 28, rx: 14, fill: 'rgba(8,51,68,0.35)', stroke: C_CON, 'stroke-width': 1.2, 'stroke-dasharray': '6,4' }, g);
+  txt(g, 580, 308, 'TCP 长连接（Netty NIO · 多路复用）', '#67e8f9', 10.5, { 'text-anchor': 'middle' });
+  if (f.wire === 'req') {
+    mk('rect', { x: 380, y: 318, width: 120, height: 20, rx: 6, fill: 'rgba(120,53,15,0.85)', stroke: C_PKT, 'stroke-width': 1.4 }, g);
+    txt(g, 440, 332, '请求字节 ▶', '#fde68a', 10.5, { 'text-anchor': 'middle' });
+  }
+  if (f.wire === 'resp' || f.wire === 'done') {
+    mk('rect', { x: 660, y: 318, width: 120, height: 20, rx: 6, fill: 'rgba(120,53,15,0.85)', stroke: C_PKT, 'stroke-width': 1.4 }, g);
+    txt(g, 720, 332, '◀ 响应字节', '#fde68a', 10.5, { 'text-anchor': 'middle' });
+  }
+
+  /* 数据形态卡（中上） */
+  mk('rect', { x: 330, y: 78, width: 500, height: 92, rx: 10, fill: '#0f172a', stroke: C_PKT, 'stroke-width': 1.2 }, g);
+  txt(g, 348, 100, '此刻的数据形态', C_PKT, 11.5, { 'font-weight': 700 });
+  txt(g, 700, 100, '📍 ' + (f.at || ''), '#7d8db0', 10.5, { 'text-anchor': 'end' });
+  (f.pay || []).forEach((ln, j) => txt(g, 348, 122 + j * 18, ln, '#e2e8f0', 11.5));
+
+  /* 选机指示（负载均衡帧） */
+  if (f.pick) {
+    mk('rect', { x: 332, y: 214, width: 496, height: 78, rx: 10, fill: 'rgba(6,78,59,0.35)', stroke: C_PRO, 'stroke-width': 1.2 }, g);
+    txt(g, 580, 240, '两个 Invoker，二选一：', '#a7f3d0', 12, { 'text-anchor': 'middle' });
+    txt(g, 430, 268, '① 10.0.0.1:20880', '#64748b', 11.5, { 'text-anchor': 'middle' });
+    txt(g, 730, 268, '② 10.0.0.2:20880 ← 选中', '#fde68a', 11.5, { 'text-anchor': 'middle', 'font-weight': 700 });
+    mk('path', { d: 'M 560 258 L 640 258', stroke: C_PKT, 'stroke-width': 1.6, fill: 'none', 'marker-end': 'url(#arrA)' }, g);
+  }
+}
+
+/* ---- 协议头解剖 ---- */
+function drawHdr(f, g) {
+  txt(g, 580, 84, 'dubbo 协议头解剖 · 发出去的每个包都长这样', '#f1f5f9', 16, { 'text-anchor': 'middle', 'font-weight': 700 });
+  /* 注释分上下两行错开（A/B 行），避免窄段注释横向相撞 */
+  const segs = [
+    [80, 205, C_REG, 'magic 0xdabb', 'A', ['魔数·开场暗号', '0xda 0xbb']],
+    [205, 268, C_CON, 'flag', 'B', ['标志位：请求/响应', '·序列化方式 hessian2']],
+    [268, 330, '#fb7185', 'status', 'A', ['状态码', '20 OK · 30 超时']],
+    [330, 830, C_PKT, 'request id（8 字节 long）', 'B', ['请求 id：自增编号', '响应带同一 id → 配对认领']],
+    [830, 1080, C_PRO, 'body 长度（4 字节）', 'A', ['body 有多长', '按长度切包 · 治粘包']]];
+  const rowY = { A: [220, 237], B: [262, 279] };
+  segs.forEach(s => {
+    mk('rect', { x: s[0], y: 116, width: s[1] - s[0], height: 44, rx: 6, fill: '#0f172a', stroke: s[2], 'stroke-width': 1.6 }, g);
+    txt(g, (s[0] + s[1]) / 2, 143, s[3], s[2], 11.5, { 'text-anchor': 'middle' });
+    mk('path', { d: `M ${(s[0] + s[1]) / 2} 162 L ${(s[0] + s[1]) / 2} ${rowY[s[4]][0] - 20}`, stroke: '#475569', 'stroke-width': 1 }, g);
+    s[5].forEach((ln, j) => txt(g, (s[0] + s[1]) / 2, rowY[s[4]][j], ln, '#a5b4cc', 10.5, { 'text-anchor': 'middle' }));
+  });
+  txt(g, 80, 188, '0', '#5b6b8c', 10); txt(g, 200, 188, '2', '#5b6b8c', 10); txt(g, 322, 188, '4', '#5b6b8c', 10);
+  txt(g, 560, 188, '12', '#5b6b8c', 10); txt(g, 1064, 188, '16（字节）', '#5b6b8c', 10);
+  mk('rect', { x: 80, y: 304, width: 1000, height: 40, rx: 8, fill: '#1e293b', stroke: '#64748b', 'stroke-width': 1.2 }, g);
+  txt(g, 580, 329, 'body：序列化后的 Invocation / Result（hessian2 字节，变长）', '#cbd5e1', 12, { 'text-anchor': 'middle' });
+  txt(g, 580, 370, '解码三步：找魔数对齐 → 读 16B 头 → 按 body 长度切出实体', '#94a3b8', 12.5, { 'text-anchor': 'middle' });
+  txt(g, 580, 394, 'TCP 是字节流不保留边界 —— 有了定长头，粘包/拆包就有解了', '#94a3b8', 12.5, { 'text-anchor': 'middle' });
+}
+
+/* ============ 渲染 ============ */
+function render(i) {
+  const f = F[i]; cur = i;
+  $('ev').textContent = D(f.ev);
+  $('term').textContent = D(f.term);
+  drawStage(f);
+  STEPS.forEach((_, s) => {
+    const on = s === f.step;
+    $('sb-' + s).setAttribute('stroke', on ? '#34d399' : '#334155');
+    $('sb-' + s).setAttribute('fill', on ? 'rgba(6,78,59,0.5)' : '#0f172a');
+    $('st-' + s).setAttribute('fill', on ? '#f1f5f9' : '#a5b4cc');
+    $('st-' + s).setAttribute('font-weight', on ? 700 : 400);
+  });
+  $('cap-title').textContent = D(f.t);
+  $('qmark').title = f.note.map(D).join('\n');
+  $('step-ind').textContent = (i + 1) + ' / ' + F.length;
+  $('btn-prev').disabled = i === 0;
+  $('btn-next').disabled = i === F.length - 1;
+  document.querySelectorAll('#dots button').forEach((d, k) => d.classList.toggle('cur', k === i));
+}
+
+/* ============ 控件 ============ */
+const dots = $('dots');
+F.forEach((_, k) => {
+  const b = document.createElement('button');
+  b.onclick = () => { stopPlay(); render(k); };
+  dots.appendChild(b);
+});
+$('btn-prev').onclick = () => { stopPlay(); if (cur > 0) render(cur - 1); };
+$('btn-next').onclick = () => { stopPlay(); if (cur < F.length - 1) render(cur + 1); };
+$('btn-reset').onclick = () => { stopPlay(); render(0); };
+$('btn-play').onclick = togglePlay;
+function togglePlay() {
+  if (timer) return stopPlay();
+  if (cur >= F.length - 1) render(0);
+  $('btn-play').textContent = '⏸ 暂停';
+  timer = setInterval(() => { if (cur >= F.length - 1) return stopPlay(); render(cur + 1); }, 2600);
+}
+function stopPlay() { if (timer) { clearInterval(timer); timer = null; $('btn-play').textContent = '▶ 播放'; } }
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { stopPlay(); if (cur < F.length - 1) render(cur + 1); }
+  if (e.key === 'ArrowLeft')  { stopPlay(); if (cur > 0) render(cur - 1); }
+});
+const m = location.hash.match(/f=(\d+)/);
+render(m ? Math.min(F.length - 1, +m[1]) : 0);
+
+/* ============ 导出工具条 ============ */
+function capture() {
+  const el = document.getElementById('report-container');
+  const r = el.getBoundingClientRect();
+  return html2canvas(document.body, {
+    x: r.left - 32, y: r.top - 32, width: r.width + 64, height: r.height + 64,
+    scale: 2, backgroundColor: '#020617',
+    ignoreElements: n => n.closest && n.closest('.toolbar')
+  });
+}
+function copyAsImage() { capture().then(c => c.toBlob(b => navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]))); }
+function downloadPNG() { capture().then(c => { const a = document.createElement('a'); a.download = 'q23-dubbo-rpc.png'; a.href = c.toDataURL('image/png'); a.click(); }); }
+function downloadPDF() {
+  capture().then(c => {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: c.width >= c.height ? 'l' : 'p', unit: 'px', format: [c.width, c.height] });
+    pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, c.width, c.height);
+    pdf.save('q23-dubbo-rpc.pdf');
+  });
+}
+</script>
+</body>
+</html>

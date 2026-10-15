@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+dui<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
@@ -61,6 +61,8 @@
   .dots button.cur { background: #a78bfa; border-color: #a78bfa; }
   .dots button:hover { border-color: #a78bfa; }
 
+  .legend { display: flex; gap: 18px; align-items: center; font-size: 12px; color: #a5b4cc; margin-bottom: 10px; flex-wrap: wrap; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
   .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
   svg.diagram { display: block; width: 100%; height: auto; }
 
@@ -98,7 +100,7 @@
       <div class="dot"></div>
       <div>
         <h1>Q1 · JDK8 resize() 扩容逐帧演示</h1>
-        <div class="subtitle">第13次put触发 → 32格新表 → 桶1拆两条（hash&amp;oldCap 分流 · 尾插保序）→ 归位交接（数字来自 Q01HashMapLab 实验5）</div>
+        <div class="subtitle">从零看懂 HashMap 扩容：先认识 16 格柜子和三个量，再逐帧看第 13 次 put 如何触发 32 格搬家、桶1 长链拆两条</div>
       </div>
     </div>
     <div class="toolbar" id="toolbar">
@@ -121,6 +123,14 @@
     <span class="qmark" id="qmark" title="">❓</span>
     <span class="key-hint">← → 键翻页 · 每帧一小步</span>
     <div class="dots" id="dots"></div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw" style="background:#a78bfa"></span>紫色 = 老表(16格) 与 桶1的链</span>
+    <span><span class="sw" style="background:#34d399"></span>绿链 lo = 判 0 · 留原位</span>
+    <span><span class="sw" style="background:#fbbf24"></span>黄链 hi = 判 16 · 去原位+16</span>
+    <span><span class="sw" style="background:#22d3ee"></span>青框 = 正在处理的节点 e</span>
+    <span><span class="sw" style="background:#334155"></span>底部长条 = 新表(32格)</span>
   </div>
 
   <div class="diagram-card">
@@ -159,7 +169,7 @@
       <!-- ===== 状态面板 ===== -->
       <g>
         <rect x="510" y="96" width="300" height="184" rx="10" fill="rgba(30,41,59,0.4)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4,4"/>
-        <text x="660" y="120" text-anchor="middle" fill="#f1f5f9" font-size="13" font-weight="600">三个量（你已拿下的那三个）</text>
+        <text x="660" y="120" text-anchor="middle" fill="#f1f5f9" font-size="13" font-weight="600">三个量 capacity / size / threshold</text>
         <rect x="530" y="134" width="125" height="60" rx="8" fill="#0f172a" stroke="#475569"/>
         <text x="592" y="157" text-anchor="middle" fill="#8ea3bd" font-size="11">capacity 格子数</text>
         <text x="592" y="181" text-anchor="middle" fill="#22d3ee" font-size="17" font-weight="700" id="st-cap">16</text>
@@ -268,74 +278,100 @@
 /* ============ 帧数据 ============ */
 const F = [
 { code:-1, cap:'16', size:'12', thr:'12', pct:'75%', bin:null, e:null, moved:[], lo:[], hi:[],
+  place:false, nc:{}, nt:false, oldNote:'格子=桶 · 撞车摞成链 · 先看懂这张图', gc:false,
+  b1:'4件↓', b10:'·', keys29:true,
+  title:'第 0 帧 · 看图须知：HashMap 长什么样',
+  note:['HashMap 底层就是一个数组，本例 16 格；数组的每一格叫一个“桶”（bucket）。',
+        '放一个 key 时，用它的 hash 值对 16 取模算出格子号：key=2 → 桶2，key=9 → 桶9。',
+        '算出同一个号的（1、17、33、49 都算出 1）就在桶1 里摞成一条链——这就是“哈希冲突”。'] },
+{ code:-1, cap:'16', size:'12', thr:'12', pct:'75%', bin:null, e:null, moved:[], lo:[], hi:[],
+  place:false, nc:{}, nt:false, oldNote:'三个量：格子数 / 已存件数 / 门槛', gc:false,
+  b1:'4件↓', b10:'·', keys29:true,
+  title:'第 1 帧 · 看图须知：三个量与 75% 规矩',
+  note:['看懂三个量，这张图就看懂一半：capacity=格子数(16)；size=已存件数(12)，摞在链上的逐个数；threshold=门槛(16×0.75=12)。',
+        'HashMap 的规矩：size 刚好等于门槛（12=12）不动作，要严格超过（第 13 件进来）才扩容——把 16 格换成 32 格。',
+        '接下来就演这一次扩容的全过程：谁触发、怎么搬、搬去哪。'] },
+{ code:-1, cap:'16', size:'12', thr:'12', pct:'75%', bin:null, e:null, moved:[], lo:[], hi:[],
   place:false, nc:{}, nt:false, oldNote:'size=12 = threshold：压线未超', gc:false,
-  title:'第 0 帧 · 开局：12 件压线',
-  note:['老表 cap=16，桶1 摞了 1→17→33→49，桶2~9 各 1 件：size=12 = threshold，满的程度 75%。',
-       '触发条件是严格大于：12 > 12 不成立，此刻还不扩。',
-       '所有数字来自实验 5 的真实输出。'] },
+  b1:'4件↓', b10:'·', keys29:true,
+  title:'第 2 帧 · 开局：12 件压线',
+  note:['老表 cap=16。12 件东西：桶1 摞了 1→17→33→49（链长4），桶2~9 各 1 件。',
+        'size=12 = threshold（16×0.75）——满的程度 12/16 = 75%，刚好压线。',
+        '触发条件是 >（严格大于）：12 > 12 不成立，所以此刻还不扩。',
+        '所有数字来自配套实验代码 Q01HashMapLab（实验5），可自己跑出同样结果。'] },
 { code:0, cap:'16', size:'13', thr:'12', pct:'81%', bin:null, e:null, moved:[], lo:[], hi:[],
   place:false, nc:{}, nt:false, oldNote:'第13件已进桶10 · 81% 短暂超载', gc:false,
-  title:'第 1 帧 · 第 13 次 put 触发',
+  b1:'搬走中', b10:'10', keys29:true,
+  title:'第 3 帧 · 第 13 次 put 触发',
   note:['put(key=10)：key 10 先落进桶 10，然后 putVal 末行判断 ++size=13 > 12 成立，调 resize()。',
-       '先插元素、后判断——扩容发生在这次 put 的内部。',
-       '扩容前一瞬 16 格装 13 件（81%），随后立刻翻倍压回。'] },
+        '先插元素、后判断——扩容发生在这次 put 的内部。',
+        '扩容前一瞬 16 格装 13 件（81%），随后立刻翻倍压回。'] },
 { code:2, cap:'16→32', size:'13', thr:'12→24', pct:'41%', bin:null, e:null, moved:[], lo:[], hi:[],
   place:false, nc:{}, nt:true, oldNote:'新表已造好，东西还都在老表', gc:false,
-  title:'第 2 帧 · 定新尺寸，造空新表',
+  b1:'搬走中', b10:'10', keys29:true,
+  title:'第 4 帧 · 定新尺寸，造空新表',
   note:['resize() 开场：newCap = 16<<1 = 32，newThr = 12<<1 = 24，new Node[32] 造全空新表。',
-       '此刻新表全空、老表原封未动。',
-       '没有后台线程搬家，就是当前线程在这次 put 里一口气搬完。'] },
+        '此刻新表全空、老表原封未动。',
+        '没有后台线程搬家，就是当前线程在这次 put 里一口气搬完。'] },
 { code:4, cap:'32', size:'13', thr:'24', pct:'41%', bin:{k:1,bits:'000001',hi:false}, e:1, moved:[], lo:[1], hi:[],
   place:false, nc:{}, nt:true, oldNote:'搬家循环 · 逐节点问一句', gc:false,
-  title:'第 3 帧 · 桶1 的 e=1 → lo 链',
-  note:['搬桶1 的链，逐节点只问一句：hash & 16 = ？',
-       'e=1：二进制 000001，16 那一位是 0 → 尾插进 lo 链，loHead = loTail = 1。',
-       '右上二进制面板：亮块就是判决位。'] },
+  b1:'搬走中', b10:'10', keys29:true,
+  title:'第 5 帧 · 桶1 的 e=1 → lo 链',
+  note:['搬桶1 的链，逐节点只问一句：hash & 16（oldCap）= ？',
+        'e=1：二进制 000001，16 那一位是 0 → 尾插进 lo 链，loHead = loTail = 1。',
+        '右上二进制面板：亮块就是 16 那一位，它决定去留。'] },
 { code:4, cap:'32', size:'13', thr:'24', pct:'41%', bin:{k:17,bits:'010001',hi:true}, e:17, moved:[1], lo:[1], hi:[17],
   place:false, nc:{}, nt:true, oldNote:'搬家循环 · 1 已进 lo', gc:false,
-  title:'第 4 帧 · e=17 → hi 链',
+  b1:'搬走中', b10:'10', keys29:true,
+  title:'第 6 帧 · e=17 → hi 链',
   note:['e=17：010001，16 那一位是 1 → 尾插进 hi 链。',
-       '1 和 17 就差 16 这一位：旧下标 &15 都是 1，新下标 &31 差 16。',
-       '这就是「原位 或 原位+oldCap」的全部秘密。'] },
+        '1 和 17 差在哪？就差 16 这一位：旧下标 &15 都是 1，新下标 &31 差 16。',
+        '这就是“原位 或 原位+oldCap”的全部秘密。'] },
 { code:4, cap:'32', size:'13', thr:'24', pct:'41%', bin:{k:33,bits:'100001',hi:false}, e:33, moved:[1,17], lo:[1,33], hi:[17],
   place:false, nc:{}, nt:true, oldNote:'搬家循环 · 尾插不反转', gc:false,
-  title:'第 5 帧 · e=33 → lo，尾插保序',
+  b1:'搬走中', b10:'10', keys29:true,
+  title:'第 7 帧 · e=33 → lo，尾插保序',
   note:['e=33：100001，16 那一位是 0 → lo，尾插接在 1 后面：lo = 1→33。',
-       '顺序没反！老表里 1 在 33 前面，新链里还是——尾插保序。',
-       'JDK7 头插在这一步会把链反转，为另一张动图埋下伏笔。'] },
+        '顺序没反！老表里 1 在 33 前面，新链里还是——尾插保序。',
+        'JDK7 头插在这一步会把链反转，为另一张动图的悲剧埋下伏笔。'] },
 { code:4, cap:'32', size:'13', thr:'24', pct:'41%', bin:{k:49,bits:'110001',hi:true}, e:49, moved:[1,17,33], lo:[1,33], hi:[17,49],
   place:false, nc:{}, nt:true, oldNote:'桶1 分完：2+2', gc:false,
-  title:'第 6 帧 · e=49 → hi，桶1 分完',
+  b1:'搬走中', b10:'10', keys29:true,
+  title:'第 8 帧 · e=49 → hi，桶1 分完',
   note:['e=49：110001，16 位是 1 → hi，接在 17 后面：hi = 17→49。',
-       '桶1 分完：lo 两个（1,33）、hi 两个（17,49），长链拆成两条短链。',
-       '两条新链都保持原相对顺序——注释里的 preserve order。'] },
+        '桶1 分完：lo 两个（1,33）、hi 两个（17,49），长链拆成两条短链。',
+        '两条新链都保持原相对顺序——注释里的 preserve order。'] },
 { code:5, cap:'32', size:'13', thr:'24', pct:'41%', bin:null, e:null, moved:[1,17,33,49], lo:[1,33], hi:[17,49],
   place:true, nc:{'1':'1·33','17':'17·49'}, nt:true, oldNote:'lo→桶1 · hi→桶1+16', gc:false,
-  title:'第 7 帧 · 归位：原位 / 原位+16',
+  b1:'已拆', b10:'10', keys29:true,
+  title:'第 9 帧 · 归位：原位 / 原位+16',
   note:['loHead 放 newTab[1]（原位），hiHead 放 newTab[1+16=17]（原位+oldCap）。',
-       '为什么只有两种去处？新下标 &31 只比旧下标 &15 多看 16 那一位：位=0 下标不变，位=1 恰好 +16。',
-       '不用重新计算 hash，位运算定去留。'] },
+        '为什么只有两种去处？新下标 &31 只比旧下标 &15 多看 16 那一位：位=0 下标不变，位=1 恰好 +16。',
+        '不用重新计算 hash，位运算定去留。'] },
 { code:-1, cap:'32', size:'13', thr:'24', pct:'41%', bin:null, e:null, moved:[1,17,33,49], lo:[1,33], hi:[17,49],
   place:true, nc:{'1':'1·33','17':'17·49','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9','10':'10'},
   nt:true, oldNote:'其余桶原样平移', gc:false,
-  title:'第 8 帧 · 其余桶：单节点直接放',
+  b1:'已拆', b10:'10', keys29:false,
+  title:'第 10 帧 · 其余桶：单节点直接放',
   note:['桶2~10 都是单节点，没链可拆：hash & 31 直接定位，key 2~10 都落回原下标。',
-       '整个扩容只有桶1 发生了「1 拆 2」，其它桶原样平移。',
-       '（红黑树桶走 split() 同样分流，节点 ≤6 时退化回链表。）'] },
+        '整个扩容只有桶1 发生了“1 拆 2”，其它桶原样平移。',
+        '（红黑树桶走 split() 同样分流，节点 ≤6 时退化回链表。）'] },
 { code:-1, cap:'32', size:'13', thr:'24', pct:'41%', bin:null, e:null, moved:[1,17,33,49], lo:[1,33], hi:[17,49],
   place:true, nc:{'1':'1·33','17':'17·49','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9','10':'10'},
   nt:true, oldNote:'已交接', gc:true,
-  title:'第 9 帧 · 交接，老表整个 GC',
-  note:['搬完交接：table 指向新表（第 2 帧就挂好了），resize 返回，这次 put 才真正结束。',
-       '老表再无人引用，整体丢给 GC——源码里 oldTab[j]=null 顺手断链。',
-       '此刻 size=13、capacity=32、threshold=24。'] },
+  b1:'已拆', b10:'10', keys29:false,
+  title:'第 11 帧 · 交接，老表整个 GC',
+  note:['搬完交接：table 指向新表（第 4 帧就挂好了），resize 返回，这次 put 才真正结束。',
+        '老表再无人引用，整体丢给 GC——源码里 oldTab[j]=null 顺手断链。',
+        '此刻 size=13、capacity=32、threshold=24。'] },
 { code:-1, cap:'32', size:'13', thr:'24', pct:'41%', bin:null, e:null, moved:[1,17,33,49], lo:[1,33], hi:[17,49],
   place:true, nc:{'1':'1·33','17':'17·49','2':'2','3':'3','4':'4','5':'5','6':'6','7':'7','8':'8','9':'9','10':'10'},
   nt:true, oldNote:'稳定态：41%', gc:true,
-  title:'第 10 帧 · 尾声：41%，均摊 O(1)',
+  b1:'已拆', b10:'10', keys29:false,
+  title:'第 12 帧 · 尾声：41%，均摊 O(1)',
   note:['满的程度 = 13/32 ≈ 41%——刚扩完，离新门槛 24 还很远。',
-       '下次触发在第 25 个 put：间隔 12→24→48 翻倍，搬运总成本 ≈ 2n，均摊 O(1)。',
-       '同场景换 JDK7 头插：链被反转，并发下就是另一张动图的死循环。'] },
+        '下次触发在第 25 个 put：间隔 12→24→48 翻倍，搬运总成本 ≈ 2n，均摊 O(1)。',
+        '同场景换 JDK7 头插：链被反转，并发下就是另一张动图的死循环。'] },
 ];
 
 /* ============ 静态构件 ============ */
@@ -451,9 +487,10 @@ function render(i) {
     $('bin-res').setAttribute('fill', '#cbd5e1');
   }
   // 老表格内容
-  $('oc-1').textContent = i === 0 ? '4件↓' : (i >= 7 ? '已拆' : '搬走中');
-  $('oc-10').textContent = i >= 1 ? '10' : '·';
-  $('oc-1-box').setAttribute('opacity', i >= 7 ? 0.4 : 1);
+  $('oc-1').textContent = f.b1;
+  $('oc-10').textContent = f.b10;
+  $('oc-1-box').setAttribute('opacity', f.place ? 0.4 : 1);
+  for (let k = 2; k <= 9; k++) $('oc-' + k).textContent = f.keys29 ? String(k) : '·';
   $('gc-mark').setAttribute('opacity', f.gc ? 1 : 0);
   $('gc-text').setAttribute('opacity', f.gc ? 1 : 0);
   // 链 chips：已搬的变暗，当前 e 高亮
