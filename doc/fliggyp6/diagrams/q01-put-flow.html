@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HashMap put 源码逐帧走读 · 零基础版</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; min-height: 100vh; }
+  .container { width: 1320px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #34d399; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.6); } 70% { box-shadow: 0 0 0 10px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
+  .header h1 { font-size: 21px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 13px; color: #7d8db0; margin-top: 5px; }
+  .toolbar { position: relative; }
+  .toolbar-toggle { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 16px; font-family: inherit; }
+  .toolbar-toggle:hover { color: #e2e8f0; border-color: #475569; }
+  .toolbar-actions { display: none; position: absolute; right: 0; top: 38px; gap: 6px; z-index: 10; }
+  .toolbar.open .toolbar-actions { display: flex; }
+  .toolbar-actions button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; }
+  .toolbar-actions button:hover { color: #f1f5f9; border-color: #64748b; }
+  @media print { .toolbar { display: none !important; } }
+  .controls { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .controls button { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; padding: 7px 16px; cursor: pointer; font-size: 14px; font-family: inherit; }
+  .controls button:hover { border-color: #64748b; }
+  .controls button:disabled { opacity: 0.35; cursor: default; }
+  .step-ind { font-size: 14px; color: #cbd5e1; min-width: 70px; }
+  .frame-title { font-size: 14px; color: #34d399; font-weight: 700; }
+  .qmark { cursor: help; font-size: 15px; color: #7d8db0; }
+  .key-hint { font-size: 12px; color: #64748b; }
+  .dots { display: flex; gap: 6px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+  .dots button { width: 11px; height: 11px; border-radius: 50%; padding: 0; background: #1e293b; border: 1px solid #334155; cursor: pointer; }
+  .dots button.cur { background: #34d399; border-color: #34d399; }
+  .dots button:hover { border-color: #34d399; }
+  .legend { display: flex; gap: 18px; align-items: center; font-size: 12px; color: #a5b4cc; margin-bottom: 10px; flex-wrap: wrap; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 16px 18px; }
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+  .card-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; }
+  .card ul { list-style: none; }
+  .card li { font-size: 13px; color: #a5b4cc; line-height: 1.75; }
+  .card li b { color: #e2e8f0; font-weight: 600; }
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>HashMap 源码入门 · 一次 put("cat", 2) 的完整旅程</h1>
+        <div class="subtitle">零基础可读：概念帧 / 架构帧 / 逐行帧混排，每个术语第一次出现都有白话解释 · 这是三张动图的第一级（put 流程 → 扩容 → 1.7 成环）</div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbar').classList.toggle('open')">⋯</button>
+      <div class="toolbar-actions">
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="btn-reset">⏮</button>
+    <button id="btn-prev">◀</button>
+    <button id="btn-play">▶ 播放</button>
+    <button id="btn-next">▶|</button>
+    <span class="step-ind" id="step-ind">1 / 25</span>
+    <span class="frame-title" id="cap-title"></span>
+    <span class="qmark" id="qmark" title="">❓</span>
+    <span class="key-hint">← → 键翻页 · ❓ 悬停看本帧讲解</span>
+    <div class="dots" id="dots"></div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw" style="background:#a78bfa"></span>紫色 = 数组格子（桶）</span>
+    <span><span class="sw" style="background:#34d399"></span>绿色 = 本次新来的 key</span>
+    <span><span class="sw" style="background:#64748b"></span>灰色 = 链上已有的节点</span>
+    <span><span class="sw" style="background:#fbbf24"></span>黄色 = 被覆盖/替换的值</span>
+    <span><span class="sw" style="background:#22d3ee"></span>青色 = 放大镜正在看的桶</span>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1160 620" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+        <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#8ea3bd"/>
+        </marker>
+        <marker id="arrCyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/>
+        </marker>
+      </defs>
+      <rect width="1160" height="620" fill="#020617"/>
+      <rect width="1160" height="620" fill="url(#grid)"/>
+
+      <!-- 事件横幅 -->
+      <text id="ev" x="580" y="42" text-anchor="middle" fill="#f8fafc" font-size="17" font-weight="700"></text>
+
+      <!-- 左：源码面板 -->
+      <g>
+        <rect x="40" y="64" width="440" height="336" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+        <text x="60" y="88" fill="#8ea3bd" font-size="11">源码面板（JDK8 · putVal 简化骨架 · 当前步高亮）</text>
+        <rect id="code-hl" x="52" y="98" width="416" height="22" rx="4" fill="rgba(52,211,153,0.16)" opacity="0"/>
+        <text x="64" y="116" fill="#f1f5f9" font-size="12.5">put(key, val) → putVal(hash(key), key, val,…)</text>
+        <text x="64" y="142" fill="#f1f5f9" font-size="12.5">① h = key.hashCode() ^ (h &gt;&gt;&gt; 16)   <tspan fill="#7d8db0">// 算指纹</tspan></text>
+        <text x="64" y="168" fill="#f1f5f9" font-size="12.5">② i = (n-1) &amp; hash                <tspan fill="#7d8db0">// 算柜号</tspan></text>
+        <text x="64" y="194" fill="#f1f5f9" font-size="12.5">③ if (tab[i] == null) tab[i] = newNode <tspan fill="#7d8db0">// 空格直接放</tspan></text>
+        <text x="64" y="220" fill="#f1f5f9" font-size="12.5">   else 撞车:</text>
+        <text x="64" y="246" fill="#f1f5f9" font-size="12.5">④   if (hash等 &amp;&amp; equals) 覆盖value <tspan fill="#7d8db0">// 同key=改</tspan></text>
+        <text x="64" y="272" fill="#f1f5f9" font-size="12.5">④'  else 排到链尾(或树里)          <tspan fill="#7d8db0">// 不同key=排队</tspan></text>
+        <text x="64" y="298" fill="#f1f5f9" font-size="12.5">⑤   if (链长 ≥ 8) treeifyBin       <tspan fill="#7d8db0">// 换树?</tspan></text>
+        <text x="64" y="324" fill="#f1f5f9" font-size="12.5">⑥ if (++size &gt; threshold) resize()  <tspan fill="#7d8db0">// 满了扩容</tspan></text>
+        <text x="64" y="352" fill="#475569" font-size="10.5">// n=格子数(恒为16,32,…2的幂) threshold=门槛=n×0.75</text>
+        <text x="64" y="376" fill="#475569" font-size="10.5">// modCount++ 记录修改次数(遍历中改动会 CME)</text>
+      </g>
+
+      <!-- 右：16 格柜子 -->
+      <g>
+        <text x="540" y="86" fill="#f1f5f9" font-size="13" font-weight="700">HashMap 的底层：一个 16 格的数组（每格叫一个“桶”）</text>
+        <g id="mini"></g>
+      </g>
+
+      <!-- 右：放大镜 -->
+      <g>
+        <rect x="520" y="188" width="600" height="212" rx="10" fill="rgba(30,41,59,0.4)" stroke="#22d3ee" stroke-width="1.2" stroke-dasharray="5,4"/>
+        <text x="540" y="214" fill="#22d3ee" font-size="12" font-weight="700" id="zoom-title">放大镜</text>
+        <g id="zoom"></g>
+      </g>
+
+      <!-- 术语卡 -->
+      <g>
+        <rect x="40" y="416" width="1080" height="76" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+        <text x="60" y="442" fill="#7d8db0" font-size="11">术语卡（本帧新出现的词，白话解释）</text>
+        <text x="60" y="470" fill="#e2e8f0" font-size="14" font-weight="600" id="term"></text>
+      </g>
+
+      <!-- 六步行程单 -->
+      <g>
+        <rect x="40" y="508" width="1080" height="92" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+        <text x="60" y="534" fill="#7d8db0" font-size="11">put 旅程六步（走到哪亮到哪）</text>
+        <g id="steps"></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#34d399"></div><h3>六步口诀</h3></div>
+      <ul>
+        <li>• <b>扰动</b>算指纹（高 16 位异或进低 16 位）→ <b>位与</b>算柜号（&amp;15 代替 %16）</li>
+        <li>• 桶空 <b>直接放</b>；同 key <b>覆盖 value</b>；不同 key <b>尾插排队</b></li>
+        <li>• 链长 ≥8 且数组 ≥64 → <b>转红黑树</b>；件数过门槛 → <b>扩容翻倍</b></li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#a78bfa"></div><h3>为什么查得快</h3></div>
+      <ul>
+        <li>• 定位桶是<b>一次位运算</b>（不用从头找）</li>
+        <li>• 桶里最多几件（负载因子 0.75 保证），链短摸几步就到</li>
+        <li>• 最坏变长链 → 树化兜底 O(logN)：从"摸链"变"查树"</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#fbbf24"></div><h3>看懂后的下一级</h3></div>
+      <ul>
+        <li>• 门槛触发后怎么搬家？→ <b>resize 扩容动图</b>（第二级）</li>
+        <li>• 1.7 的头插为何并发成环？→ <b>成环动图</b>（第三级）</li>
+        <li>• 动手验证：配套实验 <b>Q01HashMapLab</b>（mvn 可跑）</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>q01 · HashMap put 源码逐帧 · 零基础版 · 25 帧（定义/概念/架构/逐行混排）</span>
+    <span>飞猪 P6 Java 面试特训 · 阅读阶梯第一级</span>
+  </div>
+</div>
+
+<script>
+/* ============ 帧数据 ============ */
+const F = [
+{ t:'第 0 帧 · 概念：你每天都在用它', code:-1, step:-1, bi:-1, cells:{}, chain:[], chainNote:'',
+  ev:'Map m = new HashMap<>();  m.put("cat", 2);  m.get("cat") → 2',
+  term:'HashMap：一个“钥匙→值”的字典。给它一把钥匙（key），帮你存/取对应的值（value）。',
+  note:['你一定写过这三行：创建一个 HashMap，塞进去 cat→2，取出来还是 2。',
+        '问题是：它凭什么记得住？取的时候为什么不用翻遍所有数据？',
+        '这个动画跟着一次 put("cat",2) 钻进源码，看内部到底发生了什么。每帧只讲一小步。'] },
+{ t:'第 1 帧 · 定义：HashMap 的成员变量', code:-1, step:-1, bi:-1, arch:3,
+  cells:{}, chain:[], defTitle:'类定义卡 · HashMap 的字段（数据结构的"家底"）',
+  defs:[['public class HashMap&lt;K,V&gt;; extends AbstractMap&lt;K,V&gt;', '实现 Map 接口：key 不重复、一键一值'],
+        ['    transient Node&lt;K,V&gt;[] table;', '★ 唯一的主存储：桶数组，所有数据挂在它身上'],
+        ['    transient int size;', '已存键值对个数（链上摞着的逐个数）'],
+        ['    int threshold;', '扩容门槛 = 格子数 × 负载因子'],
+        ['    final float loadFactor;', '负载因子，默认 0.75'],
+        ['    transient int modCount;', '结构修改次数（fail-fast 校验用，第 20 帧细讲）']],
+  ev:'先看家底：HashMap 本体 ≈ 一个 Node 数组 + 一把计数器',
+  term:'定义先行：HashMap 自己几乎不存数据，真正的数据全在 table 数组里——它本质是“数组 + 几个计数器”的管家。',
+  note:['读源码先读字段。HashMap 的成员变量屈指可数，主角只有一个：Node[] table——桶数组。',
+        'size 是件数（摞在链上的逐个数）、threshold 是门槛（格子数×0.75）、loadFactor 是那个比例——这三个量贯穿后面全部剧情。',
+        'modCount 记录结构改动次数，给迭代器做 fail-fast 校验。table 是 transient 的：序列化时另有专用 writeObject（了解即可）。'] },
+{ t:'第 2 帧 · 定义：Node——存数据的最小单位', code:-1, step:-1, bi:-1, arch:3,
+  cells:{}, chain:[], defTitle:'类定义卡 · Node（一对 key/value 的全部）',
+  defs:[['static class Node&lt;K,V&gt; implements Map.Entry&lt;K,V&gt; {', '一个 Node = 一个条目（Entry）'],
+        ['    final int hash;', '指纹：存下来，get / 扩容不用重算'],
+        ['    final K key;', '钥匙（final：身份定死不可换）'],
+        ['    V value;', '值——唯一可改的字段，“覆盖”就是改它'],
+        ['    Node&lt;K,V&gt; next;', '同桶下一个节点 → 靠它串成链表'],
+        ['}', '']],
+  ev:'table 的每格放的就是 Node 本人（链表头节点）',
+  term:'Node 就是“单链表节点”：靠 next 指向下一个同类。数组格子里站着的是它，链上摞着的也是它。',
+  note:['HashMap 把一对键值封装成 Node。四个字段里三个 final：hash、key 定死不变（身份），value 可改（覆盖操作改的就是它），next 指向同桶下一个。',
+        '注意 table[i] 里放的就是 Node 本人，不是再包一层——数组格子上站着链表头节点。',
+        '它 implements Map.Entry：遍历 map 拿到的 entry 就是 Node（key/value 视图）。这个类在 JDK 里只有 40 行左右，是最值得背下来的小类。'] },
+{ t:'第 3 帧 · 架构：全景一图流', code:-1, step:-1, bi:-1, arch:1, cells:{}, chain:[],
+  chainNote:'数组是骨架（一步定位）· 链表是收纳（装冲突）· 红黑树是兜底（治长链）',
+  ev:'HashMap = 数组 + 链表 + 红黑树，三层结构各司其职',
+  term:'记住这三层，源码里所有“为什么”都能对号入座：定位靠数组、冲突靠链表、长链靠树。',
+  note:['先把骨架记住：最底下是一个数组（16 格起步），每个格子叫桶；格子号由 key 的指纹一次位运算算出——这就是“查得快”的来源。',
+        '撞车的 key 在桶里挂成链表（next 手拉手）；链是“万不得已的收纳”，越长摸得越慢。',
+        '链真长了（≥8 且数组≥64）就升级成红黑树，查找从摸链 O(n) 变查树 O(logN)。后面每一帧都是这三层的戏。'] },
+{ t:'第 4 帧 · 概念：行程单（put 的六步）', code:-1, step:-1, bi:-1, cells:{}, chain:[], chainNote:'',
+  ev:'put() 只有一行：转交 putVal() —— 真正的旅程六步',
+  term:'put：存一对 key/value。putVal：真正干活的那段 JDK 源码。',
+  note:['翻开 JDK 源码，put() 只有一行 return putVal(...)——它只是前台接待。',
+        'putVal 的活拆成六步（看下方行程单）：①算指纹 ②算柜号 ③空格直接放 ④撞车处理 ⑤换树检查 ⑥扩容检查。',
+        '左边源码面板全程跟随高亮，走到哪亮到哪。'] },
+{ t:'第 5 帧 · 逐行：put() 这一行', code:-1, step:-1, bi:-1, cells:{}, chain:[],
+  chainNote:'putVal(hash(key), key, value, onlyIfAbsent=false, evict=true)',
+  ev:'public V put(K key, V value) { return putVal(hash(key), key, value, false, true); }',
+  term:'onlyIfAbsent=false：遇到同 key 照常覆盖（true 则只在空位时才放，putIfAbsent 专用）。',
+  note:['逐行从第一行读起：put 把活连同四个参数转交 putVal。',
+        '参数里最值得认识的是 onlyIfAbsent：false 表示“有同 key 就覆盖”（put 的默认行为）；map.putIfAbsent(...) 就是把它传成 true。',
+        '第五个参数 evict 是给 LinkedHashMap 留的驱逐钩子，HashMap 里不起作用——知道有这回事即可。'] },
+{ t:'第 6 帧 · 逐行：① 扰动 h ^ (h >>> 16)', code:0, step:0, bi:-1, cells:{}, chain:[],
+  chainNote:'h = "cat".hashCode() → h ^ (h &gt;&gt;&gt; 16) → 扰动后的指纹',
+  ev:'① hash 扰动：把高 16 位异或进低 16 位',
+  term:'hash / hashCode：key 算出的 int 数字指纹——同一个 key 每次算出相同值。',
+  note:['putVal 第一件事不是放数据，而是 hash(key) 算指纹：先取 hashCode()，再做扰动 h ^ (h >>> 16)。',
+        '>>>16 是无符号右移 16 位：把高半段搬到低半段对齐，异或混合。',
+        '一句话：扰动让 32 位指纹的每一段都有机会参与后面的选柜。'] },
+{ t:'第 7 帧 · 概念：为什么必须扰动', code:0, step:0, bi:-1, cells:{}, chain:[],
+  chainNote:'不扰动：定位只看低 4 位，高位再不同也无关 → 挤同一桶',
+  ev:'反例：不做扰动的世界 —— 高位信息全浪费',
+  term:'背景知识：后面定位桶只取指纹的低几位（16 格→低 4 位）。高位不参与，等于白算。',
+  note:['算柜号用 hash & 15，只看低 4 位——指纹高 28 位再怎么千差万别，低 4 位相同就挤同一桶。',
+        '扰动把高位“揉”进低位，等于让整条指纹一起投票选柜，撞车概率大幅下降。',
+        '这也是一道经典面试题的答案：“hashCode 已经是散列的了为什么还要扰动？”——散列质量集中在高位时，低位仍是弱的。'] },
+{ t:'第 8 帧 · 逐行：② 定位 i = (n-1) & hash', code:1, step:1, bi:3, cells:{3:'·'}, chain:[],
+  chainNote:'(n-1) & hash = 15 & 35 = 3 → 桶3',
+  ev:'② 定位桶：35 & 15 = 3（等价 35 % 16，但更快）',
+  term:'桶（bucket）：数组的一个格子。n=格子数。&amp; 位与运算，2 的幂时结果等同取余。',
+  note:['putVal 第二行：i = (n - 1) & hash。本例 n=16，即 hash & 15。',
+        '代入：扰动后 hash=35，二进制 …0010 0011，& 1111 → 0011 = 3 号桶。等价于 35 % 16 = 3，但位运算快得多。',
+        '注意：格子数 n 恒为 2 的幂（16/32/64…），为什么？下一帧专门讲。'] },
+{ t:'第 9 帧 · 概念：为什么容量是 2 的幂', code:1, step:1, bi:-1, cells:{}, chain:[],
+  chainNote:'15 = 1111₂：全 1 掩码 → &amp; 等价取余且分布均匀',
+  ev:'2 的幂 − 1 = 二进制全 1（15=1111）——&amp; 的魔法前提',
+  term:'2 的幂减 1，二进制全是 1（16−1=1111，32−1=11111）。全 1 掩码做 &amp;，每一位都能“漏”进来。',
+  note:['取余 % 很贵（除法），位与 & 很便宜。想让 hash & mask 等价 hash % n，mask=n−1 必须是全 1——这要求 n 是 2 的幂。',
+        '第二个好处在扩容：16→32 只是多看一位二进制，节点要么留原地要么去 原地+16，不用重算指纹（第二级动图的核心）。',
+        '所以构造 new HashMap<>(10) 会被调整成 16——tableSizeFor 向上取 2 的幂。'] },
+{ t:'第 10 帧 · 逐行：③ 空桶直接放 + Node 解剖', code:2, step:2, bi:3, cells:{3:'cat'},
+  chain:[{k:'"cat"',v:2,h:35,fresh:1}],
+  chainNote:'tab[3] == null → new Node(35, "cat", 2, null)',
+  ev:'③ tab[3] 是空的 → 造一张 Node 卡片直接放入',
+  term:'Node：真正存数据的小卡片，四格：hash 指纹、key 钥匙、value 值、next 同桶下一张。',
+  note:['最简单的一步：桶3 空（tab[3]==null）→ new Node(hash, key, value, null) 放进去。',
+        'hash 也存进节点：以后 get/扩容都直接用，不再重算——空间换时间的小心思。',
+        'next=null：后面还没人。下一帧让它不再为 null。'] },
+{ t:'第 11 帧 · 逐行：撞车后的 for(;;) 骨架', code:4, step:3, bi:3, cells:{3:'cat'},
+  chain:[{k:'"cat"',v:2,h:35},{k:'"dog"',v:5,h:51,fresh:1}],
+  chainNote:'for(;;){ 先比头节点；不是→e=p；e=e.next 摸下一个；null 了才尾插 }',
+  ev:'④ 撞车：进入 for(;;) 循环 —— 先审头节点，再顺链摸到尾',
+  term:'JDK8 用一个 for(;;) 无限循环走链：第一圈审头节点，之后每圈前进一个，摸到 null（链尾）才动手插。',
+  note:['源码里撞车后是一个 for(;;)：p 从头节点开始，先比 p 是不是同 key（分支A）。',
+        '不是 → e = p，继续 e = e.next 往后摸；摸到 null 说明到链尾了，才把新节点接上（分支B）。',
+        '如果摸到的是 TreeNode，走树的插入。循环的每一步都在找“该插哪/该不该插”。'] },
+{ t:'第 12 帧 · 逐行：分支A 同 key → 覆盖', code:3, step:3, bi:3, cells:{3:'cat'},
+  chain:[{k:'"cat"',v:2,h:35},{k:'"cat"',v:9,h:35,fresh:1,cover:1}],
+  chainNote:'p.hash==35 &amp;&amp; "cat".equals(p.key) → value: 2→9，return 旧值 2',
+  ev:'④ 分支A：put("cat",9) —— equals 确认同 key → 只换 value',
+  term:'equals：判断是不是“同一把钥匙”。hash 相等只是嫌疑，equals 才是定论。',
+  note:['再 put("cat",9)：头节点指纹 35==35，equals 确认就是本尊 → 走覆盖分支。',
+        '只改 value（2→9），链不增长，并把旧值 2 返回——put 有返回值，返回的就是被顶掉的旧值。',
+        '判断顺序先 hash 后 equals：指纹不同直接跳过，省掉贵的比较。'] },
+{ t:'第 13 帧 · 逐行：分支B 不同 key → 尾插', code:4, step:3, bi:3, cells:{3:'cat·dog'},
+  chain:[{k:'"cat"',v:9,h:35},{k:'"dog"',v:5,h:51},{k:'"bird"',v:7,h:67,fresh:1}],
+  chainNote:'摸到链尾(p.next==null) → p.next = newNode(bird) —— 尾插，顺序不变',
+  ev:'④ 分支B：put("bird",7) —— 顺链摸到尾，新节点接最后',
+  term:'尾插：新节点接链尾（JDK8）。JDK7 是头插（插队到最前面）——为第三级动图的悲剧埋下伏笔。',
+  note:['put("bird",7)：67&15=3，又是桶3；和 cat、dog 都不是同 key → 顺链摸到 next==null 的尾巴。',
+        '把 bird 接上去：cat→dog→bird。JDK8 刻意用尾插保持顺序——为什么顺序重要？第三级动图揭晓（1.7 头插并发会成环）。',
+        '取值也是这么摸：定位桶后逐个 hash+equals。链越短越快——这是扩容存在的全部理由。'] },
+{ t:'第 14 帧 · 概念：null 永远住桶0', code:1, step:1, bi:0, cells:{3:'cat·dog·bird',0:'null'},
+  chain:[{k:'null',v:1,h:0,fresh:1}],
+  chainNote:'hash(null) 特判 = 0 → 0 & 15 = 0 → 桶0（HashTable 不允许 null，常考对比）',
+  ev:'put(null, 1)：null 的指纹特判为 0 → 桶0',
+  term:'null key：允许一把“空钥匙”，指纹恒为 0，所以永远住桶0，也永远只有一个。',
+  note:['HashMap 允许 key=null（最多一把）；HashTable 不允许——高频对比题。',
+        'hash(null) 特判返回 0，0&15=0 永远桶0。指纹是定值，撞不出第二个 null。',
+        'value=null 也允许且不限数量——限制只针对 key。'] },
+{ t:'第 15 帧 · 概念：⑤ 树化双条件', code:5, step:4, bi:3, cells:{3:'cat·dog·bird⋯'},
+  chain:[{k:'cat',v:9,h:35,s:1},{k:'dog',v:5,h:51,s:1},{k:'bird',v:7,h:67,s:1},{k:'…',v:'',h:'共8个',s:1}],
+  chainNote:'链长 8 ≥8 触发 treeifyBin；但数组 16 &lt; 64 → 不转树，先扩容',
+  ev:'⑤ treeifyBin：链≥8 且 数组≥64 才转红黑树',
+  term:'红黑树：近似平衡的有序树，查找 O(logN)——8 个节点最多 3 次定位，链表最坏 8 次。',
+  note:['假设桶3 的链涨到 8：尾插完成后检查链长 ≥8 → 调 treeifyBin 想换树。',
+        'treeifyBin 内部还有第二道闸：数组 ≥64 才真转；数组小时（16）说明只是格子少，先扩容拆链更便宜。',
+        '面试易错点：「链表≥8 就转树」不完整，是双条件。另外树节点 ≤6 时会退化回链表。'] },
+{ t:'第 16 帧 · 逐行：⑥ ++size &gt; threshold', code:6, step:5, bi:-1, cells:{3:'cat·dog·bird'},
+  chain:[], chainNote:'threshold = 16 × 0.75 = 12；13 &gt; 12 → resize()',
+  ev:'⑥ 件数过门槛就扩容：++size &gt; threshold ?',
+  term:'size=已存件数 · threshold=门槛=格子数×0.75（负载因子 0.75：太满查询慢、太空浪费内存的折中）。',
+  note:['每次 put 的最后一行：++size 和门槛比。16 格门槛 12，第 13 件（13>12，严格大于）触发 resize。',
+        '扩容 = 数组翻倍 + 所有链重新分配。它是 HashMap 最复杂的部分，有专门的动图（第二级）。',
+        '这里记住路标即可：put 的六步到⑥就收工了。'] },
+{ t:'第 17 帧 · 架构：扩容一瞥（路标帧）', code:6, step:5, bi:3, cells:{3:'cat·bird',17:'dog'},
+  chain:[{k:'cat',v:9,h:35},{k:'bird',v:7,h:67},{k:'',v:'',h:''},{k:'dog',v:5,h:51,s:1}],
+  chainNote:'16→32 格：指纹“16 那一位”=0 留桶3（cat,bird）；=1 去桶19（dog）',
+  ev:'resize 摘要：格子×2 · 每条链按新增位拆两条 · 免重算指纹',
+  term:'扩容的分流规则：只看指纹里新增的那一位（16），0 留原地，1 去 原地+16。',
+  note:['16→32 格后重分：cat(35=100011₂) 的 16 位=0 → 留桶3；dog(51=110011₂) 的 16 位=1 → 去桶19。',
+        '一条长链拆成两条短链，查询恢复飞快——扩容的全部意义就是把链养短。',
+        '完整逐帧（触发/搬家/均摊O(1)）看第二级动图 q01-resize.html。'] },
+{ t:'第 18 帧 · 概念：get 同路反走', code:-1, step:1, bi:3, cells:{3:'cat·bird',19:'dog'},
+  chain:[{k:'cat',v:9,h:35},{k:'bird',v:7,h:67},{k:'dog',v:5,h:51,find:1}],
+  chainNote:'hash("dog")→桶19→比 hash+equals 命中 → 返回 5',
+  ev:'get("dog")：同一套定位，反着走一遍',
+  term:'get 成本 = 一次位运算 + 摸几下链/树 —— 这就是“平均 O(1)”的全部含义。',
+  note:['get("dog") 用同一套定位：扰动 → 51&31=19 → 桶19。',
+        '桶19 只有 dog：hash 相等 + equals 确认 → 返回 5。多节点顺链摸，是树按树查。',
+        'put 懂了 get 就懂了——两条路共用同一张地图。'] },
+{ t:'第 19 帧 · 逐行：putVal 全文回放', code:-1, step:-1, bi:3, cells:{3:'cat·bird',19:'dog'},
+  chain:[{k:'cat',v:9,h:35},{k:'bird',v:7,h:67},{k:'dog',v:5,h:51}],
+  chainNote:'对照左侧源码面板：①指纹 ②柜号 ③空放 ④覆盖/尾插 ⑤树化 ⑥扩容',
+  ev:'putVal 真实骨架回放：六步在源码里的位置',
+  term:'建议打开 IDEA，⌘点 HashMap.putVal，按六步口诀逐行对号——十分钟后源码就是你的。',
+  note:['左侧面板就是 putVal 真实骨架（略去树插入细节与少量边界），六步标注齐全。',
+        '自己动手：在 put("cat",2) 打断点进 putVal，观察 hash、i、链长、size、threshold 逐步变化。',
+        '配套实验 Q01HashMapLab 用反射打印了这些内部量，mvn 直接跑。'] },
+{ t:'第 20 帧 · 概念：modCount 与 fail-fast', code:-1, step:-1, bi:3, cells:{3:'cat·bird',19:'dog'},
+  chain:[{k:'cat',v:9,h:35},{k:'bird',v:7,h:67},{k:'dog',v:5,h:51}],
+  chainNote:'put/remove 都 modCount++；迭代器发现快照对不上 → 立刻抛 CME',
+  ev:'modCount++ → 遍历中改结构 → ConcurrentModificationException',
+  term:'fail-fast：宁可当场报错，也不让你在被改了一半的数据上继续遍历。',
+  note:['putVal 开头有一行 ++modCount：记录结构被改的次数。',
+        '迭代器创建时抄一份，每次 next() 核对——不一致说明遍历期间有人 put/remove，立刻抛 ConcurrentModificationException。',
+        '所以“遍历时删除要用 iterator.remove()”：它会同步快照，不触发 fail-fast。'] },
+{ t:'第 21 帧 · 架构：Node vs TreeNode', code:-1, step:-1, bi:-1, arch:2, cells:{3:'cat·bird',19:'dog'},
+  chain:[], chainNote:'TreeNode 继承 Node：多出 left/right/prev/red 四个字段，既能当链节点也能当树节点',
+  ev:'树化的代价与妙处：TreeNode = Node + 树字段',
+  term:' TreeNode “向下兼容”Node：树拆回链表（≤6 个）时，next 字段还在，随时退化。',
+  note:['树不是另起炉灶：TreeNode extends Node，原四字段都在，多出 left/right/prev/red。',
+        '妙处：同一批节点既能按链摸（next）也能按树查（left/right）——树化/退化只是改变组织方式，数据不动窝。',
+        '代价：TreeNode 更占内存。所以树化才要双条件卡着，不轻易转。'] },
+{ t:'第 22 帧 · 概念：新手四连问', code:-1, step:-1, bi:3, cells:{3:'cat·bird',19:'dog'},
+  chain:[{k:'cat',v:9,h:35},{k:'bird',v:7,h:67},{k:'dog',v:5,h:51}],
+  chainNote:'2 的幂 · 扰动&gt;&gt;&gt;16 · 1.7头插vs1.8尾插 · null住桶0',
+  ev:'FAQ：为什么 2 的幂 / 为什么扰动 / 为什么尾插 / null 在哪',
+  term:'这四问覆盖 HashMap 面试里 80% 的“为什么”。',
+  note:['问：容量为何 2 的幂？答：(n−1) 全 1，&amp; 等价取余更快，扩容只看新增位免重算。',
+        '问：扰动为何 &gt;&gt;&gt;16？答：int 高低各半异或，让高位参与选柜。',
+        '问：1.8 为何改尾插？答：头插让扩容搬链时反转顺序，并发扩容成环死循环（第三级动图）；尾插保序。'] },
+{ t:'第 23 帧 · 架构：阅读地图（三级阶梯）', code:-1, step:-1, bi:3, cells:{3:'cat·bird',19:'dog'},
+  chain:[{k:'cat',v:9,h:35},{k:'bird',v:7,h:67},{k:'dog',v:5,h:51}],
+  chainNote:'① 本图：put 六步 → ② q01-resize：搬家逐帧 → ③ q01-jdk7-cycle：1.7 成环',
+  ev:'恭喜走完全程 —— 下一级：resize 扩容逐帧',
+  term:'学习路径：先懂怎么放（本图）→ 再懂怎么搬（resize）→ 最后懂 1.7 为什么死循环（成环）。',
+  note:['第一级（本图）：put 六步——扰动、定位、空放、覆盖/尾插、树化、扩容检查。',
+        '第二级 q01-resize.html：门槛触发后 32 格搬家、链拆两条的逐帧细节。',
+        '第三级 q01-jdk7-cycle.html：同样搬家换 1.7 头插，两线程交错如何成环死循环。'] },
+{ t:'第 24 帧 · 概念：总结收束', code:-1, step:-1, bi:3, cells:{3:'cat·bird',19:'dog'},
+  chain:[{k:'cat',v:9,h:35},{k:'bird',v:7,h:67},{k:'dog',v:5,h:51}],
+  chainNote:'扰动算指纹 · 位与算柜号 · 空放/覆盖/尾插 · 树化兜底 · 门槛扩容',
+  ev:'六步口诀：算指纹 → 算柜号 → 空则放 → 等则盖 → 排队尾插 → 满了扩容',
+  term:'能不看资料复述这六步，HashMap 的 put 源码就算拿下了。',
+  note:['回头看第 3 帧的三层架构：数组负责一步定位，链表负责收纳冲突，红黑树负责治长链——六步全是在这三层之间调度。',
+        'put 懂了，get/扩容/成环三张图就是同一条路上的三段风景。',
+        '下一步：跑一遍 Q01HashMapLab，把动画里的每个数字亲眼见一遍。'] },
+];
+
+/* ============ 静态构件 ============ */
+const NS = 'http://www.w3.org/2000/svg';
+const $ = id => document.getElementById(id);
+const D = s => String(s).replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');   // 帧数据经 textContent 渲染，不解码实体
+let cur = 0, timer = null;
+
+const codeY = [142, 168, 194, 246, 272, 298, 324];   // ①②③④④'⑤⑥ 的 y
+const STEPS = ['① 算指纹', '② 算柜号', '③ 空格直接放', '④ 撞车：覆盖/排队', '⑤ 换树检查', '⑥ 扩容检查'];
+
+function mk(tag, attrs, parent) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  parent.appendChild(n);
+  return n;
+}
+
+/* 16 格迷你柜 */
+(function buildMini() {
+  const g = $('mini');
+  for (let i = 0; i < 16; i++) {
+    const x = 540 + i * 36;
+    mk('rect', { x, y: 104, width: 32, height: 44, rx: 5, fill: '#0f172a', stroke: '#475569', 'stroke-width': 1, id: 'mb-' + i }, g);
+    mk('text', { x: x + 16, y: 100, 'text-anchor': 'middle', fill: '#64748b', 'font-size': 9.5 }, g).textContent = i;
+    const t = mk('text', { x: x + 16, y: 124, 'text-anchor': 'middle', fill: '#f1f5f9', 'font-size': 8.5, id: 'mt-' + i }, g);
+    t.textContent = '·';
+  }
+})();
+
+/* 六步行程单 */
+(function buildSteps() {
+  const g = $('steps');
+  STEPS.forEach((s, i) => {
+    const x = 60 + i * 176;
+    mk('rect', { x, y: 548, width: 168, height: 36, rx: 7, fill: '#0f172a', stroke: '#334155', 'stroke-width': 1, id: 'sb-' + i }, g);
+    const t = mk('text', { x: x + 84, y: 571, 'text-anchor': 'middle', 'font-size': 12.5, fill: '#a5b4cc', id: 'st-' + i }, g);
+    t.textContent = s;
+  });
+})();
+
+/* 放大镜节点链 */
+function drawZoom(f) {
+  const g = $('zoom'); g.innerHTML = '';
+  $('zoom-title').textContent = f.arch ? '架构图' : (f.bi >= 0 ? `放大镜 · 桶${f.bi}` : '放大镜');
+  if (f.arch === 1) {   /* 全景架构：数组骨架 → 桶内链 → 树兜底 */
+    const boxes = [
+      ['① 骨架 · table 数组', '#a78bfa', '16/32/64… 格', '格子号 = hash & (n-1)', '查询快的原因：一步定位'],
+      ['② 挂件 · Node 链表', '#8ea3bd', '同号 key 手拉手', 'next 指向下一个', '撞车（冲突）的收纳方式'],
+      ['③ 兜底 · 红黑树', '#fb7185', '链≥8 且数组≥64', '查找 O(logN)', '长链的补救方案'],
+    ];
+    boxes.forEach((b, i) => {
+      const x = 548 + i * 190;
+      mk('rect', { x, y: 240, width: 172, height: 118, rx: 10, fill: '#0f172a', stroke: b[1], 'stroke-width': 1.6 }, g);
+      mk('text', { x: x + 86, y: 264, 'text-anchor': 'middle', fill: b[1], 'font-size': 12.5, 'font-weight': 700 }, g).textContent = b[0];
+      mk('text', { x: x + 86, y: 288, 'text-anchor': 'middle', fill: '#cbd5e1', 'font-size': 11 }, g).textContent = b[2];
+      mk('text', { x: x + 86, y: 308, 'text-anchor': 'middle', fill: '#a5b4cc', 'font-size': 10.5 }, g).textContent = b[3];
+      mk('text', { x: x + 86, y: 328, 'text-anchor': 'middle', fill: '#a5b4cc', 'font-size': 10.5 }, g).textContent = b[4];
+      if (i < 2) mk('path', { d: `M ${x + 172} 299 L ${x + 188} 299`, stroke: '#8ea3bd', 'stroke-width': 1.8, fill: 'none', 'marker-end': 'url(#arr)' }, g);
+    });
+    mk('text', { x: 548, y: 386, fill: '#cbd5e1', 'font-size': 12 }, g).textContent = D(f.chainNote || '');
+    return;
+  }
+  if (f.arch === 3) {   /* 类定义卡 */
+    mk('rect', { x: 540, y: 232, width: 556, height: 156, rx: 10, fill: '#0f172a', stroke: '#a78bfa', 'stroke-width': 1.6 }, g);
+    mk('text', { x: 560, y: 254, fill: '#a78bfa', 'font-size': 12, 'font-weight': 700 }, g).textContent = D(f.defTitle);
+    f.defs.forEach((row, j) => {
+      const y = 276 + j * 20;
+      mk('text', { x: 560, y, fill: '#f1f5f9', 'font-size': 11.5 }, g).textContent = D(row[0]);
+      if (row[1]) mk('text', { x: 860, y, fill: '#7d8db0', 'font-size': 10.5 }, g).textContent = '// ' + D(row[1]);
+    });
+    return;
+  }
+  if (f.arch === 2) {   /* Node vs TreeNode 结构图 */
+    const L = [['Node（链表节点）', '#8ea3bd', ['int hash      // 指纹', 'K key         // 钥匙', 'V value       // 值', 'Node next     // 下一个']],];
+    const R = ['TreeNode（树节点）', '#fb7185', ['↑ 继承 Node 全部字段', 'TreeNode left / right', 'TreeNode prev  // 前驱', 'boolean red    // 红黑位']];
+    const draw = (x, title, color, lines) => {
+      mk('rect', { x, y: 240, width: 260, height: 128, rx: 10, fill: '#0f172a', stroke: color, 'stroke-width': 1.6 }, g);
+      mk('text', { x: x + 130, y: 264, 'text-anchor': 'middle', fill: color, 'font-size': 12.5, 'font-weight': 700 }, g).textContent = title;
+      lines.forEach((ln, j) => mk('text', { x: x + 16, y: 290 + j * 19, fill: '#cbd5e1', 'font-size': 11 }, g).textContent = ln);
+    };
+    draw(548, L[0][0], L[0][1], L[0][2]);
+    draw(880, R[0], R[1], R[2]);
+    mk('text', { x: 818, y: 300, fill: '#a5b4cc', 'font-size': 11 }, g).textContent = 'extends →';
+    mk('text', { x: 548, y: 392, fill: '#cbd5e1', 'font-size': 12 }, g).textContent = D(f.chainNote || '');
+    return;
+  }
+  if (f.bi < 0 && !f.arch) {
+    if (f.chainNote) {
+      const t = mk('text', { x: 540, y: 280, fill: '#cbd5e1', 'font-size': 13 }, g);
+      t.textContent = D(f.chainNote);
+    }
+    return;
+  }
+  const list = f.chain;
+  const w = list.length > 3 ? 128 : 148, h = 128, gap = 14;
+  list.forEach((n, i) => {
+    const x = 542 + i * (w + gap);
+    const stroke = n.fresh ? '#34d399' : n.s ? '#8ea3bd' : n.find ? '#22d3ee' : '#64748b';
+    const sw = n.fresh || n.find ? 2.2 : 1.3;
+    mk('rect', { x, y: 234, width: w, height: h, rx: 8, fill: n.fresh ? 'rgba(6,78,59,0.5)' : n.find ? 'rgba(8,51,68,0.5)' : '#0f172a', stroke, 'stroke-width': sw }, g);
+    mk('text', { x: x + w / 2, y: 258, 'text-anchor': 'middle', fill: '#f1f5f9', 'font-size': 14, 'font-weight': 700 }, g).textContent = 'Node ' + (n.k || '');
+    const lines = n.s ? [[`hash ${n.h}`, '#8ea3bd'], [`key  ${n.k}`, '#8ea3bd'], [`val  ${n.v}`, '#8ea3bd']]
+                      : [[`hash  ${n.h}`, '#a5b4cc'], [`key   ${n.k}`, '#a5b4cc'], [`value ${n.cover ? '2→9 ⚡' : n.v}`, n.cover ? '#fbbf24' : '#a5b4cc']];
+    lines.forEach((ln, j) => {
+      mk('text', { x: x + 12, y: 284 + j * 20, fill: ln[1], 'font-size': 11.5 }, g).textContent = ln[0];
+    });
+    mk('text', { x: x + 12, y: 344 + 20, fill: '#475569', 'font-size': 10.5 }, g).textContent = 'next ' + (i < list.length - 1 ? '→' : 'null');
+    if (i < list.length - 1) {
+      mk('path', { d: `M ${x + w - 2} 300 L ${x + w + gap - 2} 300`, stroke: '#8ea3bd', 'stroke-width': 1.8, fill: 'none', 'marker-end': 'url(#arr)' }, g);
+    }
+  });
+  if (f.chainNote) {
+    const t = mk('text', { x: 542, y: 386, fill: '#cbd5e1', 'font-size': 12 }, g);
+    t.textContent = D(f.chainNote);
+  }
+}
+
+/* ============ 渲染 ============ */
+function render(i) {
+  const f = F[i]; cur = i;
+  $('ev').textContent = D(f.ev);
+  $('term').textContent = D(f.term);
+  const hl = $('code-hl');
+  if (f.code >= 0) { hl.setAttribute('opacity', 1); hl.setAttribute('y', codeY[f.code] - 16); }
+  else hl.setAttribute('opacity', 0);
+  for (let b = 0; b < 16; b++) {
+    const cell = $('mt-' + b), box = $('mb-' + b);
+    const v = f.cells[b];
+    cell.textContent = v && v !== '·' ? v : '·';
+    box.setAttribute('stroke', b === f.bi ? '#22d3ee' : '#475569');
+    box.setAttribute('stroke-width', b === f.bi ? 2 : 1);
+  }
+  drawZoom(f);
+  STEPS.forEach((_, s) => {
+    const on = s === f.step;
+    $('sb-' + s).setAttribute('stroke', on ? '#34d399' : '#334155');
+    $('sb-' + s).setAttribute('fill', on ? 'rgba(6,78,59,0.5)' : '#0f172a');
+    $('st-' + s).setAttribute('fill', on ? '#f1f5f9' : '#a5b4cc');
+    $('st-' + s).setAttribute('font-weight', on ? 700 : 400);
+  });
+  $('cap-title').textContent = D(f.t);
+  $('qmark').title = f.note.map(D).join('\n');
+  $('step-ind').textContent = (i + 1) + ' / ' + F.length;
+  $('btn-prev').disabled = i === 0;
+  $('btn-next').disabled = i === F.length - 1;
+  document.querySelectorAll('#dots button').forEach((d, k) => d.classList.toggle('cur', k === i));
+}
+
+/* ============ 控件 ============ */
+const dots = $('dots');
+F.forEach((_, k) => {
+  const b = document.createElement('button');
+  b.onclick = () => { stopPlay(); render(k); };
+  dots.appendChild(b);
+});
+$('btn-prev').onclick = () => { stopPlay(); if (cur > 0) render(cur - 1); };
+$('btn-next').onclick = () => { stopPlay(); if (cur < F.length - 1) render(cur + 1); };
+$('btn-reset').onclick = () => { stopPlay(); render(0); };
+$('btn-play').onclick = togglePlay;
+function togglePlay() {
+  if (timer) return stopPlay();
+  if (cur >= F.length - 1) render(0);
+  $('btn-play').textContent = '⏸ 暂停';
+  timer = setInterval(() => { if (cur >= F.length - 1) return stopPlay(); render(cur + 1); }, 2600);
+}
+function stopPlay() { if (timer) { clearInterval(timer); timer = null; $('btn-play').textContent = '▶ 播放'; } }
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { stopPlay(); if (cur < F.length - 1) render(cur + 1); }
+  if (e.key === 'ArrowLeft')  { stopPlay(); if (cur > 0) render(cur - 1); }
+});
+const m = location.hash.match(/f=(\d+)/);
+render(m ? Math.min(F.length - 1, +m[1]) : 0);
+
+/* ============ 导出工具条 ============ */
+function capture() {
+  const el = document.getElementById('report-container');
+  const r = el.getBoundingClientRect();
+  return html2canvas(document.body, {
+    x: r.left - 32, y: r.top - 32, width: r.width + 64, height: r.height + 64,
+    scale: 2, backgroundColor: '#020617',
+    ignoreElements: n => n.closest && n.closest('.toolbar')
+  });
+}
+function copyAsImage() { capture().then(c => c.toBlob(b => navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]))); }
+function downloadPNG() { capture().then(c => { const a = document.createElement('a'); a.download = 'q01-put-flow.png'; a.href = c.toDataURL('image/png'); a.click(); }); }
+function downloadPDF() {
+  capture().then(c => {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: c.width >= c.height ? 'l' : 'p', unit: 'px', format: [c.width, c.height] });
+    pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, c.width, c.height);
+    pdf.save('q01-put-flow.pdf');
+  });
+}
+</script>
+</body>
+</html>

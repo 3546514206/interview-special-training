@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JDK8 JVM 分代垃圾回收 · 全过程逐帧演示</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; min-height: 100vh; }
+  .container { width: 1320px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #fbbf24; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(251,191,36,.6); } 70% { box-shadow: 0 0 0 10px rgba(251,191,36,0); } 100% { box-shadow: 0 0 0 0 rgba(251,191,36,0); } }
+  .header h1 { font-size: 21px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 13px; color: #7d8db0; margin-top: 5px; }
+  .toolbar { position: relative; }
+  .toolbar-toggle { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 16px; font-family: inherit; }
+  .toolbar-toggle:hover { color: #e2e8f0; border-color: #475569; }
+  .toolbar-actions { display: none; position: absolute; right: 0; top: 38px; gap: 6px; z-index: 10; }
+  .toolbar.open .toolbar-actions { display: flex; }
+  .toolbar-actions button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; }
+  .toolbar-actions button:hover { color: #f1f5f9; border-color: #64748b; }
+  @media print { .toolbar { display: none !important; } }
+  .controls { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .controls button { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; padding: 7px 16px; cursor: pointer; font-size: 14px; font-family: inherit; }
+  .controls button:hover { border-color: #64748b; }
+  .controls button:disabled { opacity: 0.35; cursor: default; }
+  .step-ind { font-size: 14px; color: #cbd5e1; min-width: 70px; }
+  .frame-title { font-size: 14px; color: #fbbf24; font-weight: 700; }
+  .qmark { cursor: help; font-size: 15px; color: #7d8db0; }
+  .key-hint { font-size: 12px; color: #64748b; }
+  .dots { display: flex; gap: 6px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+  .dots button { width: 12px; height: 12px; border-radius: 50%; padding: 0; background: #1e293b; border: 1px solid #334155; cursor: pointer; }
+  .dots button.cur { background: #fbbf24; border-color: #fbbf24; }
+  .dots button:hover { border-color: #fbbf24; }
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 16px 18px; }
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+  .card-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; }
+  .card ul { list-style: none; }
+  .card li { font-size: 13px; color: #a5b4cc; line-height: 1.75; }
+  .card li b { color: #e2e8f0; font-weight: 600; }
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>Q9 · JDK8 分代垃圾回收全过程 —— 逐帧演示</h1>
+        <div class="subtitle">Eden 分配 → 4 次 Minor GC（复制 + 年龄 + 互换）→ 三条晋升通道 → 空间担保 → Full GC 标记-清除-整理 → OOM 分支</div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbar').classList.toggle('open')">⋯</button>
+      <div class="toolbar-actions">
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="btn-reset" title="回到第 0 帧">⏮</button>
+    <button id="btn-prev" title="上一帧">◀</button>
+    <button id="btn-play" title="自动播放">▶ 播放</button>
+    <button id="btn-next" title="下一帧">▶|</button>
+    <span class="step-ind" id="step-ind">1 / 24</span>
+    <span class="frame-title" id="cap-title"></span>
+    <span class="qmark" id="qmark" title="">❓</span>
+    <span class="key-hint">← → 键翻页 · 悬停 ❓ 看本帧解说</span>
+    <div class="dots" id="dots"></div>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1160 648" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+      </defs>
+      <rect width="1160" height="648" fill="#020617"/>
+      <rect width="1160" height="648" fill="url(#grid)"/>
+
+      <!-- 收集器徽章 + 事件横幅 -->
+      <rect x="40" y="26" width="330" height="40" rx="8" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.2"/>
+      <text x="205" y="51" text-anchor="middle" fill="#34d399" font-size="12" font-weight="600">新生代 · Parallel Scavenge（复制）</text>
+      <rect x="390" y="26" width="330" height="40" rx="8" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.2"/>
+      <text x="555" y="51" text-anchor="middle" fill="#fbbf24" font-size="12" font-weight="600">老年代 · Parallel Old（标记-整理）</text>
+      <rect x="740" y="26" width="380" height="40" rx="8" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4,4"/>
+      <text x="930" y="51" text-anchor="middle" fill="#94a3b8" font-size="12">JDK8 默认组合 · 无永久代</text>
+      <text id="ev" x="580" y="88" text-anchor="middle" fill="#f8fafc" font-size="17" font-weight="700">—— 开局：JDK8 堆结构 ——</text>
+
+      <!-- 新生代 -->
+      <g id="young">
+        <rect x="40" y="102" width="1080" height="170" rx="12" fill="rgba(6,78,59,0.12)" stroke="#34d399" stroke-width="1.5"/>
+        <text x="56" y="124" fill="#34d399" font-size="13" font-weight="700">新生代 Young（复制算法）</text>
+        <text x="1104" y="124" text-anchor="end" fill="#7d8db0" font-size="11">E : S0 : S1 = 8:1:1（演示 10:5:5 格）</text>
+        <text x="306" y="146" text-anchor="middle" fill="#a5b4cc" font-size="12" font-weight="600">Eden（对象出生地）</text>
+        <text id="lab-s0" x="692" y="146" text-anchor="middle" fill="#22d3ee" font-size="12" font-weight="600">S0 · from</text>
+        <text id="lab-s1" x="948" y="146" text-anchor="middle" fill="#22d3ee" font-size="12" font-weight="600">S1 · to</text>
+        <g id="ed-cells"></g>
+        <g id="s0-cells"></g>
+        <g id="s1-cells"></g>
+      </g>
+
+      <!-- 老年代 -->
+      <g id="oldgrp">
+        <rect x="40" y="292" width="1080" height="118" rx="12" fill="rgba(120,53,15,0.10)" stroke="#fbbf24" stroke-width="1.5"/>
+        <text x="56" y="314" fill="#fbbf24" font-size="13" font-weight="700">老年代 Old（标记-整理算法）</text>
+        <text x="1104" y="314" text-anchor="end" fill="#7d8db0" font-size="11">长期存活对象 · 新生代 : 老年代 = 1 : 2</text>
+        <g id="old-cells"></g>
+      </g>
+
+      <!-- Metaspace -->
+      <rect x="40" y="424" width="1080" height="24" rx="6" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1" stroke-dasharray="5,4"/>
+      <text x="580" y="441" text-anchor="middle" fill="#94a3b8" font-size="11">Metaspace（堆外·本地内存）—— 类元数据，JDK8 起替代永久代，Full GC 时可卸载无引用的类</text>
+
+      <!-- GC Roots 面板 -->
+      <g>
+        <rect x="40" y="462" width="380" height="172" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+        <text x="60" y="486" fill="#e2e8f0" font-size="12" font-weight="700">GC Roots / 生死判定（本帧）</text>
+        <text x="60" y="512" fill="#cbd5e1" font-size="11.5" id="r0"></text>
+        <text x="60" y="536" fill="#cbd5e1" font-size="11.5" id="r1"></text>
+        <text x="60" y="560" fill="#cbd5e1" font-size="11.5" id="r2"></text>
+        <text x="60" y="584" fill="#cbd5e1" font-size="11.5" id="r3"></text>
+        <text x="60" y="614" fill="#64748b" font-size="10">Roots：栈帧局部变量 · 静态变量 · 常量 · JNI</text>
+      </g>
+
+      <!-- 规则面板 -->
+      <g>
+        <rect x="440" y="462" width="680" height="172" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+        <text x="460" y="486" fill="#e2e8f0" font-size="12" font-weight="700">规则面板（当前帧生效的规则高亮）</text>
+        <g id="rules"></g>
+      </g>
+    </svg>
+  </div>
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#34d399"></div><h3>新生代 · 复制算法</h3></div>
+      <ul>
+        <li>• Eden 满 → <b>Minor GC</b>：可达性分析，存活者复制进 to 并 <b>年龄 +1</b></li>
+        <li>• Eden + from <b>整块丢弃</b>：无碎片、存活少时极快，然后 from/to <b>互换</b></li>
+        <li>• 晋升三条通道：<b>阈值 15</b>（对象头 4bit）/ <b>动态年龄</b>（同龄 &gt; S 一半）/ <b>大对象直入</b></li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#fbbf24"></div><h3>老年代 · 标记-整理</h3></div>
+      <ul>
+        <li>• Minor GC 前<b>空间担保</b>：老年代可用 &lt; 历次晋升平均 → 先 Full GC</li>
+        <li>• Old 满 → <b>Full GC</b>：标记 → 清除 → <b>整理压缩</b>（无碎片），整堆 + Metaspace</li>
+        <li>• Full GC 后仍放不下 → <b>OutOfMemoryError</b>（先 dump 再排查）</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#a78bfa"></div><h3>高频追问三连</h3></div>
+      <ul>
+        <li>• <b>为何两块 Survivor？</b>复制免碎片；HotSpot 用 10% 空间换掉经典算法的 50%</li>
+        <li>• <b>为何 Eden 这么大？</b>多数对象朝生夕死，死在 Eden = 随整块丢弃、零成本</li>
+        <li>• <b>年龄上限为何 15？</b>对象头只留了 4 个 bit（0~15）</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>q09 · JDK8 分代 GC 全过程 · 24 帧</span>
+    <span>飞猪 P6 Java 面试特训 · 演示阈值=3（真实默认 15）</span>
+  </div>
+</div>
+
+<script>
+/* ============ 工具 ============ */
+const c = (k, a = 0, d = 0) => ({ k, a, d });   // k=名字 a=年龄 d=死亡
+
+/* ============ 帧数据（字段：t 标题 / note 解说 / ed·s0·s1·old 格子 / o0 对象在S0 / roots / rule / ev） ============ */
+const F = [
+{ t:'第 0 帧 · 堆结构总览', rule:-1, ev:'—— 开局：JDK8 堆结构 ——', o0:true,
+  ed:[], s0:[], s1:[], old:[],
+  roots:['（尚未分配对象）','两块 Survivor 只是角色名','from 存活对象 · to 空着等复制'],
+  note:['JDK8 默认收集器：新生代 Parallel Scavenge（复制算法）+ 老年代 Parallel Old（标记-整理）。',
+        '堆 = 新生代（Eden + S0 + S1，默认 8:1:1）+ 老年代（默认 新生代:老年代 = 1:2）。',
+        'Metaspace 在堆外本地内存，存类元数据——JDK8 已移除永久代 PermGen。'] },
+{ t:'第 1 帧 · 对象优先在 Eden 分配', rule:0, ev:'new A~E → Eden', o0:true,
+  ed:[c('A'),c('B'),c('C'),c('D'),c('E')], s0:[], s1:[], old:[],
+  roots:['栈: main() 局部变量 → A','静态: Config.B → B','C/D/E: 方法已返回，引用没了'],
+  note:['对象优先在 Eden 分配（线程先走 TLAB 私有缓冲，减少分配争抢）。',
+        'A 被栈上局部变量引用、B 被静态变量引用——它们从 GC Roots 可达，是活的。',
+        'C、D、E 的方法已经返回，引用消失了——对象还躺着，成了垃圾，等 GC。'] },
+{ t:'第 2 帧 · Eden 满，触发 Minor GC', rule:1, ev:'Eden 10/10 满 → ⚡ Minor GC #1', o0:true,
+  ed:[c('A'),c('B'),c('C',0,1),c('D',0,1),c('E',0,1),c('F',0,1),c('G',0,1),c('H'),c('I'),c('J')], s0:[], s1:[], old:[],
+  roots:['栈: main() → A · 静态: B','栈: handler() → H, I, J','F,G: 无引用（垃圾）'],
+  note:['继续分配 F~J，Eden 装满——触发第一次 Minor GC（只回收新生代，STW 但很快）。',
+        '判定生死不是引用计数（循环引用会骗过它），而是可达性分析：从 GC Roots 出发能摸到的才算活。',
+        'GC Roots：栈帧局部变量、静态变量、常量引用、JNI 引用。'] },
+{ t:'第 3 帧 · 可达性分析：标记', rule:1, ev:'可达性分析：标记存活对象', o0:true,
+  ed:[c('A'),c('B'),c('C',0,1),c('D',0,1),c('E',0,1),c('F',0,1),c('G',0,1),c('H'),c('I'),c('J')], s0:[], s1:[], old:[],
+  roots:['可达: A, B, H, I, J ✓','不可达: C,D,E,F,G ✗','（此刻还没真正释放）'],
+  note:['从 GC Roots 遍历引用链：A、B、H、I、J 可达 → 标记存活。',
+        'C、D、E、F、G 不可达 → 判定死亡，等复制阶段顺带消失。',
+        '引用计数的经典反例：两对象互相引用但整体不可达，计数永远是 1 却该死——所以 JVM 用可达性。'] },
+{ t:'第 4 帧 · 复制到 to，年龄 +1', rule:2, ev:'⚡ Minor GC #1：存活复制 → to', o0:false,
+  ed:[], s0:[], s1:[c('A',1),c('B',1),c('H',1),c('I',1),c('J',1)], old:[],
+  roots:['to(S1): A,B,H,I,J · age=1','Eden + from(S0) 整块丢弃','死亡 5 个随区域一起消失'],
+  note:['存活对象复制到 to 区（S1），每人年龄 +1——age 记在对象头的 4 个 bit 里。',
+        'Eden 和 from（S0）不做逐个清除，直接整块丢弃，下次分配从头来——复制算法又快又无碎片。',
+        '代价：Survivor 两块只能用一块，浪费约 10% 新生代空间（比经典复制算法的 50% 划算得多）。'] },
+{ t:'第 5 帧 · from/to 互换，继续分配', rule:3, ev:'互换身份 · Eden 重新分配', o0:false,
+  ed:[c('K'),c('L',0,1),c('M',0,1),c('N'),c('P',0,1)], s0:[], s1:[c('A',1),c('B',1),c('H',1),c('I',1),c('J',1)], old:[],
+  roots:['静态: Config.B → B','栈: handler() → H, I, J','A: 方法即将结束 · K,N 活 / L,M,P 死'],
+  note:['复制完成后两块 Survivor 身份互换：刚写满的 S1 变成新的 from，空着的 S0 变成新的 to。',
+        'Eden 清空后继续分配新对象 K~P。A 所在的方法即将出栈——它熬过一次 GC，但到头了。',
+        'from/to 不是固定名字，是角色，每次 Minor GC 后互换。'] },
+{ t:'第 6 帧 · 第二次 Eden 满', rule:1, ev:'Eden 满 + A/I/J 死 → ⚡ Minor GC #2', o0:false,
+  ed:[c('K'),c('L',0,1),c('M',0,1),c('N'),c('P',0,1),c('Q',0,1),c('R',0,1),c('S'),c('T',0,1),c('U',0,1)],
+  s0:[], s1:[c('A',1,1),c('B',1),c('H',1),c('I',1,1),c('J',1,1)], old:[],
+  roots:['栈: H, K, N, S · 静态: B','死亡: A, I, J + L,M,P,Q,R,T,U','存活共 5 个 = to 恰好装下'],
+  note:['Eden 再次装满，第二次 Minor GC 触发。',
+        '这次存活者：Eden 的 K、N、S + from(S1) 里熬过第一轮的 B、H——共 5 个，恰好装满 to。',
+        'A、I、J 虽然 age=1，但引用没了——熬过一次 GC 不等于永远活。'] },
+{ t:'第 7 帧 · 第二次复制：年龄再 +1', rule:2, ev:'⚡ Minor GC #2：复制 + 年龄+1', o0:true,
+  ed:[], s0:[c('B',2),c('H',2),c('K',1),c('N',1),c('S',1)], s1:[], old:[],
+  roots:['to(S0): B,H(age2) · K,N,S(age1)','S0 5/5 满——下一轮要靠晋升腾地方','死亡 8 个随整块丢弃'],
+  note:['B、H 熬到 age=2，K、N、S age=1，全部压紧复制进新 to（S0），无碎片。',
+        'Survivor 5 格装满 5/5——再来一轮，就得靠晋升规则腾地方了。',
+        '注意两条新链里顺序保持紧凑——这就是复制算法"活着的排一起"的好处。'] },
+{ t:'第 8 帧 · 年龄机制：4 bit 上限 15', rule:4, ev:'—— 年龄与晋升阈值 ——', o0:true,
+  ed:[], s0:[c('B',2),c('H',2),c('K',1),c('N',1),c('S',1)], s1:[], old:[],
+  roots:['对象头 4 bit 年龄 → 上限 15','演示阈值 = 3（默认 MaxTenuringThreshold=15）','B、H 已 age=2，再熬一轮就晋升'],
+  note:['每个对象头里有 4 个 bit 记年龄，最大 15——这就是 MaxTenuringThreshold 上限是 15 的由来。',
+        '真实默认阈值 15；本动画用 3 演示，否则要演 15 轮才能看到晋升。',
+        '年龄每熬过一次 Minor GC +1，达到阈值 → 晋升老年代。'] },
+{ t:'第 9 帧 · Minor GC #3：阈值晋升', rule:4, ev:'⚡ Minor GC #3：B、H age=3 → 晋升！', o0:false,
+  ed:[c('W',0,1),c('X',0,1),c('Y',0,1),c('M',0,1),c('V',0,1)], s0:[], s1:[c('K',2),c('N',2),c('S',2)], old:[c('B·3'),c('H·3')],
+  roots:['B,H age=3 ≥ 阈值3 → 晋升 Old','K,N,S age=2 复制进 to(S1)','Eden 新对象 W~V 全部死亡'],
+  note:['第三次 Minor GC：B、H 年龄到 3 = 演示阈值 → 不再去 Survivor，直接晋升（promotion）进老年代。',
+        'K、N、S 熬到 age=2 复制进新 to；Eden 这批新对象全是短命的，整批死亡。',
+        '老年代迎来头两批住户——它们的回收从此要等 Full GC。'] },
+{ t:'第 10 帧 · 分配中… Survivor 将满', rule:5, ev:'—— 分配中 · 动态年龄预警 ——', o0:false,
+  ed:[c('C'),c('D',0,1),c('E',0,1),c('F'),c('G',0,1),c('H',0,1),c('I',0,1),c('J',0,1)], s0:[], s1:[c('K',2),c('N',2),c('S',2)], old:[c('B·3'),c('H·3')],
+  roots:['from(S1): K,N,S（age=2 共 3 格）','Eden: C,F 活 / 其余死','下轮 to 需装 5 个 = 正好满 → 触发动态判定'],
+  note:['Survivor 里 age≥2 的对象：K、N、S 共 3 格，已超过 Survivor 一半（5 格的一半 = 2.5 格）。',
+        '动态年龄判定规则：某年龄及以上对象总和 > Survivor 一半 → 该年龄起全部晋升，不等阈值。',
+        '下一帧看它怎么触发。'] },
+{ t:'第 11 帧 · Minor GC #4：动态年龄集体晋升', rule:5, ev:'⚡ Minor GC #4：同龄 > S一半 → 集体晋升', o0:true,
+  ed:[], s0:[c('C',1),c('F',1)], s1:[], old:[c('B·3'),c('H·3'),c('K·2'),c('N·2'),c('S·2')],
+  roots:['age≥2 共 3 格 > 2.5 → K,N,S 集体晋升','C,F (age1) 正常复制进 to','Old 5/10 · 防止 Survivor 被老住户挤爆'],
+  note:['第四次 Minor GC：不逐个等阈值——动态年龄判定直接把 K、N、S 集体送进老年代。',
+        '这条规则的现实意义：Survivor 快装不下时，让"大概率长命"的对象提前走，给新存活者腾地方。',
+        'C、F 正常复制，age=1。老年代 5/10。'] },
+{ t:'第 12 帧 · 大对象直入老年代', rule:6, ev:'大对象 Z → 绕过新生代直入 Old', o0:true,
+  ed:[c('C',1,0),c('F',1,0),null,null,null,null,null,null,null,null], s0:[], s1:[], old:[c('B·3'),c('H·3'),c('K·2'),c('N·2'),c('S·2'),c('Z·大')],
+  roots:['Z = new byte[很大]（演示阈值以上）','不进 Eden，避免在 S 间反复复制','-XX:PretenureSizeThreshold'],
+  note:['大对象（长数组/大字符串）直接在老年代分配，绕过新生代。',
+        '原因：大对象在 Eden 和 Survivor 之间复制来复制去，白白耗费复制成本，还容易提前触发担保失败。',
+        'Serial/ParNew 用 -XX:PretenureSizeThreshold 控制；G1 的等价物是 Humongous 区域。'] },
+{ t:'第 13 帧 · Minor GC 前的空间担保', rule:7, ev:'担保检查：老年代可用 4 格 < 新生代总量 → 看平均', o0:true,
+  ed:[c('O'),c('P'),c('Q',0,1),c('R',0,1),c('S',0,1),c('T',0,1),c('U',0,1),c('V',0,1),c('W'),c('X')],
+  s0:[c('C',1),c('F',1)], s1:[], old:[c('B·3'),c('H·3'),c('K·2'),c('N·2'),c('S·2'),c('Z·大')],
+  roots:['老年代可用 4 格 < 新生代对象总量','但 > 历次晋升平均 ≈ 3 格 → 放行','O,P,W,X 活 · 存活 6 个 > S 容量 5 → 必有晋升'],
+  note:['Minor GC 前先做担保检查：老年代最大可用连续空间 vs 新生代全部对象大小。',
+        '不够大时退一步看：是否 ≥ 历次晋升到老年代的平均大小——是就冒险放行（多数对象其实会死，不会真晋升那么多）。',
+        '这次：可用 4 格 ≥ 平均 3 格 → 放行。'] },
+{ t:'第 14 帧 · 分支：担保失败', rule:7, ev:'—— 分支讲解：担保失败会怎样 ——', o0:true,
+  ed:[c('O'),c('P'),c('Q',0,1),c('R',0,1),c('S',0,1),c('T',0,1),c('U',0,1),c('V',0,1),c('W'),c('X')],
+  s0:[c('C',1),c('F',1)], s1:[], old:[c('B·3'),c('H·3'),c('K·2'),c('N·2'),c('S·2'),c('Z·大')],
+  roots:['若晋升瞬间 Old 放不下 → 担保失败','被迫退化为 Full GC（停顿最伤）','HandlePromotionFailure 老参数，JDK6u24 后规则简化'],
+  note:['放行是冒险：如果 Minor GC 中实际晋升量超过老年代剩余 → 担保失败。',
+        '失败的代价：这次 Minor GC 白做，被迫触发一次 Full GC，停顿时间大增。',
+        '老参数 -XX:+HandlePromotionFailure 在 JDK6u24 之后不再需要，规则已内置简化。'] },
+{ t:'第 15 帧 · 老年代满 → Full GC', rule:8, ev:'Old 10/10 满 → 🧹 Full GC 触发', o0:true,
+  ed:[], s0:[], s1:[], old:[c('B·3'),c('H·3'),c('K·2'),c('N·2'),c('S·2'),c('Z·大'),c('O·1'),c('P·1'),c('W·1'),c('X·1')],
+  roots:['可达: B(静态) · O,P,W,X(栈)','死亡: H,K,N,S,Z（业务结束/引用断开）','Full GC = 标记整堆（含新生代）'],
+  note:['第 13 帧的 Minor GC 把 O、P、W、X 晋升进老年代——10/10 满了，触发 Full GC。',
+        '这次业务已收尾：H、K、N、S、Z 的引用都没了，只有静态的 B 和栈上的 O、P、W、X 活着。',
+        'Full GC 用标记-整理：接下来三帧 = 标记 → 清除 → 整理。'] },
+{ t:'第 16 帧 · 标记 → 清除（碎片出现）', rule:8, ev:'🧹 标记存活 → 清除死亡（留洞）', o0:true,
+  ed:[], s0:[], s1:[], old:[c('B·3'),null,c('K·2',2,1),null,null,c('Z·大',0,1),c('O·1'),c('P·1'),c('W·1'),c('X·1')],
+  roots:['存活: B, O, P, W, X（5 个）','清除: H,K,N,S,Z——位置留洞','纯标记-清除会碎片化 → 下一帧整理'],
+  note:['标记：从 GC Roots 扫整个堆（新生代 + 老年代一起），活对象 B、O、P、W、X 打标。',
+        '清除：死对象直接放弃——但它们的位置留下"洞"（碎片）。',
+        '碎片的风险：明明总空间够，大对象却放不进任何连续洞 → 提前触发下一次 Full GC。'] },
+{ t:'第 17 帧 · 整理：向一端压缩', rule:8, ev:'🧹 整理：存活对象压缩到一端 · 无碎片', o0:true,
+  ed:[], s0:[], s1:[], old:[c('B·3'),c('O·1'),c('P·1'),c('W·1'),c('X·1'),null,null,null,null,null],
+  roots:['标记-整理 = 标记-清除 + 移动','活对象全部靠左 · 空间连续无碎片','代价：移动对象要更新所有引用'],
+  note:['整理：所有存活对象向一端移动，挤出一片连续空闲区——这就是 Parallel Old 的标记-整理。',
+        '对比三种算法：复制（新生代，快但浪费空间）· 标记-清除（快但碎片）· 标记-整理（无碎片但移动贵）。',
+        '老年代对象存活率高、移动成本大，所以只在 Full GC 时做。'] },
+{ t:'第 18 帧 · Full GC 的范围与术语', rule:8, ev:'范围：整堆 + Metaspace · 类卸载', o0:true,
+  ed:[], s0:[], s1:[], old:[c('B·3'),c('O·1'),c('P·1'),c('W·1'),c('X·1'),null,null,null,null,null],
+  roots:['Minor GC：只收新生代（复制）','Major/Full：老年代 / 整堆+方法区（民间口径混用）','Metaspace：卸载无引用 ClassLoader 的类'],
+  note:['Full GC 顺带把新生代也清空了（整堆回收），Metaspace 中无引用的类也会被卸载。',
+        '术语口径：Minor = 新生代；Major = 老年代；Full = 整堆 + 方法区——后两者民间经常混用，面试说清范围即可。',
+        '一次 Full GC 的停顿 ≫ Minor GC：整堆标记 + 移动对象，堆越大越慢。'] },
+{ t:'第 19 帧 · 分支：GC 后仍满 → OOM', rule:9, ev:'若整理后仍放不下 → ⛔ OOM', o0:true,
+  ed:[], s0:[], s1:[], old:[c('B'),c('O'),c('P'),c('W'),c('X'),c('Y'),c('a'),c('b'),c('d'),c('e')],
+  roots:['GC 后存活对象仍占满 Old','新分配请求无处安放','java.lang.OutOfMemoryError: Java heap space'],
+  note:['如果 Full GC 之后老年代还是满的（存活对象真的多），新分配请求无处安放——抛 OOM。',
+        '生产排查：-XX:+HeapDumpOnOutOfMemoryError 留堆快照，用 MAT 看支配树找大头。',
+        '注意：OOM 前一定先经历过至少一次 Full GC——"Full GC 后仍满"才 OOM。'] },
+{ t:'第 20 帧 · 全程时间线回顾', rule:-1, ev:'—— 全程回顾：4 快 1 慢 ——', o0:true,
+  ed:[], s0:[], s1:[], old:[c('B'),c('O'),c('P'),c('W'),c('X'),null,null,null,null,null],
+  roots:['Minor GC ×4：快（复制，存活少）','Full GC ×1：慢（整堆标记整理）','新生代:老年代 = 1:2 · E:S0:S1 = 8:1:1'],
+  note:['全程节奏：Minor GC 频繁而快（存活对象少，复制成本极低），Full GC 稀少而慢。',
+        '分代假设在支撑：大多数对象朝生夕死（死在 Eden 零成本）；熬得越久越难死（值得搬去老年代慢养）。',
+        '这就是"分代收集"的全部哲学——按对象寿命分流，各用最合适的算法。'] },
+{ t:'第 21 帧 · 面试三连问', rule:-1, ev:'—— 三连问 ——', o0:true,
+  ed:[], s0:[], s1:[], old:[c('B'),c('O'),c('P'),c('W'),c('X'),null,null,null,null,null],
+  roots:['为何两块 S？复制免碎片，10% 换 50%','为何 Eden 大？朝生夕死，死在 Eden 零成本','年龄上限 15？对象头 4 bit'],
+  note:['问：为什么 Survivor 要两块？答：复制算法需要一块空区接存活对象；HotSpot 用 8:1:1 只浪费 10%，避开经典复制算法浪费一半的缺点。',
+        '问：为什么 Eden 那么大？答：绝大多数对象朝生夕死，让它们死在 Eden，随整块丢弃，回收成本接近零。',
+        '问：年龄为什么最大 15？答：对象头只给了 4 个 bit（24−1=15）。'] },
+{ t:'第 22 帧 · 调优视角', rule:-1, ev:'—— 调优三件事 ——', o0:true,
+  ed:[], s0:[], s1:[], old:[c('B'),c('O'),c('P'),c('W'),c('X'),null,null,null,null,null],
+  roots:['让对象死在 Eden（零成本回收）','减少晋升：控制长命对象数量','防 Full GC：-Xmn / SurvivorRatio / 阈值'],
+  note:['调优方向一：让朝生夕死的对象死在 Eden——作用域越小越好，别把短命数据挂到长命对象上。',
+        '方向二：减少晋升——Survivor 太小会频繁动态年龄晋升；太大浪费。关注 age 分布（GC 日志）。',
+        '方向三：防 Full GC——合理 -Xmn（新生代 1/3~1/2）、-XX:SurvivorRatio=8、控制大对象（预分配或对象池要谨慎）。'] },
+{ t:'第 23 帧 · 一句话收束', rule:-1, ev:'新生代快收 · 老年代慢收 · 三通道晋升 · OOM 兜底', o0:true,
+  ed:[], s0:[], s1:[], old:[c('B'),c('O'),c('P'),c('W'),c('X'),null,null,null,null,null],
+  roots:['新生代：复制算法，高频快','老年代：标记-整理，低频慢','晋升三通道 + 担保 + Full GC + OOM 兜底'],
+  note:['一句话：对象生在 Eden；Eden 满 → Minor GC，存活者去 Survivor 攒年龄；年龄够（阈值/动态/大对象）→ 晋升老年代；',
+        '老年代放不下晋升 → 担保检查决定冒险或先 Full GC；老年代满 → Full GC 标记-清除-整理；仍满 → OOM。',
+        '每个环节的"为什么"都指向同一个假设：对象寿命两极分化——这就是分代收集。'] },
+];
+
+/* ============ 静态构件 ============ */
+const NS = 'http://www.w3.org/2000/svg';
+const $ = id => document.getElementById(id);
+let cur = 0, timer = null;
+
+const RULES = [
+'0 · 对象优先在 Eden 分配（TLAB 线程私有缓冲）',
+'1 · Eden 满 → Minor GC：可达性分析（GC Roots 起步）',
+'2 · 存活对象复制到 to + 年龄1；Eden 与 from 整块丢弃',
+'3 · 复制完成后 from / to 身份互换',
+'4 · 晋升①：age ≥ MaxTenuringThreshold（演示 3 / 默认 15）',
+'5 · 晋升②：同龄及以上总和 > Survivor 一半 → 集体晋升',
+'6 · 晋升③：大对象绕过新生代直接进老年代',
+'7 · 担保：老年代可用 < 新生代总量时，看历次晋升平均，不够先 Full GC',
+'8 · 老年代满 → Full GC：标记 → 清除 → 整理（整堆 + Metaspace）',
+'9 · Full GC 后仍满 → OutOfMemoryError',
+];
+
+function mk(tag, attrs, parent) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  parent.appendChild(n);
+  return n;
+}
+
+/* 规则面板 */
+(function buildRules() {
+  const g = $('rules');
+  RULES.forEach((txt, i) => {
+    const y = 500 + i * 14.4;
+    mk('rect', { x: 452, y: y - 10, width: 656, height: 14.5, rx: 3, fill: 'rgba(34,211,238,0.14)', opacity: 0, id: 'rl-' + i }, g);
+    const t = mk('text', { x: 460, y, 'font-size': 10.5, fill: '#a5b4cc', id: 'rt-' + i }, g);
+    t.textContent = txt;
+  });
+})();
+
+/* 格子构建：ed 10 格 / s0 5 / s1 5 / old 10 */
+function buildCells(groupId, n, x0, y, w, h, step, stroke) {
+  const g = $(groupId);
+  for (let i = 0; i < n; i++) {
+    const x = x0 + i * step;
+    mk('rect', { x, y, width: w, height: h, rx: 6, fill: '#0f172a', stroke, 'stroke-width': 1, id: groupId + '-box-' + i }, g);
+    const t = mk('text', { x: x + w / 2, y: y + h / 2 + 4, 'text-anchor': 'middle', 'font-size': 13, 'font-weight': 700, fill: '#f1f5f9', id: groupId + '-txt-' + i }, g);
+    t.textContent = '';
+    const a = mk('text', { x: x + w - 4, y: y + h - 4, 'text-anchor': 'end', 'font-size': 8.5, fill: '#7d8db0', id: groupId + '-age-' + i }, g);
+    a.textContent = '';
+    mk('path', { d: `M ${x + 8} ${y + 8} L ${x + w - 8} ${y + h - 8} M ${x + w - 8} ${y + 8} L ${x + 8} ${y + h - 8}`,
+      stroke: '#fb7185', 'stroke-width': 2, opacity: 0, id: groupId + '-x-' + i }, g);
+  }
+}
+buildCells('ed-cells', 10, 88, 156, 40, 52, 44, '#34d399');
+buildCells('s0-cells', 5, 584, 156, 40, 52, 44, '#22d3ee');
+buildCells('s1-cells', 5, 840, 156, 40, 52, 44, '#22d3ee');
+buildCells('old-cells', 10, 88, 326, 88, 62, 96, '#fbbf24');
+
+function fillCells(groupId, list) {
+  const n = groupId === 'ed-cells' ? 10 : groupId === 'old-cells' ? 10 : 5;
+  for (let i = 0; i < n; i++) {
+    const o = list[i] || null;
+    const txt = $(groupId + '-txt-' + i), age = $(groupId + '-age-' + i), x = $(groupId + '-x-' + i), box = $(groupId + '-box-' + i);
+    if (!o) { txt.textContent = ''; age.textContent = ''; x.setAttribute('opacity', 0); box.setAttribute('opacity', 0.55); continue; }
+    txt.textContent = o.k;
+    age.textContent = '';
+    x.setAttribute('opacity', 0);
+    box.setAttribute('opacity', 1);
+    if (o.d) {
+      x.setAttribute('opacity', 1);
+      txt.setAttribute('fill', '#fb7185');
+      box.setAttribute('stroke', '#fb7185');
+    } else {
+      txt.setAttribute('fill', '#f1f5f9');
+      box.setAttribute('stroke', groupId === 'old-cells' ? '#fbbf24' : groupId === 'ed-cells' ? '#34d399' : '#22d3ee');
+    }
+  }
+}
+
+/* ============ 渲染 ============ */
+function render(i) {
+  const f = F[i]; cur = i;
+  $('ev').textContent = f.ev;
+  fillCells('ed-cells', f.ed);
+  fillCells('s0-cells', f.s0);
+  fillCells('s1-cells', f.s1);
+  fillCells('old-cells', f.old);
+  $('lab-s0').textContent = f.o0 ? 'S0 · from' : 'S0 · to';
+  $('lab-s1').textContent = f.o0 ? 'S1 · to' : 'S1 · from';
+  for (let k = 0; k < 4; k++) $('r' + k).textContent = f.roots[k] || '';
+  RULES.forEach((_, r) => {
+    $('rl-' + r).setAttribute('opacity', r === f.rule ? 1 : 0);
+    $('rt-' + r).setAttribute('fill', r === f.rule ? '#22d3ee' : '#a5b4cc');
+    $('rt-' + r).setAttribute('font-weight', r === f.rule ? 700 : 400);
+  });
+  $('cap-title').textContent = f.t;
+  $('qmark').title = f.note.join('\n');
+  $('step-ind').textContent = (i + 1) + ' / ' + F.length;
+  $('btn-prev').disabled = i === 0;
+  $('btn-next').disabled = i === F.length - 1;
+  document.querySelectorAll('#dots button').forEach((d, k) => d.classList.toggle('cur', k === i));
+}
+
+/* ============ 控件 ============ */
+const dots = $('dots');
+F.forEach((_, k) => {
+  const b = document.createElement('button');
+  b.onclick = () => { stopPlay(); render(k); };
+  dots.appendChild(b);
+});
+$('btn-prev').onclick = () => { stopPlay(); if (cur > 0) render(cur - 1); };
+$('btn-next').onclick = () => { stopPlay(); if (cur < F.length - 1) render(cur + 1); };
+$('btn-reset').onclick = () => { stopPlay(); render(0); };
+$('btn-play').onclick = togglePlay;
+function togglePlay() {
+  if (timer) return stopPlay();
+  if (cur >= F.length - 1) render(0);
+  $('btn-play').textContent = '⏸ 暂停';
+  timer = setInterval(() => { if (cur >= F.length - 1) return stopPlay(); render(cur + 1); }, 2400);
+}
+function stopPlay() { if (timer) { clearInterval(timer); timer = null; $('btn-play').textContent = '▶ 播放'; } }
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { stopPlay(); if (cur < F.length - 1) render(cur + 1); }
+  if (e.key === 'ArrowLeft')  { stopPlay(); if (cur > 0) render(cur - 1); }
+});
+const m = location.hash.match(/f=(\d+)/);
+render(m ? Math.min(F.length - 1, +m[1]) : 0);
+
+/* ============ 导出工具条 ============ */
+function capture() {
+  const el = document.getElementById('report-container');
+  const r = el.getBoundingClientRect();
+  return html2canvas(document.body, {
+    x: r.left - 32, y: r.top - 32, width: r.width + 64, height: r.height + 64,
+    scale: 2, backgroundColor: '#020617',
+    ignoreElements: n => n.closest && n.closest('.toolbar')
+  });
+}
+function copyAsImage() { capture().then(c => c.toBlob(b => navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]))); }
+function downloadPNG() { capture().then(c => { const a = document.createElement('a'); a.download = 'q09-jvm-gc.png'; a.href = c.toDataURL('image/png'); a.click(); }); }
+function downloadPDF() {
+  capture().then(c => {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: c.width >= c.height ? 'l' : 'p', unit: 'px', format: [c.width, c.height] });
+    pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, c.width, c.height);
+    pdf.save('q09-jvm-gc.pdf');
+  });
+}
+</script>
+</body>
+</html>

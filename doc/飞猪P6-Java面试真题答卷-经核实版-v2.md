@@ -50,13 +50,23 @@
 >
 > 📌 图片用的是本机绝对路径（IDEA 新预览不认相对路径图片，官方缺陷 [IJPL-213408](https://youtrack.jetbrains.com/projects/IJPL/issues/IJPL-213408)）。换电脑或推 GitHub 前需把 `!/Users/.../doc/fliggyp6/` 改回相对路径 `doc/fliggyp6/`（去掉绝对前缀）
 
-**【配图 · JDK8 resize() 扩容逐帧（动图 · 11 帧）】**
+**【配图 · put 源码逐帧走读（动图 · 25 帧 · 零基础版 · 阅读阶梯第一级）】**
 
-![JDK8 resize 扩容逐帧（静态帧：第 7 帧 · lo/hi 归位）](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q01-resize.png)
+![HashMap put 源码逐帧（静态帧：第 1 帧 · 类定义卡——HashMap 的字段家底）](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q01-put-flow.png)
+
+> 🎬 **动图版**（浏览器打开 → ▶ 自动播放 / ←→ 逐帧 / 可导出 PNG·PDF）：[fliggyp6/diagrams/q01-put-flow.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q01-put-flow.html)
+>
+> 跟着一次 `put("cat", 2)` 钻进源码，**定义帧 / 概念帧 / 架构帧 / 逐行帧混排**，零上下文可读：先上**两张类定义卡**（HashMap 成员变量逐个讲——table 是唯一主存储、size/threshold/loadFactor/modCount 各司其职；Node 类四字段逐行——final 身份字段 + 可改的 value + 串链的 next）→ 三层架构全景（数组骨架/链表收纳/红黑树兜底）→ 逐行读 `put()` 那一行（onlyIfAbsent 是什么）→ 扰动 `h^(h>>>16)` 及"为什么必须扰动" → 定位桶与"为什么容量是 2 的幂" → 空桶直放 + Node 解剖 → 撞车后的 `for(;;)` 骨架逐行 → 覆盖/尾插两分支 → null 住桶0 → 树化双条件 → `++size>threshold` → 扩容一瞥 → get 同路反走 → putVal 全文回放 → modCount/fail-fast → Node vs TreeNode → FAQ 四连问 → 阅读地图。每个术语第一次出现都有白话术语卡，六步行程单走到哪亮到哪。
+>
+> 📌 绝对路径注意事项同上一张图
+
+**【配图 · JDK8 resize() 扩容逐帧（动图 · 13 帧 · 含零基础看图须知）】**
+
+![JDK8 resize 扩容逐帧（静态帧：第 9 帧 · lo/hi 归位）](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q01-resize.png)
 
 > 🎬 **动图版**（浏览器打开 → ▶ 自动播放 / ←→ 逐帧 / 可导出 PNG·PDF）：[fliggyp6/diagrams/q01-resize.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q01-resize.html)
 >
-> 一图看懂扩容全程：12 件压线 → 第 13 次 put 触发（`++size > threshold`，**> 不是 ≥**）→ 32 格新表 + 门槛翻倍 → 桶1 长链按 `hash & oldCap` 逐节点分流（右上二进制面板亮的就是判决位）→ lo 留桶1、hi 去桶17（原位+16）→ 尾插保序 → 老表整体 GC → 扩完仅 41%（间隔 12→24→48 翻倍，均摊 O(1)）。数字与实验 5 输出完全一致。
+> 开头两帧是**零基础看图须知**（什么是桶/哈希冲突、三个量与 75% 规矩），图例条常驻。之后逐帧演完扩容全程：12 件压线 → 第 13 次 put 触发（`++size > threshold`，**> 不是 ≥**）→ 32 格新表 + 门槛翻倍 → 桶1 长链按 `hash & oldCap` 逐节点分流（右上二进制面板亮的就是判决位）→ lo 留桶1、hi 去桶17（原位+16）→ 尾插保序 → 老表整体 GC → 扩完仅 41%（间隔 12→24→48 翻倍，均摊 O(1)）。数字与实验 5 输出完全一致。
 >
 > 📌 绝对路径注意事项同上一张图
 
@@ -423,6 +433,16 @@
 - "G1 怎么决定回收哪些 Region？" → 启发式算法：根据回收收益（可回收空间 - RSet 扫描成本）排序，优先回收收益高的
 - "ZGC 染色指针的高位 bit 存什么？" → Marked0 / Marked1 / Remapped / Finalizable，标识对象当前状态
 - "为什么 CMS 浮动垃圾会导致 Full GC？" → 并发清除期间产生的新垃圾只能等下次 GC；如果老年代装不下 → 触发 Serial Old 兜底（Full GC）
+
+**【配图 · JDK8 分代垃圾回收全过程（动图 · 24 帧逐步播放）】**
+
+![JDK8 分代 GC 全过程（静态帧：第 4 帧 · Minor GC 复制存活对象进 to 区）](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q09-jvm-gc.png)
+
+> 🎬 **动图版**（浏览器打开 → ▶ 自动播放 / ←→ 逐帧 / 可导出 PNG·PDF）：[fliggyp6/diagrams/q09-jvm-gc.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q09-jvm-gc.html)
+>
+> 24 帧一条主线演完分代 GC 全过程：Eden 分配（TLAB）→ 可达性分析（GC Roots，红叉=死亡）→ 4 次 Minor GC（复制进 to + 年龄+1 + from/to 互换）→ 三条晋升通道（阈值 15 / 动态年龄 / 大对象直入）→ 空间分配担保（冒险放行 / 担保失败分支）→ 老年代满触发 Full GC（标记 → 清除留洞 → 整理压缩）→ OOM 分支收尾。左下 GC Roots 面板实时显示谁可达谁死亡，右下规则面板高亮当前帧生效的规则（10 条覆盖全部面试点）。演示阈值=3（真实默认 15），对象名 A~Z 一路带你看完生死。
+>
+> 📌 绝对路径注意事项同前图
 
 ---
 
@@ -1134,6 +1154,16 @@
 - "为什么 Wrapper 这么设计？" → 通用功能（日志 / 监控 / 异常处理）抽到 Wrapper，**所有 SPI 都自动包一层**，跟 AOP 类似
 - "URL 在 SPI 里做什么用？" → URL 是配置总线，**Adaptive 通过 URL 里的 key/value 决定调用哪个实现**
 - "Dubbo 不用 SPI 会怎样？" → 实现类全部硬编码，**无法扩展 / 替换 / 按需加载**
+
+**【配图 · Dubbo RPC 通讯全过程（动图 · 33 帧 · 零基础版）】**
+
+![Dubbo RPC 通讯全过程（静态帧：第 31 帧 · 角色关系图五条线全亮）](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q23-dubbo-rpc.png)
+
+> 🎬 **动图版**（浏览器打开 → ▶ 自动播放 / ←→ 逐帧 / 可导出 PNG·PDF）：[fliggyp6/diagrams/q23-dubbo-rpc.html](/Users/setsunayang/Documents/GitHub/interview-special-training/doc/fliggyp6/diagrams/q23-dubbo-rpc.html)
+>
+> 跟一次 `userService.sayHello("world")` 走完 Dubbo 全程（以 2.7 经典架构为基准），四幕 33 帧：**先认角色**（RPC 是什么 / 本地 vs 远程调用 / Dubbo 简介与四角色定义卡——Provider 后厨、Consumer 前台、Registry 电话簿、Monitor 考勤员）→ **启动三步**（⓪ 提供者注册 ZooKeeper 临时节点 → ① 消费者订阅 → ② notify 推送地址进本地缓存；宕机自动摘除；"注册中心全挂了还能调吗"专帧）→ **一次调用穿十层**（Proxy 打包 Invocation → Directory/Router/LoadBalance 选机 → Filter 链 → hessian2 序列化 + Request{id} → 16 字节协议头逐字段解剖（魔数 0xdabb/id 配对/长度切包治粘包）→ Exchange 挂 DefaultFuture → Netty 长连接 → 提供者解码/线程池隔离/反射真方法 → 响应原路返回 id 认领唤醒——"同步是伪同步"）→ **收尾**（④ 每分钟监控上报、failover 重试与幂等警告、面试三连问速答卡）。每个术语第一次出现都有白话术语卡，全程六站行程单走到哪亮到哪；结尾自然衔接本题的 SPI——每个"层"都是扩展点。
+>
+> 📌 绝对路径注意事项同上一张图
 
 ---
 
