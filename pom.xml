@@ -21,6 +21,18 @@
             <artifactId>jol-core</artifactId>
             <version>0.10</version>
         </dependency>
+        <!-- database Q01：HikariCP 连接池实验 -->
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+            <version>5.1.0</version>
+        </dependency>
+        <!-- database Q01/Q02：MySQL JDBC 驱动 -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <version>8.4.0</version>
+        </dependency>
     </dependencies>
 
     <build>
