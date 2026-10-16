@@ -39,3 +39,27 @@ build/
 .DS_Store
 /.mvn/
 /.tmp/
+/.env
+
+### Secrets & credentials (防御未来误 commit) ###
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+id_ecdsa*
+credentials.*
+secrets.*
+*.credentials
+.aws/credentials
+.aws/config
+gcloud-credentials.json
+service-account*.json
+**/application-local.*
+**/application-local.yml
+**/application-local.properties
+.env.local
+.env.*.local
