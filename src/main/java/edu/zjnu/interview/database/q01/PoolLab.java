@@ -76,8 +76,10 @@ public class PoolLab {
         AtomicInteger fail    = new AtomicInteger();
         List<Long> waitTimes  = new ArrayList<>();
 
-        try (HikariDataSource ds = newHikariDataSource(poolSize);
-             ExecutorService pool = Executors.newFixedThreadPool(threads)) {
+        try (HikariDataSource ds = newHikariDataSource(poolSize)) {
+            // ExecutorService 在 Java 19+ 才实现 AutoCloseable,Java 17 需手动 shutdown
+            ExecutorService pool = Executors.newFixedThreadPool(threads);
+            try {
 
             long t0 = System.nanoTime();
             for (int i = 0; i < threads; i++) {
@@ -115,6 +117,9 @@ public class PoolLab {
                 long max = sorted[sorted.length - 1];
                 System.out.printf("等待连接耗时 p50=%d ms / p99=%d ms / max=%d ms%n", p50, p99, max);
             }
+        } finally {
+            pool.shutdown();
+        }
         }
     }
 
