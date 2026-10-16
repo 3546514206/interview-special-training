@@ -61,7 +61,7 @@ public class LockLab {
                     ps.executeQuery();
                 }
                 System.out.println("[A] 锁 id=1,睡眠 3s");
-                Thread.sleep(3_000);
+                sleepMs(3_000);
                 c.commit();
                 okCount.incrementAndGet();
             } catch (SQLException e) {
@@ -71,7 +71,7 @@ public class LockLab {
             }
         })).start();
 
-        Thread.sleep(500); // 让 A 先拿到锁
+        sleepMs(500); // 让 A 先拿到锁
 
         new Thread(() -> runTx("B", () -> {
             try (Connection c = newConn()) {
@@ -115,7 +115,7 @@ public class LockLab {
                     ps.executeQuery();
                 }
                 System.out.println("[A] 范围锁 id 5-15,睡眠 5s");
-                Thread.sleep(5_000);
+                sleepMs(5_000);
                 c.commit();
             } catch (SQLException e) {
                 System.out.println("[A] err: " + e.getMessage());
@@ -124,7 +124,7 @@ public class LockLab {
             }
         })).start();
 
-        Thread.sleep(500);
+        sleepMs(500);
 
         new Thread(() -> runTx("B", () -> {
             try (Connection c = newConn()) {
@@ -164,7 +164,7 @@ public class LockLab {
                     ps.executeUpdate();
                 }
                 System.out.println("[A] 持 id=1,等 2s 后要 id=2");
-                Thread.sleep(2_000);
+                sleepMs(2_000);
                 try (PreparedStatement ps = c.prepareStatement(
                         "UPDATE users SET age = age + 1 WHERE id = ?")) {
                     ps.setInt(1, 2);
@@ -178,7 +178,7 @@ public class LockLab {
             }
         })).start();
 
-        Thread.sleep(500); // A 先抢 id=1
+        sleepMs(500); // A 先抢 id=1
 
         new Thread(() -> runTx("B", () -> {
             try (Connection c = newConn()) {
@@ -189,7 +189,7 @@ public class LockLab {
                     ps.executeUpdate();
                 }
                 System.out.println("[B] 持 id=2,等 2s 后要 id=1");
-                Thread.sleep(2_000);
+                sleepMs(2_000);
                 try (PreparedStatement ps = c.prepareStatement(
                         "UPDATE users SET age = age + 1 WHERE id = ?")) {
                     ps.setInt(1, 1);
@@ -252,6 +252,15 @@ public class LockLab {
 
     private static Connection newConn() throws SQLException {
         return DriverManager.getConnection(URL, USER, PASS);
+    }
+
+    /** 包一层 Thread.sleep,catch InterruptedException 并恢复中断标志,让 lambda 可调用 */
+    private static void sleepMs(long ms) {
+        try {
+            java.lang.Thread.sleep(ms);  // 完全限定名,避开本类 sleepMs 命名冲突
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static void runTx(String tag, Runnable r) {
