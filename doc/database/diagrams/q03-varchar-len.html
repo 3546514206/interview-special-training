@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Q3 · VARCHAR(100) vs VARCHAR(10) 还傻傻分不清？· 7 帧动图</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; min-height: 100vh; }
+  .container { width: 1340px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #fbbf24; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(251,191,36,.6); } 70% { box-shadow: 0 0 0 10px rgba(251,191,36,0); } 100% { box-shadow: 0 0 0 0 rgba(251,191,36,0); } }
+  .header h1 { font-size: 21px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 13px; color: #7d8db0; margin-top: 5px; }
+  .toolbar { position: relative; }
+  .toolbar-toggle { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 16px; font-family: inherit; }
+  .toolbar-toggle:hover { color: #e2e8f0; border-color: #475569; }
+  .toolbar-actions { display: none; position: absolute; right: 0; top: 38px; gap: 6px; z-index: 10; }
+  .toolbar.open .toolbar-actions { display: flex; }
+  .toolbar-actions button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; }
+  .toolbar-actions button:hover { color: #f1f5f9; border-color: #64748b; }
+  @media print { .toolbar { display: none !important; } }
+
+  .controls { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .controls button { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; padding: 7px 16px; cursor: pointer; font-size: 14px; font-family: inherit; }
+  .controls button:hover { border-color: #64748b; }
+  .controls button:disabled { opacity: 0.35; cursor: default; }
+  .step-ind { font-size: 14px; color: #cbd5e1; min-width: 70px; }
+  .frame-title { font-size: 14px; color: #fbbf24; font-weight: 700; }
+  .qmark { cursor: help; font-size: 15px; color: #7d8db0; }
+  .key-hint { font-size: 12px; color: #64748b; }
+  .dots { display: flex; gap: 6px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+  .dots button { width: 11px; height: 11px; border-radius: 50%; padding: 0; background: #1e293b; border: 1px solid #334155; cursor: pointer; }
+  .dots button.cur { background: #fbbf24; border-color: #fbbf24; }
+  .dots button:hover { border-color: #fbbf24; }
+
+  .legend { display: flex; gap: 18px; align-items: center; font-size: 12px; color: #a5b4cc; margin-bottom: 10px; flex-wrap: wrap; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 16px 18px; }
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+  .card-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; }
+  .card ul { list-style: none; }
+  .card li { font-size: 13px; color: #a5b4cc; line-height: 1.75; }
+  .card li b { color: #e2e8f0; font-weight: 600; }
+  .card li code { background: #1e293b; padding: 1px 5px; border-radius: 3px; font-size: 12px; color: #fbbf24; }
+
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>Q3 · VARCHAR(100) vs VARCHAR(10) 还傻傻分不清？</h1>
+        <div class="subtitle">零基础 · 7 帧走通「磁盘 / 内存 / 索引 / 排序」四个层面的差异对比</div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbar').classList.toggle('open')">⋯</button>
+      <div class="toolbar-actions">
+        <button onclick="downloadGIF()">🎞 GIF</button>
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="btn-reset">⏮</button>
+    <button id="btn-prev">◀</button>
+    <button id="btn-play">▶ 播放</button>
+    <button id="btn-next">▶|</button>
+    <span class="step-ind" id="step-ind">1 / 7</span>
+    <span class="frame-title" id="cap-title"></span>
+    <span class="qmark" id="qmark" title="">❓</span>
+    <span class="key-hint">← → 键翻页 · ❓ 悬停看本帧讲解</span>
+    <div class="dots" id="dots"></div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw" style="background:#22d3ee"></span>VARCHAR(10) · 刚刚好</span>
+    <span><span class="sw" style="background:#fbbf24"></span>VARCHAR(100) · 浪费空间</span>
+    <span><span class="sw" style="background:#34d399"></span>实际字符（数据本体）</span>
+    <span><span class="sw" style="background:#fb7185"></span>浪费 / 风险</span>
+    <span style="color:#64748b">charset = utf8mb4（每字符最多 4 字节）· 假设存 "hello"（5 字符）</span>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1340 760" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+        <filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+      </defs>
+      <rect width="1340" height="760" fill="#020617"/>
+      <rect width="1340" height="760" fill="url(#grid)"/>
+
+      <!-- 顶部事件横幅 -->
+      <rect x="40" y="20" width="1260" height="56" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+      <text x="60" y="44" fill="#7d8db0" font-size="10.5">本帧对比哪个层面</text>
+      <text id="ev" x="60" y="64" fill="#f8fafc" font-size="15" font-weight="700"></text>
+
+      <!-- 测试场景 SQL -->
+      <rect x="40" y="90" width="1260" height="60" rx="10" fill="#0a0f1c" stroke="#334155" stroke-width="1"/>
+      <text x="60" y="112" fill="#64748b" font-size="10.5">建表 + 插入数据</text>
+      <text id="sql-text" x="60" y="135" fill="#fbbf24" font-size="13" font-weight="600"></text>
+
+      <!-- ============ 对比两列：左 VARCHAR(10)，右 VARCHAR(100) ============ -->
+      <!-- 左边列标题 -->
+      <rect x="60" y="170" width="600" height="540" rx="12" fill="rgba(34,211,238,0.04)" stroke="#22d3ee" stroke-width="1.5"/>
+      <text x="80" y="195" fill="#22d3ee" font-size="14" font-weight="700">VARCHAR(10)</text>
+      <text x="80" y="213" fill="#64748b" font-size="10">刚刚好 · 不浪费</text>
+
+      <!-- 右边列标题 -->
+      <rect x="680" y="170" width="600" height="540" rx="12" fill="rgba(251,191,36,0.04)" stroke="#fbbf24" stroke-width="1.5"/>
+      <text x="700" y="195" fill="#fbbf24" font-size="14" font-weight="700">VARCHAR(100)</text>
+      <text x="700" y="213" fill="#64748b" font-size="10">过度预留 · 浪费</text>
+
+      <!-- ============ 4 个对比维度 ============ -->
+
+      <!-- 维度 1: 磁盘存储 -->
+      <g id="dim1-label"><rect x="80" y="240" width="560" height="22" rx="4" fill="rgba(15,23,42,0.6)"/><text x="92" y="256" fill="#94a3b8" font-size="11.5" font-weight="700">① 磁盘存储（存 "hello" 时）</text></g>
+      <g id="dim1-label-r"><rect x="700" y="240" width="560" height="22" rx="4" fill="rgba(15,23,42,0.6)"/><text x="712" y="256" fill="#94a3b8" font-size="11.5" font-weight="700">① 磁盘存储（存 "hello" 时）</text></g>
+
+      <!-- 左: VARCHAR(10) 磁盘 -->
+      <g id="left-disk">
+        <rect x="80" y="275" width="560" height="70" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1"/>
+        <text x="92" y="294" fill="#64748b" font-size="9.5">磁盘占用</text>
+        <!-- 字节块 -->
+        <rect x="92" y="305" width="20" height="30" rx="3" fill="#34d399" opacity="0.8"/>
+        <text x="102" y="324" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">1B</text>
+        <text x="102" y="346" fill="#64748b" font-size="8" text-anchor="middle">长度前缀</text>
+        <rect x="118" y="305" width="20" height="30" rx="3" fill="#34d399" opacity="0.8"/>
+        <rect x="138" y="305" width="20" height="30" rx="3" fill="#34d399" opacity="0.8"/>
+        <rect x="158" y="305" width="20" height="30" rx="3" fill="#34d399" opacity="0.8"/>
+        <rect x="178" y="305" width="20" height="30" rx="3" fill="#34d399" opacity="0.8"/>
+        <text x="118" y="324" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">h</text>
+        <text x="138" y="324" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">e</text>
+        <text x="158" y="324" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">l</text>
+        <text x="178" y="324" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">l</text>
+        <rect x="198" y="305" width="20" height="30" rx="3" fill="#34d399" opacity="0.8"/>
+        <text x="208" y="324" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">o</text>
+        <text x="240" y="324" fill="#fbbf24" font-size="11" font-weight="700">= 6 字节（utf8）</text>
+        <text x="380" y="324" fill="#34d399" font-size="10">✓ 紧凑</text>
+      </g>
+
+      <!-- 右: VARCHAR(100) 磁盘 -->
+      <g id="right-disk">
+        <rect x="700" y="275" width="560" height="70" rx="6" fill="#0f172a" stroke="#fbbf24" stroke-width="1"/>
+        <text x="712" y="294" fill="#64748b" font-size="9.5">磁盘占用</text>
+        <rect x="712" y="305" width="20" height="30" rx="3" fill="#34d399" opacity="0.8"/>
+        <text x="722" y="324" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">1B</text>
+        <text x="722" y="346" fill="#64748b" font-size="8" text-anchor="middle">长度前缀</text>
+        <rect x="738" y="305" width="20" height="30" rx="3" fill="#34d399" opacity="0.8"/>
+        <rect x="758" y="305" width="20" height="30" rx="3" fill="#34d399" opacity="0.8"/>
+        <rect x="778" y="305" width="20" height="30" rx="3" fill="#34d399" opacity="0.8"/>
+        <rect x="798" y="305" width="20" height="30" rx="3" fill="#34d399" opacity="0.8"/>
+        <text x="738" y="324" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">h</text>
+        <text x="758" y="324" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">e</text>
+        <text x="778" y="324" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">l</text>
+        <text x="798" y="324" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">l</text>
+        <rect x="818" y="305" width="20" height="30" rx="3" fill="#34d399" opacity="0.8"/>
+        <text x="828" y="324" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">o</text>
+        <text x="860" y="324" fill="#fbbf24" font-size="11" font-weight="700">= 6 字节（utf8）</text>
+        <text x="1000" y="324" fill="#94a3b8" font-size="10">≈ 一样紧凑</text>
+      </g>
+
+      <!-- 维度 2: 内存分配 -->
+      <g><rect x="80" y="360" width="560" height="22" rx="4" fill="rgba(15,23,42,0.6)"/><text x="92" y="376" fill="#94a3b8" font-size="11.5" font-weight="700">② 内存分配（sort buffer / temp table）</text></g>
+      <g><rect x="700" y="360" width="560" height="22" rx="4" fill="rgba(15,23,42,0.6)"/><text x="712" y="376" fill="#94a3b8" font-size="11.5" font-weight="700">② 内存分配（sort buffer / temp table）</text></g>
+
+      <!-- 左: VARCHAR(10) 内存 -->
+      <g id="left-mem">
+        <rect x="80" y="395" width="560" height="70" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1"/>
+        <text x="92" y="414" fill="#64748b" font-size="9.5">每行分配</text>
+        <rect x="92" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="112" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="132" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="152" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="172" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="192" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="212" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="232" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="252" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="272" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <text x="92" y="444" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">1B</text>
+        <text x="292" y="466" fill="#22d3ee" font-size="11" font-weight="700">= 10 字符槽</text>
+        <text x="430" y="444" fill="#34d399" font-size="10">✓ 紧凑</text>
+      </g>
+
+      <!-- 右: VARCHAR(100) 内存 -->
+      <g id="right-mem">
+        <rect x="700" y="395" width="560" height="70" rx="6" fill="#0f172a" stroke="#fbbf24" stroke-width="1"/>
+        <text x="712" y="414" fill="#64748b" font-size="9.5">每行分配</text>
+        <!-- 10 个字节 -->
+        <rect x="712" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="732" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="752" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="772" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="792" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="812" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="832" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="852" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="872" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <rect x="892" y="425" width="20" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <!-- 90 个空字节（红色斜纹 = 浪费） -->
+        <rect x="912" y="425" width="180" height="30" rx="3" fill="rgba(251,113,133,0.15)" stroke="#fb7185" stroke-width="1" stroke-dasharray="3,3"/>
+        <text x="1002" y="444" fill="#fb7185" font-size="10" font-weight="700" text-anchor="middle">浪费 90 字符 × 10000 行 = 900KB</text>
+        <text x="712" y="444" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">1B</text>
+        <text x="1110" y="444" fill="#fb7185" font-size="11" font-weight="700">= 100 字符槽</text>
+      </g>
+
+      <!-- 维度 3: 索引 key_len -->
+      <g><rect x="80" y="480" width="560" height="22" rx="4" fill="rgba(15,23,42,0.6)"/><text x="92" y="496" fill="#94a3b8" font-size="11.5" font-weight="700">③ 索引 key_len（utf8mb4 = 4 字节/字符）</text></g>
+      <g><rect x="700" y="480" width="560" height="22" rx="4" fill="rgba(15,23,42,0.6)"/><text x="712" y="496" fill="#94a3b8" font-size="11.5" font-weight="700">③ 索引 key_len（utf8mb4 = 4 字节/字符）</text></g>
+
+      <!-- 左: VARCHAR(10) 索引 -->
+      <g id="left-idx">
+        <rect x="80" y="515" width="560" height="70" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1"/>
+        <text x="92" y="534" fill="#64748b" font-size="9.5">索引里每行占</text>
+        <rect x="92" y="545" width="40" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <text x="112" y="564" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">10×4=40B</text>
+        <text x="142" y="544" fill="#64748b" font-size="8.5">字符</text>
+        <rect x="200" y="545" width="20" height="30" rx="3" fill="#34d399" opacity="0.7"/>
+        <text x="210" y="564" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">1B</text>
+        <text x="230" y="544" fill="#64748b" font-size="8.5">长度</text>
+        <text x="270" y="566" fill="#22d3ee" font-size="13" font-weight="700">= 41 字节</text>
+        <text x="400" y="566" fill="#34d399" font-size="10">✓ 紧凑索引</text>
+        <text x="500" y="566" fill="#64748b" font-size="9">vs 联合索引 INNODB 限制 ~3072 字节</text>
+      </g>
+
+      <!-- 右: VARCHAR(100) 索引 -->
+      <g id="right-idx">
+        <rect x="700" y="515" width="560" height="70" rx="6" fill="#0f172a" stroke="#fbbf24" stroke-width="1"/>
+        <text x="712" y="534" fill="#64748b" font-size="9.5">索引里每行占</text>
+        <rect x="712" y="545" width="200" height="30" rx="3" fill="#22d3ee" opacity="0.6"/>
+        <text x="812" y="564" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">100×4=400B</text>
+        <text x="922" y="544" fill="#64748b" font-size="8.5">字符</text>
+        <rect x="980" y="545" width="20" height="30" rx="3" fill="#34d399" opacity="0.7"/>
+        <text x="990" y="564" fill="#020617" font-size="9" font-weight="700" text-anchor="middle">1B</text>
+        <text x="1010" y="544" fill="#64748b" font-size="8.5">长度</text>
+        <text x="1040" y="566" fill="#fbbf24" font-size="13" font-weight="700">= 401 字节</text>
+        <text x="1140" y="566" fill="#fb7185" font-size="10">⚠ 10 倍占用</text>
+      </g>
+
+      <!-- 维度 4: 排序 / 行迁移 -->
+      <g><rect x="80" y="600" width="560" height="22" rx="4" fill="rgba(15,23,42,0.6)"/><text x="92" y="616" fill="#94a3b8" font-size="11.5" font-weight="700">④ ORDER BY / 行迁移风险</text></g>
+      <g><rect x="700" y="600" width="560" height="22" rx="4" fill="rgba(15,23,42,0.6)"/><text x="712" y="616" fill="#94a3b8" font-size="11.5" font-weight="700">④ ORDER BY / 行迁移风险</text></g>
+
+      <!-- 左: VARCHAR(10) 排序 -->
+      <g id="left-sort">
+        <rect x="80" y="635" width="560" height="60" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1"/>
+        <text x="92" y="654" fill="#64748b" font-size="9.5">sort buffer 装行数</text>
+        <text x="92" y="678" fill="#22d3ee" font-size="14" font-weight="700">1MB / 10 字节 = 100K 行</text>
+        <text x="380" y="678" fill="#34d399" font-size="10">✓ 大结果集</text>
+      </g>
+
+      <!-- 右: VARCHAR(100) 排序 -->
+      <g id="right-sort">
+        <rect x="700" y="635" width="560" height="60" rx="6" fill="#0f172a" stroke="#fbbf24" stroke-width="1"/>
+        <text x="712" y="654" fill="#64748b" font-size="9.5">sort buffer 装行数</text>
+        <text x="712" y="678" fill="#fbbf24" font-size="14" font-weight="700">1MB / 100 字节 = 10K 行</text>
+        <text x="1010" y="678" fill="#fb7185" font-size="10">⚠ 落盘风险</text>
+        <text x="1150" y="678" fill="#fb7185" font-size="10">filesort</text>
+      </g>
+    </svg>
+  </div>
+
+  <!-- HTML 要点卡 -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#fbbf24"></div><h3>本帧要点</h3></div>
+      <ul><li id="insight-main">加载中…</li></ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#22d3ee"></div><h3>术语卡</h3></div>
+      <ul><li id="term-main">加载中…</li></ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#fb7185"></div><h3>易错点（面试高频）</h3></div>
+      <ul>
+        <li>• ❌「<code>VARCHAR(N)</code> 占 N 字节」→ ✅ 只占<b>实际字符 + 1-2 字节</b>长度前缀</li>
+        <li>• ❌「预留越长越好」→ ✅ 太长会浪费 sort buffer / 索引 key_len / 行迁移</li>
+        <li>• ❌「<code>VARCHAR(N)</code> 的 N 是字节数」→ ✅ 是<b>字符数</b>（utf8mb4 下最多 4×N 字节）</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>q03 · VARCHAR(100) vs VARCHAR(10) · 7 帧动图</span>
+    <span>数据库专题 · 配套 Q3 答卷</span>
+  </div>
+</div>
+
+<script>
+/* ============ 帧数据 ============
+   字段约定（避免撞名 cap/size/thr/pct）：
+     t      : 帧标题
+     ev     : 顶部事件横幅
+     term   : 术语卡（HTML）
+     insight: 本帧要点（HTML）
+     note   : ❓ 悬停讲解
+     sqlText: SQL 横幅
+     focusDim: 高亮哪个维度（1=磁盘 / 2=内存 / 3=索引 / 4=排序）
+*/
+const F = [
+  { t:'第 0 帧 · 看图须知',
+    ev:'对比 4 个层面：磁盘 / 内存 / 索引 / 排序 · 7 帧看清 VARCHAR(100) 的隐性浪费',
+    term:'本图对比 <code>VARCHAR(10)</code> 和 <code>VARCHAR(100)</code> 在 4 个层面的差异：① 磁盘存储 ② 内存分配 ③ 索引 key_len ④ 排序性能。',
+    insight:'一句话结论：<b>磁盘占用一样</b>（都是实际字符 + 1-2 字节长度前缀），但<b>内存分配 / 索引长度 / 排序性能</b>相差 10 倍。<code>VARCHAR(N)</code> 的 N 是<b>字符数</b>不是字节数。',
+    note:'看图须知：\n• 7 帧走通 4 个层面的差异对比\n• 左边青色 = VARCHAR(10) 刚刚好；右边黄色 = VARCHAR(100) 过度预留\n• 数据假设：存 "hello"（5 字符）· 字符集 = utf8mb4（每字符 1-4 字节）\n\n常见误解：\n• ❌「VARCHAR(100) 占 100 字节」→ ✅ 只占实际字符 + 1-2 字节\n• ❌「VARCHAR 越长越好预留」→ ✅ 太长会浪费内存临时表 + 索引 key_len\n• ❌「VARCHAR(100) 比 VARCHAR(10) 慢」→ ✅ 磁盘一样快，但内存排序慢 10 倍',
+    sqlText:"CREATE TABLE t (name VARCHAR(10)) / VARCHAR(100);  INSERT INTO t VALUES('hello');",
+    focusDim:0 },
+
+  { t:'第 1 帧 · 一句话结论：磁盘一样，其他层面不同',
+    ev:'磁盘占用 = 实际字符 + 1-2 字节 · 两者都 = 6 字节（utf8）',
+    term:'VARCHAR(N) 的 N 是字符数上限，不是磁盘占用上限。实际磁盘占用 = 实际字符数 × 字符集字节数 + 1-2 字节长度前缀。',
+    insight:'磁盘层面，<code>VARCHAR(100)</code> 和 <code>VARCHAR(10)</code> 存 <b>"hello"</b> 都只占 6 字节（5 字符 × 1 字节 utf8 + 1 字节长度前缀）。',
+    note:'磁盘计算公式：\n\n实际字节 = 字符数 × charset_size + length_prefix\n• utf8：    字符 × 1 + 1 字节前缀（≤255）\n• utf8mb4：字符 × 1~4 + 1 字节前缀（≤255）\n• gbk：     字符 × 2 + 1 字节前缀\n\n示例：存 "hello"（5 字符）\n• VARCHAR(10) utf8：5×1 + 1 = 6 字节\n• VARCHAR(100) utf8：5×1 + 1 = 6 字节\n• VARCHAR(100) utf8mb4 "你好abc"：7 字符 + 1 字节 = 不同字节数\n\n所以磁盘层面 VARCHAR(100) 没有浪费。',
+    sqlText:"CREATE TABLE t (name VARCHAR(10)) / VARCHAR(100);  INSERT INTO t VALUES('hello');",
+    focusDim:1 },
+
+  { t:'第 2 帧 · 内存分配：VARCHAR(100) 浪费 90 字符槽',
+    ev:'sort buffer / temp table 按 N 字符分配 · VARCHAR(100) 浪费 90 字符 × 10000 行 = 900KB',
+    term:'内存临时表（MEMORY engine）：MySQL 在内存中建临时表做排序 / 去重 / 聚合时，<b>每列按定义长度分配固定槽位</b>——VARCHAR(100) 就分配 100 字符槽，不管你存多长。',
+    insight:'内存层面 <b>VARCHAR(100) 比 VARCHAR(10) 浪费 10 倍</b>。10000 行的 ORDER BY，VARCHAR(10) 用 100KB 内存，VARCHAR(100) 用 1MB——白白浪费 900KB。',
+    note:'内存临时表的分配规则：\n• VARCHAR(N) → 每行分配 N 字符的定长槽位\n• 不管实际数据多长\n• 即使存 NULL 也占 1 字节长度前缀\n\n代价：\n• ORDER BY / GROUP BY 用 VARCHAR(100) = 多 10 倍内存\n• 内存不够 → 落盘（tmpdir）→ 性能暴跌\n• 100 万行 ORDER BY VARCHAR(100) → 1GB 内存不够，落盘后慢 100 倍\n\n这就是为什么「VARCHAR 越长越好预留」是错的。',
+    sqlText:"SELECT name, COUNT(*) FROM t GROUP BY name ORDER BY name;",
+    focusDim:2 },
+
+  { t:'第 3 帧 · 索引 key_len：VARCHAR(100) 是 VARCHAR(10) 的 10 倍',
+    ev:'联合索引每列字节数累加 · VARCHAR(100) 占 401 字节 vs VARCHAR(10) 占 41 字节',
+    term:'key_len：EXPLAIN 输出里的索引使用字节数，反映「联合索引用到第几列」。计算公式 = SUM(各列字符数 × charset_size + length_prefix)。',
+    insight:'联合索引限制：InnoDB 单列索引最大 <b>3072 字节</b>（utf8mb4 下 ≈ 768 字符）。VARCHAR(100) utf8mb4 单列就占 401 字节，联合 3 列就爆了。',
+    note:'索引长度计算：\n\n| 列 | VARCHAR(N) | utf8mb4 key_len |\n|---|---|---|\n| VARCHAR(10) | 10 字符 | 10×4+1 = 41 字节 |\n| VARCHAR(100) | 100 字符 | 100×4+1 = 401 字节 |\n\n联合索引的影响：\n• idx(a, b, c) 三列 VARCHAR(100) utf8mb4 = 1203 字节 ✓ 能建\n• 但 idx(a, b, c, d) 四列 = 1604 字节 ✓ 还能\n• idx(a, b, c, d, e, f, g, h) 八列 = 3208 字节 ❌ 超过 3072 报错\n\n联合索引「用到第几列」也按字节数判断：\n• key_len=401 → 用到第一列\n• key_len=802 → 用到第二列\n• key_len=1203 → 用到第三列',
+    sqlText:"CREATE INDEX idx_name ON t(name);  -- 联合索引里每列字节数累加",
+    focusDim:3 },
+
+  { t:'第 4 帧 · 排序性能：1MB 内存能装多少行？',
+    ev:'ORDER BY VARCHAR(100) → 1MB 装 10K 行 vs VARCHAR(10) → 1MB 装 100K 行',
+    term:'sort_buffer_size：MySQL 排序用的内存大小。装不下的数据会落盘（filesort + 临时文件），性能暴跌 100 倍。',
+    insight:'<b>同样的 sort buffer</b>，VARCHAR(100) 装的行数只有 VARCHAR(10) 的 <b>1/10</b>。这意味着 VARCHAR(100) 更容易触发 filesort 落盘。',
+    note:'sort buffer 计算（假设 sort_buffer_size=1MB）：\n• VARCHAR(10) utf8mb4：1MB / (10×4+1) ≈ 25K 行\n• VARCHAR(100) utf8mb4：1MB / (100×4+1) ≈ 2.5K 行\n\n触发 filesort 落盘：\n• sort buffer 装不下\n• MySQL 把数据拆成多块临时文件\n• 多轮归并排序（merge sort）\n• 落盘 I/O + 临时文件管理 = 慢 100-1000 倍\n\n实际项目经验：\n• ORDER BY VARCHAR(100) 列 100 万行 → 几乎必落盘\n• ORDER BY VARCHAR(10) 列 100 万行 → 通常还在内存里',
+    sqlText:"SELECT * FROM t ORDER BY name LIMIT 1000000;",
+    focusDim:4 },
+
+  { t:'第 5 帧 · 行迁移风险：太长撑爆 page',
+    ev:'VARCHAR(100) 单行理论最大 = 400 字节 · 多个大字段可能撑爆 16KB page',
+    term:'行迁移（row migration）：当一行数据因为更新后变大，page 装不下时，InnoDB 把整行搬到新 page，原 page 只留指针。后续读这行要读两个 page。',
+    insight:'VARCHAR(100) utf8mb4 单列 = 400 字节，多个这样的大字段 + TEXT 列 → 容易触发行迁移 → 读性能下降。VARCHAR(10) 单列最多 40 字节，几乎不可能撑爆。',
+    note:'行迁移触发条件：\n• 16KB page 默认大小\n• 一行数据 > page 1/2 时容易触发行迁移\n• 多个 VARCHAR(100) 列 + TEXT 列叠加 → 风险\n\n行迁移代价：\n• 原来 1 次 I/O 读 1 行 → 变成 2 次 I/O\n• 性能直接砍半\n• 大量行迁移会导致表碎片化，OPTIMIZE TABLE 才能缓解\n\nVARCHAR 选择原则：\n• 大文本用 TEXT / BLOB，独立存储 + 指针\n• VARCHAR 不要超过 255（除非真的需要）\n• 单列 VARCHAR(100) + 其他列 = 容易超 page 1/2',
+    sqlText:"-- 单 page 16KB, 一行 VARCHAR(100) utf8mb4 = 400 字节",
+    focusDim:4 },
+
+  { t:'第 6 帧 · 长度选择 4 条原则 + 心智模型',
+    ev:'刚刚好就好 · 别预留 · 别超 255（除非需要）· 大文本用 TEXT',
+    term:'心法：<code>VARCHAR(N)</code> 的 N 应该等于「业务上需要的最大字符数」，不是「MySQL 允许的最大字符数」。',
+    insight:'4 条原则：<br>① <b>刚刚好</b> = 业务最长值 + 一点冗余（10-20%）<br>② <b>别预留</b> 越长越好 = 浪费内存 + 索引 + 排序<br>③ <b>别超 255</b> 除非真的需要（255 后长度前缀变 2 字节）<br>④ <b>大文本用 TEXT</b>，独立存储',
+    note:'4 条原则详解：\n\n① 刚刚好原则\n• 业务最长值 = VARCHAR(N) 的 N\n• 加 10-20% 冗余防边界 case\n• 例：用户名最长 20 字符 → VARCHAR(24)\n\n② 别预留\n• VARCHAR(200) vs VARCHAR(20) 同样存 20 字符 → 磁盘一样\n• 但内存 / 索引 / 排序 VARCHAR(200) 浪费 10 倍\n\n③ 别超 255\n• ≤255 字符 → 长度前缀 1 字节\n• >255 字符 → 长度前缀 2 字节（多 1 字节）\n• 同时索引长度计算也变\n\n④ 大文本用 TEXT\n• TEXT / BLOB 独立存储（off-page）\n• 只在聚簇索引里存指针\n• VARCHAR(2000+) 也会 off-page，不如直接 TEXT',
+    sqlText:"-- 心法：VARCHAR(N) = 业务最长值 + 一点冗余",
+    focusDim:0 }
+];
+
+/* ============ 工具 ============ */
+const $ = id => document.getElementById(id);
+const D = s => String(s).replace(/</g,'<').replace(/>/g,'>').replace(/&/g,'&');
+let cur = 0, timer = null;
+
+function highlight(focus) {
+  // 高亮当前 focus 的维度
+  const ids = ['left-disk','right-disk','left-mem','right-mem','left-idx','right-idx','left-sort','right-sort'];
+  const map = {
+    1: ['left-disk','right-disk'],
+    2: ['left-mem','right-mem'],
+    3: ['left-idx','right-idx'],
+    4: ['left-sort','right-sort']
+  };
+  ids.forEach(id => {
+    const el = $(id);
+    if (!el) return;
+    el.removeAttribute('opacity');
+    if (focus === 0 || (map[focus] && map[focus].includes(id))) {
+      // 高亮：加粗 stroke + filter
+      const rect = el.querySelector('rect');
+      if (rect) {
+        rect.setAttribute('stroke-width', '2.4');
+        rect.setAttribute('filter', 'url(#glow)');
+      }
+    } else {
+      // 暗化
+      const rect = el.querySelector('rect');
+      if (rect) {
+        rect.setAttribute('stroke-width', '1');
+        rect.removeAttribute('filter');
+        rect.setAttribute('opacity', '0.55');
+      }
+    }
+  });
+}
+
+function render(i) {
+  const f = F[i]; cur = i;
+  $('ev').textContent = D(f.ev);
+  $('term-main').innerHTML = D(f.term);
+  $('insight-main').innerHTML = D(f.insight);
+  $('cap-title').textContent = D(f.t);
+  $('qmark').title = D(f.note);
+  $('step-ind').textContent = (i + 1) + ' / ' + F.length;
+  $('btn-prev').disabled = i === 0;
+  $('btn-next').disabled = i === F.length - 1;
+  document.querySelectorAll('#dots button').forEach((d, k) => d.classList.toggle('cur', k === i));
+
+  $('sql-text').textContent = D(f.sqlText);
+  highlight(f.focusDim);
+}
+
+/* ============ 控件 ============ */
+const dots = $('dots');
+F.forEach((_, k) => {
+  const b = document.createElement('button');
+  b.onclick = () => { stopPlay(); render(k); };
+  dots.appendChild(b);
+});
+$('btn-prev').onclick = () => { stopPlay(); if (cur > 0) render(cur - 1); };
+$('btn-next').onclick = () => { stopPlay(); if (cur < F.length - 1) render(cur + 1); };
+$('btn-reset').onclick = () => { stopPlay(); render(0); };
+$('btn-play').onclick = togglePlay;
+function togglePlay() {
+  if (timer) return stopPlay();
+  if (cur >= F.length - 1) render(0);
+  $('btn-play').textContent = '⏸ 暂停';
+  timer = setInterval(() => { if (cur >= F.length - 1) return stopPlay(); render(cur + 1); }, 2400);
+}
+function stopPlay() { if (timer) { clearInterval(timer); timer = null; $('btn-play').textContent = '▶ 播放'; } }
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { stopPlay(); if (cur < F.length - 1) render(cur + 1); }
+  if (e.key === 'ArrowLeft')  { stopPlay(); if (cur > 0) render(cur - 1); }
+  if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+});
+const m = location.hash.match(/f=(\d+)/);
+render(m ? Math.min(F.length - 1, +m[1]) : 0);
+
+/* ============ 导出 ============ */
+function capture() {
+  const el = document.getElementById('report-container');
+  const r = el.getBoundingClientRect();
+  return html2canvas(document.body, {
+    x: r.left - 32, y: r.top - 32, width: r.width + 64, height: r.height + 64,
+    scale: 2, backgroundColor: '#020617',
+    ignoreElements: n => n.closest && (n.closest('.toolbar') || n.closest('.controls') || n.closest('.dots'))
+  });
+}
+function copyAsImage() { capture().then(c => c.toBlob(b => navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]))); }
+function downloadPNG() {
+  capture().then(c => {
+    const a = document.createElement('a');
+    a.download = 'q03-varchar-len-frame-' + (cur + 1) + '.png';
+    a.href = c.toDataURL('image/png');
+    a.click();
+  });
+}
+function downloadPDF() {
+  capture().then(c => {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: c.width >= c.height ? 'l' : 'p', unit: 'px', format: [c.width, c.height] });
+    pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, c.width, c.height);
+    pdf.save('q03-varchar-len.pdf');
+  });
+}
+function downloadGIF() {
+  const frames = F.length;
+  alert(
+    'GIF 导出指引：\n\n' +
+    'cd doc/database/diagrams\n' +
+    'mkdir -p _frames && for i in $(seq 0 ' + (frames - 1) + '); do\n' +
+    '  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --disable-gpu --hide-scrollbars \\\n' +
+    '    --window-size=1380,1300 --virtual-time-budget=3000 \\\n' +
+    '    --screenshot=_frames/f$(printf %02d $i).png \\\n' +
+    '    "file://$(pwd)/q03-varchar-len.html#f=$i"\n' +
+    'done\n' +
+    'conda activate py311 && python - <<EOF\n' +
+    'from PIL import Image; import glob, os\n' +
+    'imgs = [Image.open(p).convert("RGB") for p in sorted(glob.glob("_frames/f*.png"))]\n' +
+    'imgs = [im.resize((900, int(im.height * 900 / im.width)), Image.LANCZOS) for im in imgs]\n' +
+    'imgs[0].save("q03-varchar-len.gif", save_all=True, append_images=imgs[1:], duration=2400, loop=0, optimize=True)\n' +
+    'print("GIF bytes:", os.path.getsize("q03-varchar-len.gif"))\n' +
+    'EOF'
+  );
+}
+</script>
+</body>
+</html>
