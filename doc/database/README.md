@@ -24,6 +24,9 @@
 | [diagrams/q03-varchar-len.html](./diagrams/q03-varchar-len.html) | Q3 VARCHAR(100) vs VARCHAR(10) 4 层差异 · 7 帧动图 |
 | [diagrams/q03-varchar-len.gif](./diagrams/q03-varchar-len.gif) | 同上 · 嵌 Markdown 用（17 秒循环） |
 | [diagrams/q03-varchar-len.png](./diagrams/q03-varchar-len.png) | 同上 · 静态封面（看图须知帧） |
+| [diagrams/q05-back-to-table-4cases.html](./diagrams/q05-back-to-table-4cases.html) | Q5/Q6 · 回表 4 场景对比 · 可切换交互图（user_big 100万行实测） |
+| [diagrams/q05-back-to-table-4cases.gif](./diagrams/q05-back-to-table-4cases.gif) | 同上 · 4 帧循环（16 秒） |
+| [diagrams/q05-back-to-table-4cases.png](./diagrams/q05-back-to-table-4cases.png) | 同上 · 2x2 网格封面（4 场景一览） |
 
 ## 快速开始
 
@@ -59,8 +62,9 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.database.q02.LockLa
 - [x] Java Lab（3 个：q01 连接池 / q02 行锁 / q05 回表 4 场景）
 - [x] HTML 配图 · Q1 一行 SELECT 执行过程（11 帧动图）
 - [x] HTML 配图 · Q3 VARCHAR(100) vs VARCHAR(10) 4 层差异（7 帧动图）
+- [x] HTML 配图 · Q5/Q6 回表 4 场景对比（4 场景可切换 + 2x2 封面）
 - [ ] HTML 配图（Q12 MVCC / Q15 间隙锁 / Q25 连续登录）
-- [x] ~~Q5/Q6 回表 4 帧动图~~ 改用 SQL + Java 实验直接验证（更准，比示意图靠谱）
+- [x] SQL+Java 实验 · Q5/Q6 回表 100万行实测（覆盖索引 vs 回表 vs 全表扫 vs 主键定位）
 - [ ] V2 进阶（Redis / 缓存三大问题 / 分布式锁）
 - [ ] V3 大厂真题面经汇总（按公司：阿里/字节/腾讯/美团）
 
@@ -78,6 +82,8 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.database.q02.LockLa
 | ④ | `SELECT * WHERE id = 12345` | type=const, key=PRIMARY, rows=1 | PK 树二分定位 1 行 | < 1ms |
 
 跑法见 [`q05_back_to_table.sql`](./sql/q05_back_to_table.sql) 和 [`BackToTableLab.java`](../../src/main/java/edu/zjnu/interview/database/q05/BackToTableLab.java)。
+
+**配套交互图**：[`diagrams/q05-back-to-table-4cases.html`](./diagrams/q05-back-to-table-4cases.html) — 4 场景可点击切换（?frame=0~3 深链接），每场景展示 EXPLAIN + B+树可视化 + 物理路径，扫一眼就能把 4 个例子的"为什么"串起来。
 
 ## 参考
 
