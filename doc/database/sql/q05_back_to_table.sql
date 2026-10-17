@@ -9,6 +9,10 @@
 --
 -- ⚠️ 100 万行 seed 大约需要 30-60 秒(单线程 INSERT),请耐心等.
 --     如果表已经存在,DROP 后重建(脚本头部已经 IF EXISTS).
+--
+-- ⚠️ 本脚本所有 EXPLAIN 用 ; 结尾(适合管道/JDBC/任何客户端).
+--     如果在 mysql CLI 里交互执行,手动把 ; 改成 \G 可以看竖排输出(更易读),
+--     写法: EXPLAIN ... ; → EXPLAIN ... \G
 -- =====================================================================
 
 SET NAMES utf8mb4;
@@ -80,25 +84,25 @@ FROM user_big;
 -- 预期:type=ALL, key=NULL, rows≈975000, Extra=Using where
 -- 原因:age 索引回表 97 万次 > 全表扫 100 万次顺序 I/O → 优化器放弃二级索引
 SELECT '---- 实验 1:SELECT * WHERE age > 20 (高选择性 → 全表扫) ----' AS info;
-EXPLAIN SELECT * FROM user_big WHERE age > 20\G
+EXPLAIN SELECT * FROM user_big WHERE age > 20;
 
 -- 实验 2:SELECT * + 等值 age = 25(命中约 24400 行)
 -- 预期:type=ref, key=idx_age, rows≈24400, Extra=Using where(回表)
 -- 原因:2.4 万次回表 < 全表扫 100 万次顺序 I/O → 走 idx_age + 回表
 SELECT '---- 实验 2:SELECT * WHERE age = 25 (中等选择性 → 索引 + 回表) ----' AS info;
-EXPLAIN SELECT * FROM user_big WHERE age = 25\G
+EXPLAIN SELECT * FROM user_big WHERE age = 25;
 
 -- 实验 3:SELECT id, age + 等值 age = 25(覆盖索引)
 -- 预期:type=ref, key=idx_age, rows≈24400, Extra=Using index
 -- 原因:查询列 (id, age) 都在 idx_age 叶子 → 0 次回表
 SELECT '---- 实验 3:SELECT id,age WHERE age = 25 (覆盖索引 → 不回表) ----' AS info;
-EXPLAIN SELECT id, age FROM user_big WHERE age = 25\G
+EXPLAIN SELECT id, age FROM user_big WHERE age = 25;
 
 -- 实验 4:SELECT * + WHERE id = 12345(走主键,无 WHERE 索引回表)
 -- 预期:type=const, key=PRIMARY, rows=1, Extra=NULL
 -- 原因:id 是主键,主键叶子就是完整行,直接拿
 SELECT '---- 实验 4:SELECT * WHERE id = 12345 (走主键) ----' AS info;
-EXPLAIN SELECT * FROM user_big WHERE id = 12345\G
+EXPLAIN SELECT * FROM user_big WHERE id = 12345;
 
 -- =====================================================================
 -- 5. 实测耗时对比:看"理论分析"和"实测数据"的对应关系
@@ -134,10 +138,10 @@ SELECT SQL_NO_CACHE COUNT(*) FROM user_big WHERE id IN
 -- =====================================================================
 -- 7. EXPLAIN FORMAT=JSON:看更详细的成本估算
 -- =====================================================================
-EXPLAIN FORMAT=JSON SELECT * FROM user_big WHERE age > 20\G
-EXPLAIN FORMAT=JSON SELECT * FROM user_big WHERE age = 25\G
-EXPLAIN FORMAT=JSON SELECT id, age FROM user_big WHERE age = 25\G
-EXPLAIN FORMAT=JSON SELECT * FROM user_big WHERE id = 12345\G
+EXPLAIN FORMAT=JSON SELECT * FROM user_big WHERE age > 20;
+EXPLAIN FORMAT=JSON SELECT * FROM user_big WHERE age = 25;
+EXPLAIN FORMAT=JSON SELECT id, age FROM user_big WHERE age = 25;
+EXPLAIN FORMAT=JSON SELECT * FROM user_big WHERE id = 12345;
 
 -- =====================================================================
 -- 8. 验证"key=NULL 不等于没读 PK 树"——全表扫就是顺序遍历聚簇索引
@@ -145,7 +149,7 @@ EXPLAIN FORMAT=JSON SELECT * FROM user_big WHERE id = 12345\G
 -- =====================================================================
 SET optimizer_trace = 'enabled=on';
 SELECT * FROM user_big WHERE age > 20 LIMIT 1;
-SELECT * FROM information_schema.OPTIMIZER_TRACE\G
+SELECT * FROM information_schema.OPTIMIZER_TRACE;
 SET optimizer_trace = 'enabled=off';
 
 -- =====================================================================
