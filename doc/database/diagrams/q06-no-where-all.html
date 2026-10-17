@@ -1,0 +1,474 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Q6 · 没有 WHERE 的 SELECT * 怎么走 · MySQL InnoDB · 6 帧动图</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; min-height: 100vh; }
+  .container { width: 1340px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #34d399; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.6); } 70% { box-shadow: 0 0 0 10px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
+  .header h1 { font-size: 21px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 13px; color: #7d8db0; margin-top: 5px; }
+  .toolbar { position: relative; }
+  .toolbar-toggle { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 16px; font-family: inherit; }
+  .toolbar-toggle:hover { color: #e2e8f0; border-color: #475569; }
+  .toolbar-actions { display: none; position: absolute; right: 0; top: 38px; gap: 6px; z-index: 10; }
+  .toolbar.open .toolbar-actions { display: flex; }
+  .toolbar-actions button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; }
+  .toolbar-actions button:hover { color: #f1f5f9; border-color: #64748b; }
+  @media print { .toolbar { display: none !important; } }
+
+  .controls { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .controls button { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; padding: 7px 16px; cursor: pointer; font-size: 14px; font-family: inherit; }
+  .controls button:hover { border-color: #64748b; }
+  .controls button:disabled { opacity: 0.35; cursor: default; }
+  .step-ind { font-size: 14px; color: #cbd5e1; min-width: 70px; }
+  .frame-title { font-size: 14px; color: #34d399; font-weight: 700; }
+  .qmark { cursor: help; font-size: 15px; color: #7d8db0; }
+  .key-hint { font-size: 12px; color: #64748b; }
+  .dots { display: flex; gap: 6px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+  .dots button { width: 11px; height: 11px; border-radius: 50%; padding: 0; background: #1e293b; border: 1px solid #334155; cursor: pointer; }
+  .dots button.cur { background: #34d399; border-color: #34d399; }
+  .dots button:hover { border-color: #34d399; }
+
+  .legend { display: flex; gap: 18px; align-items: center; font-size: 12px; color: #a5b4cc; margin-bottom: 10px; flex-wrap: wrap; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 16px 18px; }
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+  .card-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; }
+  .card ul { list-style: none; }
+  .card li { font-size: 13px; color: #a5b4cc; line-height: 1.75; }
+  .card li b { color: #e2e8f0; font-weight: 600; }
+  .card li code { background: #1e293b; padding: 1px 5px; border-radius: 3px; font-size: 12px; color: #fbbf24; }
+
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>Q6 · 没有 WHERE 的 SELECT * 怎么走</h1>
+        <div class="subtitle">零基础 · 6 帧走通「无 WHERE → 走 PK 树全表扫 → 不回表」的完整路径</div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbar').classList.toggle('open')">⋯</button>
+      <div class="toolbar-actions">
+        <button onclick="downloadGIF()">🎞 GIF</button>
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="btn-reset">⏮</button>
+    <button id="btn-prev">◀</button>
+    <button id="btn-play">▶ 播放</button>
+    <button id="btn-next">▶|</button>
+    <span class="step-ind" id="step-ind">1 / 6</span>
+    <span class="frame-title" id="cap-title"></span>
+    <span class="qmark" id="qmark" title="">❓</span>
+    <span class="key-hint">← → 键翻页 · ❓ 悬停看本帧讲解</span>
+    <div class="dots" id="dots"></div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw" style="background:#a78bfa"></span>PK 树（叶子 = 完整行）</span>
+    <span><span class="sw" style="background:#22d3ee"></span>name 二级索引（叶子 ≠ 完整行）</span>
+    <span><span class="sw" style="background:#34d399"></span>本次扫描路径（顺序读）</span>
+    <span><span class="sw" style="background:#fb7185"></span>避免走的路（成本高）</span>
+    <span style="color:#64748b">关键：无 WHERE → 顺序扫 PK 树叶子 → 完整行已在叶子，无需回表</span>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1340 720" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+        <filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        <marker id="arr-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#34d399"/></marker>
+        <marker id="arr-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#fb7185"/></marker>
+      </defs>
+      <rect width="1340" height="720" fill="#020617"/>
+      <rect width="1340" height="720" fill="url(#grid)"/>
+
+      <!-- 顶部事件横幅 -->
+      <rect x="40" y="20" width="1260" height="56" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+      <text x="60" y="44" fill="#7d8db0" font-size="10.5">本帧 SQL & 访问路径</text>
+      <text id="ev" x="60" y="64" fill="#f8fafc" font-size="15" font-weight="700"></text>
+
+      <!-- SQL 横幅 -->
+      <rect x="40" y="90" width="1260" height="60" rx="10" fill="#0a0f1c" stroke="#334155" stroke-width="1"/>
+      <text x="60" y="112" fill="#64748b" font-size="10.5">SQL</text>
+      <text id="sql-text" x="60" y="135" fill="#fbbf24" font-size="16" font-weight="700"></text>
+
+      <!-- 左侧：PK 树（被走） -->
+      <rect x="40" y="170" width="640" height="450" rx="12" fill="rgba(167,139,250,0.04)" stroke="#a78bfa" stroke-width="1" stroke-dasharray="8,4"/>
+      <text x="56" y="190" fill="#a78bfa" font-size="11" font-weight="600">PK 聚簇索引树（被走）</text>
+      <text x="56" y="205" fill="#64748b" font-size="9.5">叶子节点 = 完整行 · 按 PK 顺序串联</text>
+
+      <!-- 右侧：name 二级索引（被避开） -->
+      <rect x="700" y="170" width="600" height="450" rx="12" fill="rgba(34,211,238,0.03)" stroke="#22d3ee" stroke-width="1" stroke-dasharray="8,4" opacity="0.7"/>
+      <text x="716" y="190" fill="#22d3ee" font-size="11" font-weight="600" id="name-frame-title">name 二级索引树（被避开）</text>
+      <text x="716" y="205" fill="#64748b" font-size="9.5" id="name-frame-sub">叶子节点 = (name, PK) · 不含完整行</text>
+
+      <!-- ============ PK 树（按 PK 排序） ============ -->
+      <g id="pk_root"><rect x="320" y="240" width="140" height="36" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/><text x="390" y="262" fill="#a78bfa" font-size="11" font-weight="700" text-anchor="middle">PK 根</text></g>
+      <g id="pk_int"><rect x="320" y="300" width="140" height="32" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/><text x="390" y="320" fill="#cbd5e1" font-size="10" text-anchor="middle">[17, 33] [42, 88]</text></g>
+
+      <g id="pk_leaf_5"><rect x="60"  y="430" width="100" height="100" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/><text x="110" y="452" fill="#f1f5f9" font-size="11" font-weight="700" text-anchor="middle">PK=5</text><text x="110" y="470" fill="#94a3b8" font-size="10" text-anchor="middle">赵六 25 M</text><text x="110" y="484" fill="#94a3b8" font-size="9" text-anchor="middle">13800...</text><text x="110" y="498" fill="#94a3b8" font-size="9" text-anchor="middle">北京</text><text x="110" y="514" fill="#475569" font-size="8" text-anchor="middle">+ 完整行</text></g>
+      <g id="pk_leaf_17"><rect x="170" y="430" width="100" height="100" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/><text x="220" y="452" fill="#f1f5f9" font-size="11" font-weight="700" text-anchor="middle">PK=17</text><text x="220" y="470" fill="#94a3b8" font-size="10" text-anchor="middle">李四 30 F</text><text x="220" y="484" fill="#94a3b8" font-size="9" text-anchor="middle">13800...</text><text x="220" y="498" fill="#94a3b8" font-size="9" text-anchor="middle">上海</text><text x="220" y="514" fill="#475569" font-size="8" text-anchor="middle">+ 完整行</text></g>
+      <g id="pk_leaf_33"><rect x="280" y="430" width="100" height="100" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/><text x="330" y="452" fill="#f1f5f9" font-size="11" font-weight="700" text-anchor="middle">PK=33</text><text x="330" y="470" fill="#94a3b8" font-size="10" text-anchor="middle">孙八 28 M</text><text x="330" y="484" fill="#94a3b8" font-size="9" text-anchor="middle">13800...</text><text x="330" y="498" fill="#94a3b8" font-size="9" text-anchor="middle">广州</text><text x="330" y="514" fill="#475569" font-size="8" text-anchor="middle">+ 完整行</text></g>
+      <g id="pk_leaf_42"><rect x="390" y="430" width="100" height="100" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/><text x="440" y="452" fill="#f1f5f9" font-size="11" font-weight="700" text-anchor="middle">PK=42</text><text x="440" y="470" fill="#94a3b8" font-size="10" text-anchor="middle">张三 35 M</text><text x="440" y="484" fill="#94a3b8" font-size="9" text-anchor="middle">13800...</text><text x="440" y="498" fill="#94a3b8" font-size="9" text-anchor="middle">深圳</text><text x="440" y="514" fill="#475569" font-size="8" text-anchor="middle">+ 完整行</text></g>
+      <g id="pk_leaf_88"><rect x="500" y="430" width="100" height="100" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/><text x="550" y="452" fill="#f1f5f9" font-size="11" font-weight="700" text-anchor="middle">PK=88</text><text x="550" y="470" fill="#94a3b8" font-size="10" text-anchor="middle">王五 40 F</text><text x="550" y="484" fill="#94a3b8" font-size="9" text-anchor="middle">13800...</text><text x="550" y="498" fill="#94a3b8" font-size="9" text-anchor="middle">杭州</text><text x="550" y="514" fill="#475569" font-size="8" text-anchor="middle">+ 完整行</text></g>
+      <g id="pk_leaf_91"><rect x="600" y="430" width="76"  height="100" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1" stroke-dasharray="2,2" opacity="0.5"/><text x="638" y="460" fill="#64748b" font-size="9" text-anchor="middle">PK=91</text><text x="638" y="474" fill="#64748b" font-size="9" text-anchor="middle">钱七...</text><text x="638" y="498" fill="#475569" font-size="8" text-anchor="middle">+ 完整行</text></g>
+
+      <!-- PK 树边 -->
+      <g stroke="#475569" stroke-width="1.2" fill="none">
+        <line x1="370" y1="276" x2="390" y2="300"/>
+        <line x1="410" y1="276" x2="390" y2="300"/>
+        <line x1="350" y1="332" x2="110" y2="430"/>
+        <line x1="380" y1="332" x2="220" y2="430"/>
+        <line x1="400" y1="332" x2="330" y2="430"/>
+        <line x1="420" y1="332" x2="440" y2="430"/>
+        <line x1="440" y1="332" x2="550" y2="430"/>
+        <line x1="450" y1="332" x2="638" y2="430"/>
+      </g>
+
+      <!-- PK 叶子链表 -->
+      <g id="pk_chain" stroke="#a78bfa" stroke-width="1.6" fill="none">
+        <line x1="160" y1="480" x2="170" y2="480"/>
+        <line x1="270" y1="480" x2="280" y2="480"/>
+        <line x1="380" y1="480" x2="390" y2="480"/>
+        <line x1="490" y1="480" x2="500" y2="480"/>
+        <line x1="600" y1="480" x2="600" y2="430" stroke-dasharray="3,3"/>
+      </g>
+
+      <!-- ============ 扫描动画路径（绿箭头沿叶子链表走） ============ -->
+      <g id="scan_path" opacity="0">
+        <path d="M 110 540 L 600 540" fill="none" stroke="#34d399" stroke-width="3" marker-end="url(#arr-green)" stroke-linecap="round"/>
+        <rect x="80" y="555" width="200" height="36" rx="6" fill="rgba(52,211,153,0.15)" stroke="#34d399" stroke-width="1"/>
+        <text x="180" y="572" fill="#34d399" font-size="11" font-weight="700" text-anchor="middle">顺序扫 6 个叶子</text>
+        <text x="180" y="586" fill="#34d399" font-size="10" text-anchor="middle">每叶子 = 完整行</text>
+      </g>
+
+      <!-- ============ name 树（被避开，红 X 标注） ============ -->
+      <g id="name_root"><rect x="940" y="240" width="120" height="36" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/><text x="1000" y="262" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">name 根</text></g>
+      <g id="name_leaf_li"><rect x="730" y="430" width="80" height="60" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/><text x="770" y="452" fill="#f1f5f9" font-size="11" text-anchor="middle">李四</text><text x="770" y="467" fill="#94a3b8" font-size="10" text-anchor="middle">→ PK 17</text><text x="770" y="480" fill="#475569" font-size="7.5" text-anchor="middle">leaf</text></g>
+      <g id="name_leaf_zhang"><rect x="820" y="430" width="80" height="60" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/><text x="860" y="452" fill="#f1f5f9" font-size="11" text-anchor="middle">张三</text><text x="860" y="467" fill="#94a3b8" font-size="10" text-anchor="middle">→ PK 42</text><text x="860" y="480" fill="#475569" font-size="7.5" text-anchor="middle">leaf</text></g>
+      <g id="name_leaf_wang"><rect x="910" y="430" width="80" height="60" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/><text x="950" y="452" fill="#f1f5f9" font-size="11" text-anchor="middle">王五</text><text x="950" y="467" fill="#94a3b8" font-size="10" text-anchor="middle">→ PK 88</text><text x="950" y="480" fill="#475569" font-size="7.5" text-anchor="middle">leaf</text></g>
+      <g id="name_leaf_zhao"><rect x="1000" y="430" width="80" height="60" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/><text x="1040" y="452" fill="#f1f5f9" font-size="11" text-anchor="middle">赵六</text><text x="1040" y="467" fill="#94a3b8" font-size="10" text-anchor="middle">→ PK 5</text><text x="1040" y="480" fill="#475569" font-size="7.5" text-anchor="middle">leaf</text></g>
+      <g id="name_leaf_qian"><rect x="1090" y="430" width="80" height="60" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1" stroke-dasharray="2,2" opacity="0.5"/><text x="1130" y="452" fill="#64748b" font-size="11" text-anchor="middle">钱七</text><text x="1130" y="467" fill="#64748b" font-size="10" text-anchor="middle">→ PK 91</text></g>
+
+      <!-- name 树边 -->
+      <g stroke="#475569" stroke-width="1.2" fill="none" opacity="0.7">
+        <line x1="940" y1="276" x2="770" y2="430"/>
+        <line x1="970" y1="276" x2="860" y2="430"/>
+        <line x1="1000" y1="276" x2="950" y2="430"/>
+        <line x1="1030" y1="276" x2="1040" y2="430"/>
+        <line x1="1060" y1="276" x2="1130" y2="430"/>
+      </g>
+      <g stroke="#22d3ee" stroke-width="1.4" fill="none" stroke-dasharray="2,2" opacity="0.6">
+        <line x1="810" y1="460" x2="820" y2="460"/>
+        <line x1="900" y1="460" x2="910" y2="460"/>
+        <line x1="990" y1="460" x2="1000" y2="460"/>
+        <line x1="1080" y1="460" x2="1090" y2="460"/>
+      </g>
+
+      <!-- 红色 X 覆盖 name 树（标记「不走这条路」） -->
+      <g id="avoid_overlay" opacity="0">
+        <line x1="720" y1="240" x2="1200" y2="510" stroke="#fb7185" stroke-width="3" stroke-linecap="round"/>
+        <line x1="1200" y1="240" x2="720" y2="510" stroke="#fb7185" stroke-width="3" stroke-linecap="round"/>
+        <rect x="850" y="370" width="200" height="40" rx="6" fill="rgba(251,113,133,0.2)" stroke="#fb7185" stroke-width="1.5"/>
+        <text x="950" y="388" fill="#fb7185" font-size="12" font-weight="700" text-anchor="middle">不走这条路！</text>
+        <text x="950" y="402" fill="#fb7185" font-size="10" text-anchor="middle">N 次回表成本太高</text>
+      </g>
+
+      <!-- 底部 EXPLAIN 输出 -->
+      <rect x="40" y="640" width="1260" height="60" rx="8" fill="#0a0f1c" stroke="#334155" stroke-width="1"/>
+      <text x="60" y="660" fill="#64748b" font-size="10">EXPLAIN 输出（本帧关键 4 字段）</text>
+      <text id="explain1" x="60" y="681" fill="#22d3ee" font-size="11.5" font-weight="600"></text>
+      <text id="explain2" x="60" y="697" fill="#cbd5e1" font-size="11"></text>
+    </svg>
+  </div>
+
+  <!-- HTML 要点卡 -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#34d399"></div><h3>本帧要点</h3></div>
+      <ul><li id="insight-main">加载中…</li></ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#22d3ee"></div><h3>术语卡</h3></div>
+      <ul><li id="term-main">加载中…</li></ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#fbbf24"></div><h3>易错点（面试高频）</h3></div>
+      <ul>
+        <li>• ❌「没 WHERE 也能用索引」→ ✅ 没有过滤条件 = 全表扫 = <code>type=ALL</code></li>
+        <li>• ❌「<code>type=ALL</code> 必是慢 SQL」→ ✅ 看 <code>rows</code> + 表大小，百万行小表 ALL 可能合理</li>
+        <li>• ❌「全表扫 = 必须回表」→ ✅ 走 PK 树全表扫 = 顺序读完整行，<b>不需要</b>回表</li>
+        <li>• ❌「SELECT * 走 PK 树就能避免回表」→ ✅ 仅当 WHERE PK 时成立，无 WHERE 也是</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>q06 · 没有 WHERE 的 SELECT * 怎么走 · 6 帧动图</span>
+    <span>数据库专题 · 配套 Q6 / Q19 答卷</span>
+  </div>
+</div>
+
+<script>
+/* ============ 帧数据 ============
+   字段约定（避免撞名 cap/size/thr/pct）：
+     t      : 帧标题
+     ev     : 顶部事件横幅
+     term   : 术语卡（HTML，长文本）
+     insight: 本帧要点（HTML）
+     note   : ❓ 悬停讲解
+     sqlText: SQL 横幅内容
+     explain1 / explain2: EXPLAIN 两行
+     showScanPath: 是否显示绿色扫描路径
+     showAvoidOverlay: 是否显示 name 树的红色 X
+     nameFrameTitle / nameFrameSub: name 树标题
+*/
+const F = [
+  { t:'第 0 帧 · 看图须知',
+    ev:'疑问：SELECT * FROM users · 没 WHERE · 走哪棵树？',
+    term:'本图回答「无 WHERE 的 SELECT * 怎么走」：答案是<b>PK 树全表扫</b>——因为 PK 树的叶子就是完整行，顺序扫一遍就拿全所有数据，<b>不需要回表</b>。',
+    insight:'一句话总结：<b>无 WHERE = 全表扫 = 走 PK 树 = 不回表</b>。这条规则在 SQL 调优里属于「特例」，但又是最容易被误解的。',
+    note:'看图须知：\n• 6 帧走通「无 WHERE 怎么走」的完整路径\n• 左侧紫色 = PK 树（被走，叶子含完整行）\n• 右侧青色 = name 二级索引（被避开，叶子缺列 → 要回表）\n• 关键观察：PK 树叶子 = 完整行 = 顺序读就能拿所有数据\n\n常见误解：\n• ❌「没 WHERE 所以走全表扫就要回表」→ ✅ 走 PK 树全表扫 = 顺序读完整行，0 次回表\n• ❌「SELECT * 不能用索引」→ ✅ 不是「用索引」，而是「用 PK 树顺序扫」\n• ❌「走 name 索引也行」→ ✅ 走 name 索引 = N 次随机回表，比 PK 树顺序扫慢得多',
+    sqlText:'SELECT * FROM users;',
+    explain1:'-- 没有 WHERE 子句',
+    explain2:'-- 优化器直接走 PK 树顺序扫所有叶子',
+    showScanPath:false, showAvoidOverlay:false,
+    nameFrameTitle:'name 二级索引树（被避开）',
+    nameFrameSub:'叶子节点 = (name, PK) · 不含完整行' },
+
+  { t:'第 1 帧 · 一句话结论 + 全场景对比',
+    ev:'SQL：SELECT * FROM users; · 无 WHERE · 无 ORDER BY',
+    term:'全表扫描（Full Table Scan）：遍历整张表的所有行。当 SQL 没有 WHERE/没有 ORDER BY 时，优化器直接选 PK 树从头到尾扫一遍。',
+    insight:'三种 WHERE 场景的访问路径对比：<br>• WHERE id=42 → PK 树定位 1 行（type=const）<br>• WHERE name=张三 → name 索引 + 回表（type=ref）<br>• <b>无 WHERE → PK 树全表扫（type=ALL）</b>',
+    note:'三种场景对比：\n\n| SQL | 走什么 | type | 回表 |\n|---|---|---|---|\n| SELECT * WHERE id=42 | PK 树定位 1 行 | const | 0 |\n| SELECT * WHERE name=张三 | name 索引 + 回表 | ref | 1 |\n| SELECT * （无 WHERE） | PK 树全表扫 | ALL | 0 |\n\n关键发现：无 WHERE 反而比 WHERE name 更简单——因为 PK 树叶子直接就是完整行，<b>根本不需要回表</b>。',
+    sqlText:'SELECT * FROM users;  -- 无 WHERE',
+    explain1:'type: ALL          ← 全表扫描',
+    explain2:'key:  NULL         ← 没走任何索引（key=NULL 表示走的是聚簇索引本身）',
+    showScanPath:true, showAvoidOverlay:false,
+    nameFrameTitle:'name 二级索引树（被避开）',
+    nameFrameSub:'叶子节点 = (name, PK) · 不含完整行' },
+
+  { t:'第 2 帧 · 走 PK 树：顺序扫叶子拿完整行',
+    ev:'PK 树叶子 = 完整行 · 顺序扫 6 个叶子 = 拿到 6 行全部数据',
+    term:'聚簇索引顺序读：PK 树的叶子节点之间通过链表指针串联，顺序扫描时不需要回溯树结构，直接顺着叶子链表走就行。',
+    insight:'走 PK 树的<b>本质优势</b>在这里：<b>叶子就是完整行</b>。每读一个叶子 = 拿到 1 行完整数据。N 行 = N 次顺序 I/O。',
+    note:'PK 树顺序扫的工作机制：\n• 从 PK 树最左侧叶子（PK 最小）开始\n• 顺着叶子链表向右走\n• 每打开一个叶子 → 读完整行 → 写到结果集\n• 走到最右侧叶子 → 结束\n\n代价：\n• N 行数据 → N 个页的顺序 I/O\n• 每个页 16KB ≈ 100 行数据\n• 10000 行表 ≈ 100 个页 ≈ 1-10ms（SSD）/ 100ms（机械盘）\n\n注意：顺序 I/O 是磁盘最擅长的访问模式，比随机 I/O 快 100-1000 倍。',
+    sqlText:'SELECT * FROM users;  -- 走 PK 树',
+    explain1:'type: ALL         ← 全表扫 PK 树',
+    explain2:'Extra: (无任何关键字)   ← 不需要回表，也不需要排序，就是简单读',
+    showScanPath:true, showAvoidOverlay:false,
+    nameFrameTitle:'name 二级索引树（被避开）',
+    nameFrameSub:'叶子节点 = (name, PK) · 不含完整行' },
+
+  { t:'第 3 帧 · 为什么不走 name 索引：N 次回表太贵',
+    ev:'如果走 name 索引：6 个叶子 → 6 次回表 = 6 次随机 I/O（比顺序扫慢得多）',
+    term:'走 name 索引走全表的代价：扫 N 个 name 叶子 → 拿到 N 个 PK → 跳 PK 树 N 次取完整行。每次回表都是<b>随机 I/O</b>。',
+    insight:'对比成本：<br>• <b>走 PK 树</b>：N 次顺序 I/O（~1-10ms 总计）<br>• <b>走 name 索引</b>：N 次顺序扫叶子 + N 次随机回表（~10-100ms 每行）<br><br>走 name 索引的成本是 PK 树的 10-100 倍。',
+    note:'走 name 索引的详细代价：\n• 扫 name 叶子链表：N 次顺序 I/O（这部分不贵）\n• 每次回 PK 树取完整行：<b>随机 I/O</b>，每次 ~10ms（机械盘）~0.1ms（SSD）\n• 10000 行 → 10000 次回表 → 100 秒（机械盘）\n• 同 10000 行走 PK 树全表扫 → 1-10 秒（机械盘）\n\n核心：<b>顺序 I/O vs 随机 I/O</b> 的成本差是 100-1000 倍。这是 InnoDB 设计 PK 树叶子就是完整行的根本原因。',
+    sqlText:'SELECT * FROM users;  -- 假设走 name 索引会怎样',
+    explain1:'type: index         ← 走索引全扫（不是 ref）',
+    explain2:'Extra: Using where   ← 需要回表拿完整行（这里没有 WHERE，所以是 Using where 触发过滤）',
+    showScanPath:true, showAvoidOverlay:true,
+    nameFrameTitle:'name 二级索引树 ❌ 被避开',
+    nameFrameSub:'走这条 = N 次随机回表 = 比顺序扫慢 10-100 倍' },
+
+  { t:'第 4 帧 · EXPLAIN 输出：type=ALL + key=NULL',
+    ev:'EXPLAIN SELECT * FROM users → type=ALL, key=NULL, rows=10000',
+    term:'type=ALL：全表扫描（性能最差的一种 type）。key=NULL：没走任何「二级索引」。注意：key=NULL 不等于「没走索引」——它指的是没走二级索引，<b>PK 树不算在内</b>。',
+    insight:'面试标准答：<code>type=ALL</code> + <code>key=NULL</code> + <code>Extra</code> 无任何关键字 = <b>走 PK 树全表扫完整行，无需回表</b>。',
+    note:'EXPLAIN 速记：\n\n• type=ALL：<b>不一定</b>是慢 SQL\n  - 10000 行的小表 ALL 可能 10ms 内完成\n  - 1000 万行的表 ALL 可能 10 秒\n  - 关键看 <code>rows</code> 字段（预估扫描行数）和表实际大小\n\n• key=NULL：<b>不是说没走索引</b>\n  - 准确含义：没走「二级索引」\n  - PK 树本身在 InnoDB 里不算「可选索引」（因为是数据文件）\n  - 所以 key=NULL 时其实还在走索引——走的是 PK 树\n\n• Extra=空：<b>说明这是「干净」的全表扫</b>\n  - 没有 Using where（没有过滤）\n  - 没有 Using filesort（没有排序）\n  - 没有 Using temporary（没有临时表）\n  - 就是简单的「从头读到尾」',
+    sqlText:'EXPLAIN SELECT * FROM users\\G',
+    explain1:'type:   ALL         ← 全表扫描',
+    explain2:'key:    NULL        ← 没走二级索引（但实际走的是 PK 树）  rows: 10000',
+    showScanPath:true, showAvoidOverlay:false,
+    nameFrameTitle:'name 二级索引树（被避开）',
+    nameFrameSub:'叶子节点 = (name, PK) · 不含完整行' },
+
+  { t:'第 5 帧 · 心智模型总结',
+    ev:'无 WHERE = 要全部 = PK 树顺序扫 = 不回表 = 最干净的全表扫',
+    term:'一句话心法：<b>「没 WHERE = 走 PK 树 = 不回表」</b>。这是 InnoDB 设计的天然优势——PK 树叶子 = 数据本身，顺序扫一遍就拿全所有数据。',
+    insight:'推广到所有「无 WHERE」场景：<br>• SELECT col1, col2 FROM t（无 WHERE）→ 走 PK 树，只读 col1 和 col2 列<br>• SELECT COUNT(*) FROM t（无 WHERE）→ 走 PK 树，InnoDB 优化可只读叶子不展开完整行<br>• SELECT MAX(id) FROM t（无 WHERE）→ 走 PK 树最右侧叶子，O(1)',
+    note:'总结：\n• 无 WHERE 的 SELECT * = PK 树全表扫 = 顺序读完整行 = 不回表\n• 这是 InnoDB 设计 PK 树叶子 = 完整行的根本原因\n• 即使是 type=ALL 全表扫，也比「name 索引 + N 次回表」快 10-100 倍\n\n⚠️ 但「全表扫」在小表是合理的，在大表是性能杀手：\n• 万行级以下：全表扫 OK（数据全在内存里也很快）\n• 十万行以上：考虑加 WHERE / LIMIT / 缓存 / 归档\n• 千万行以上：必须有 WHERE，否则建议拆表\n\n心法：<b>无 WHERE 是合法写法，但要清楚代价</b>。日常查询尽量加 LIMIT、加 WHERE，避免无脑 SELECT * FROM 大表。',
+    sqlText:'SELECT * FROM users;  -- 无 WHERE',
+    explain1:'type: ALL    key: NULL    Extra: （空）   ← 最干净的「PK 树顺序扫」',
+    explain2:'',
+    showScanPath:true, showAvoidOverlay:true,
+    nameFrameTitle:'name 二级索引树 ❌ 被避开',
+    nameFrameSub:'走这条 = N 次随机回表 = 比顺序扫慢 10-100 倍' }
+];
+
+/* ============ 工具 ============ */
+const $ = id => document.getElementById(id);
+const D = s => String(s).replace(/</g,'<').replace(/>/g,'>').replace(/&/g,'&');
+let cur = 0, timer = null;
+
+function setNodeState(id, state) {
+  const el = $(id);
+  if (!el) return;
+  const rect = el.querySelector('rect');
+  if (state === 'act') {
+    el.removeAttribute('opacity');
+    if (rect) {
+      rect.setAttribute('stroke-width', '2.4');
+      rect.setAttribute('filter', 'url(#glow)');
+    }
+  } else if (state === 'dim') {
+    el.setAttribute('opacity', '0.45');
+    if (rect) {
+      rect.setAttribute('stroke-width', '1.5');
+      rect.removeAttribute('filter');
+    }
+  } else if (state === 'avoid') {
+    el.setAttribute('opacity', '0.3');
+    if (rect) {
+      rect.setAttribute('stroke-width', '1.5');
+      rect.setAttribute('stroke', '#fb7185');
+      rect.removeAttribute('filter');
+    }
+  } else {  // default
+    el.removeAttribute('opacity');
+    if (rect) {
+      rect.setAttribute('stroke-width', '1.5');
+      rect.removeAttribute('filter');
+    }
+  }
+}
+
+function render(i) {
+  const f = F[i]; cur = i;
+  $('ev').textContent = D(f.ev);
+  $('term-main').innerHTML = D(f.term);
+  $('insight-main').innerHTML = D(f.insight);
+  $('cap-title').textContent = D(f.t);
+  $('qmark').title = D(f.note);
+  $('step-ind').textContent = (i + 1) + ' / ' + F.length;
+  $('btn-prev').disabled = i === 0;
+  $('btn-next').disabled === i === F.length - 1;
+  $('btn-prev').disabled = i === 0;
+  $('btn-next').disabled = i === F.length - 1;
+  document.querySelectorAll('#dots button').forEach((d, k) => d.classList.toggle('cur', k === i));
+
+  $('sql-text').textContent = D(f.sqlText);
+  $('explain1').textContent = D(f.explain1);
+  $('explain2').textContent = D(f.explain2);
+  $('scan_path').setAttribute('opacity', f.showScanPath ? '1' : '0');
+  $('avoid_overlay').setAttribute('opacity', f.showAvoidOverlay ? '1' : '0');
+  $('name-frame-title').textContent = D(f.nameFrameTitle);
+  $('name-frame-sub').textContent = D(f.nameFrameSub);
+
+  // PK 树全部 act
+  ['pk_root','pk_int','pk_leaf_5','pk_leaf_17','pk_leaf_33','pk_leaf_42','pk_leaf_88','pk_leaf_91']
+    .forEach(id => setNodeState(id, f.showScanPath ? 'act' : 'default'));
+
+  // name 树根据 avoid 状态
+  ['name_root','name_leaf_li','name_leaf_zhang','name_leaf_wang','name_leaf_zhao','name_leaf_qian']
+    .forEach(id => setNodeState(id, f.showAvoidOverlay ? 'avoid' : 'default'));
+}
+
+/* ============ 控件 ============ */
+const dots = $('dots');
+F.forEach((_, k) => {
+  const b = document.createElement('button');
+  b.onclick = () => { stopPlay(); render(k); };
+  dots.appendChild(b);
+});
+$('btn-prev').onclick = () => { stopPlay(); if (cur > 0) render(cur - 1); };
+$('btn-next').onclick = () => { stopPlay(); if (cur < F.length - 1) render(cur + 1); };
+$('btn-reset').onclick = () => { stopPlay(); render(0); };
+$('btn-play').onclick = togglePlay;
+function togglePlay() {
+  if (timer) return stopPlay();
+  if (cur >= F.length - 1) render(0);
+  $('btn-play').textContent = '⏸ 暂停';
+  timer = setInterval(() => { if (cur >= F.length - 1) return stopPlay(); render(cur + 1); }, 2400);
+}
+function stopPlay() { if (timer) { clearInterval(timer); timer = null; $('btn-play').textContent = '▶ 播放'; } }
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { stopPlay(); if (cur < F.length - 1) render(cur + 1); }
+  if (e.key === 'ArrowLeft')  { stopPlay(); if (cur > 0) render(cur - 1); }
+  if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+});
+const m = location.hash.match(/f=(\d+)/);
+render(m ? Math.min(F.length - 1, +m[1]) : 0);
+
+/* ============ 导出 ============ */
+function capture() {
+  const el = document.getElementById('report-container');
+  const r = el.getBoundingClientRect();
+  return html2canvas(document.body, {
+    x: r.left - 32, y: r.top - 32, width: r.width + 64, height: r.height + 64,
+    scale: 2, backgroundColor: '#020617',
+    ignoreElements: n => n.closest && (n.closest('.toolbar') || n.closest('.controls') || n.closest('.dots'))
+  });
+}
+function copyAsImage() { capture().then(c => c.toBlob(b => navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]))); }
+function downloadPNG() {
+  capture().then(c => {
+    const a = document.createElement('a');
+    a.download = 'q06-no-where-all-frame-' + (cur + 1) + '.png';
+    a.href = c.toDataURL('image/png');
+    a.click();
+  });
+}
+function downloadPDF() {
+  capture().then(c => {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: c.width >= c.height ? 'l' : 'p', unit: 'px', format: [c.width, c.height] });
+    pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, c.width, c.height);
+    pdf.save('q06-no-where-all.pdf');
+  });
+}
+function downloadGIF() {
+  const frames = F.length;
+  alert(
+    'GIF 导出指引：\n\n' +
+    'cd doc/database/diagrams\n' +
+    'mkdir -p _frames && for i in $(seq 0 ' + (frames - 1) + '); do\n' +
+    '  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --disable-gpu --hide-scrollbars \\\n' +
+    '    --window-size=1380,1200 --virtual-time-budget=3000 \\\n' +
+    '    --screenshot=_frames/f$(printf %02d $i).png \\\n' +
+    '    "file://$(pwd)/q06-no-where-all.html#f=$i"\n' +
+    'done\n' +
+    'conda activate py311 && python - <<EOF\n' +
+    'from PIL import Image; import glob, os\n' +
+    'imgs = [Image.open(p).convert("RGB") for p in sorted(glob.glob("_frames/f*.png"))]\n' +
+    'imgs = [im.resize((900, int(im.height * 900 / im.width)), Image.LANCZOS) for im in imgs]\n' +
+    'imgs[0].save("q06-no-where-all.gif", save_all=True, append_images=imgs[1:], duration=2400, loop=0, optimize=True)\n' +
+    'print("GIF bytes:", os.path.getsize("q06-no-where-all.gif"))\n' +
+    'EOF'
+  );
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Q1 · 一行 SELECT 的执行过程 · MySQL 8.0 · 逐帧动图</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; min-height: 100vh; }
+  .container { width: 1240px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #34d399; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.6); } 70% { box-shadow: 0 0 0 10px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
+  .header h1 { font-size: 21px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 13px; color: #7d8db0; margin-top: 5px; }
+  .toolbar { position: relative; }
+  .toolbar-toggle { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 16px; font-family: inherit; }
+  .toolbar-toggle:hover { color: #e2e8f0; border-color: #475569; }
+  .toolbar-actions { display: none; position: absolute; right: 0; top: 38px; gap: 6px; z-index: 10; }
+  .toolbar.open .toolbar-actions { display: flex; }
+  .toolbar-actions button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; }
+  .toolbar-actions button:hover { color: #f1f5f9; border-color: #64748b; }
+  @media print { .toolbar { display: none !important; } }
+
+  .controls { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .controls button { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; padding: 7px 16px; cursor: pointer; font-size: 14px; font-family: inherit; }
+  .controls button:hover { border-color: #64748b; }
+  .controls button:disabled { opacity: 0.35; cursor: default; }
+  .step-ind { font-size: 14px; color: #cbd5e1; min-width: 70px; }
+  .frame-title { font-size: 14px; color: #34d399; font-weight: 700; }
+  .qmark { cursor: help; font-size: 15px; color: #7d8db0; }
+  .key-hint { font-size: 12px; color: #64748b; }
+  .dots { display: flex; gap: 6px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+  .dots button { width: 11px; height: 11px; border-radius: 50%; padding: 0; background: #1e293b; border: 1px solid #334155; cursor: pointer; }
+  .dots button.cur { background: #34d399; border-color: #34d399; }
+  .dots button:hover { border-color: #34d399; }
+
+  .legend { display: flex; gap: 18px; align-items: center; font-size: 12px; color: #a5b4cc; margin-bottom: 10px; flex-wrap: wrap; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+
+  /* 高亮激活态：粗描边 + 外发光 */
+  .act-box rect.bg { stroke-width: 2.4; filter: drop-shadow(0 0 8px currentColor); }
+  .dim rect.bg { opacity: 0.55; }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 16px 18px; }
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+  .card-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; }
+  .card ul { list-style: none; }
+  .card li { font-size: 13px; color: #a5b4cc; line-height: 1.75; }
+  .card li b { color: #e2e8f0; font-weight: 600; }
+
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>Q1 · 一行 SELECT 的执行过程 · MySQL 8.0</h1>
+        <div class="subtitle">零基础可读 · 11 帧跟完一条 SQL 的完整旅程 · 每帧点亮一个环节 · ❓ 悬停看本帧详细讲解</div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbar').classList.toggle('open')">⋯</button>
+      <div class="toolbar-actions">
+        <button onclick="downloadGIF()">🎞 GIF</button>
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="btn-reset">⏮</button>
+    <button id="btn-prev">◀</button>
+    <button id="btn-play">▶ 播放</button>
+    <button id="btn-next">▶|</button>
+    <span class="step-ind" id="step-ind">1 / 11</span>
+    <span class="frame-title" id="cap-title"></span>
+    <span class="qmark" id="qmark" title="">❓</span>
+    <span class="key-hint">← → 键翻页 · ❓ 悬停看本帧讲解</span>
+    <div class="dots" id="dots"></div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw" style="background:#94a3b8"></span>Client / 外部</span>
+    <span><span class="sw" style="background:#34d399"></span>Server 层组件</span>
+    <span><span class="sw" style="background:#a78bfa"></span>存储引擎 (InnoDB)</span>
+    <span><span class="sw" style="background:url(#hatch-legend)"></span>已删除 / 不再生效</span>
+    <span style="color:#64748b">▢ 实线 = 当前在跑 · ╌╌ 虚线 = 已废弃路径</span>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1180 700" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+        <pattern id="hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2="6" stroke="#fb7185" stroke-width="1" opacity="0.35"/>
+        </pattern>
+        <pattern id="hatch-legend" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="0" y2="4" stroke="#fb7185" stroke-width="1"/>
+        </pattern>
+        <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+        </marker>
+        <marker id="arr-rose" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185"/>
+        </marker>
+        <marker id="arr-emerald" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#34d399"/>
+        </marker>
+        <marker id="arr-violet" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+          <polygon points="0 0, 10 3.5, 0 7" fill="#a78bfa"/>
+        </marker>
+      </defs>
+
+      <rect width="1180" height="700" fill="#020617"/>
+      <rect width="1180" height="700" fill="url(#grid)"/>
+
+      <!-- 顶部事件横幅 -->
+      <rect x="40" y="20" width="1100" height="50" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+      <text x="60" y="42" fill="#7d8db0" font-size="10.5">本帧在做什么（SQL 旅程中的一个环节）</text>
+      <text id="ev" x="60" y="62" fill="#f8fafc" font-size="16" font-weight="700"></text>
+
+      <!-- Server Layer boundary -->
+      <rect x="140" y="180" width="800" height="220" rx="12" fill="rgba(251,191,36,0.04)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4"/>
+      <text x="155" y="200" fill="#fbbf24" font-size="11" font-weight="600">MySQL Server Layer</text>
+
+      <!-- Storage Engine Layer boundary -->
+      <rect x="710" y="450" width="240" height="160" rx="12" fill="rgba(167,139,250,0.05)" stroke="#a78bfa" stroke-width="1" stroke-dasharray="8,4"/>
+      <text x="725" y="470" fill="#a78bfa" font-size="11" font-weight="600">Storage Engine Layer</text>
+
+      <!-- ============ 组件（统一 ID，render 时调状态） ============ -->
+
+      <!-- Client -->
+      <g id="client" class="dim">
+        <rect class="bg" x="40" y="270" width="90" height="90" rx="6" fill="#0f172a" stroke="#94a3b8" stroke-width="1.5"/>
+        <rect x="40" y="270" width="90" height="90" rx="6" fill="rgba(30,41,59,0.5)" stroke="none"/>
+        <text x="85" y="302" fill="white" font-size="12" font-weight="600" text-anchor="middle">Client</text>
+        <text x="85" y="320" fill="#94a3b8" font-size="9" text-anchor="middle">JDBC / CLI</text>
+        <text x="85" y="335" fill="#94a3b8" font-size="9" text-anchor="middle">应用进程</text>
+      </g>
+
+      <!-- Connector -->
+      <g id="connector" class="dim">
+        <rect class="bg" x="170" y="270" width="120" height="90" rx="6" fill="#0f172a" stroke="#34d399" stroke-width="1.5"/>
+        <rect x="170" y="270" width="120" height="90" rx="6" fill="rgba(6,78,59,0.4)" stroke="none"/>
+        <text x="230" y="295" fill="white" font-size="12" font-weight="600" text-anchor="middle">连接器</text>
+        <text x="230" y="302" fill="#94a3b8" font-size="7" text-anchor="middle">Connector</text>
+        <text x="230" y="322" fill="#94a3b8" font-size="8" text-anchor="middle">账号密码 / 权限</text>
+        <text x="230" y="335" fill="#94a3b8" font-size="8" text-anchor="middle">caching_sha2</text>
+        <text x="230" y="348" fill="#94a3b8" font-size="8" text-anchor="middle">连接池</text>
+      </g>
+
+      <!-- Query Cache (DELETED) -->
+      <g id="qcache" class="dim">
+        <rect class="bg" x="310" y="270" width="120" height="90" rx="6" fill="#0f172a" stroke="#34d399" stroke-width="1" stroke-dasharray="3,3"/>
+        <rect x="310" y="270" width="120" height="90" rx="6" fill="rgba(6,78,59,0.15)" stroke="none"/>
+        <rect x="310" y="270" width="120" height="90" rx="6" fill="url(#hatch)" opacity="0.7"/>
+        <text x="370" y="298" fill="#94a3b8" font-size="12" font-weight="600" text-anchor="middle" text-decoration="line-through" opacity="0.6">查询缓存</text>
+        <text x="370" y="305" fill="#64748b" font-size="7" text-anchor="middle" opacity="0.6">Query Cache</text>
+        <text x="370" y="328" fill="#64748b" font-size="8" text-anchor="middle" opacity="0.5">K-V 内存缓存</text>
+        <text x="370" y="341" fill="#64748b" font-size="8" text-anchor="middle" opacity="0.5">命中即返回</text>
+        <line x1="318" y1="278" x2="422" y2="352" stroke="#fb7185" stroke-width="2.5"/>
+        <line x1="422" y1="278" x2="318" y2="352" stroke="#fb7185" stroke-width="2.5"/>
+        <rect x="305" y="370" width="130" height="20" rx="4" fill="rgba(136,19,55,0.3)" stroke="#fb7185" stroke-width="1"/>
+        <text x="370" y="384" fill="#fb7185" font-size="8" font-weight="600" text-anchor="middle">⚠ 8.0 已彻底删除</text>
+      </g>
+
+      <!-- Analyzer -->
+      <g id="analyzer" class="dim">
+        <rect class="bg" x="450" y="270" width="120" height="90" rx="6" fill="#0f172a" stroke="#34d399" stroke-width="1.5"/>
+        <rect x="450" y="270" width="120" height="90" rx="6" fill="rgba(6,78,59,0.4)" stroke="none"/>
+        <text x="510" y="295" fill="white" font-size="12" font-weight="600" text-anchor="middle">分析器</text>
+        <text x="510" y="302" fill="#94a3b8" font-size="7" text-anchor="middle">Parser / Analyzer</text>
+        <text x="510" y="322" fill="#94a3b8" font-size="8" text-anchor="middle">词法 / 语法分析</text>
+        <text x="510" y="335" fill="#94a3b8" font-size="8" text-anchor="middle">→ 解析树 AST</text>
+        <text x="510" y="348" fill="#94a3b8" font-size="8" text-anchor="middle">校验表 / 列存在</text>
+      </g>
+
+      <!-- Optimizer -->
+      <g id="optimizer" class="dim">
+        <rect class="bg" x="590" y="270" width="120" height="90" rx="6" fill="#0f172a" stroke="#34d399" stroke-width="1.5"/>
+        <rect x="590" y="270" width="120" height="90" rx="6" fill="rgba(6,78,59,0.4)" stroke="none"/>
+        <text x="650" y="295" fill="white" font-size="12" font-weight="600" text-anchor="middle">优化器</text>
+        <text x="650" y="302" fill="#94a3b8" font-size="7" text-anchor="middle">Optimizer</text>
+        <text x="650" y="322" fill="#94a3b8" font-size="8" text-anchor="middle">基于成本 (CBO)</text>
+        <text x="650" y="335" fill="#94a3b8" font-size="8" text-anchor="middle">选索引 / JOIN 序</text>
+        <text x="650" y="348" fill="#94a3b8" font-size="8" text-anchor="middle">→ 执行计划</text>
+      </g>
+
+      <!-- Executor -->
+      <g id="executor" class="dim">
+        <rect class="bg" x="730" y="270" width="120" height="90" rx="6" fill="#0f172a" stroke="#34d399" stroke-width="1.5"/>
+        <rect x="730" y="270" width="120" height="90" rx="6" fill="rgba(6,78,59,0.4)" stroke="none"/>
+        <text x="790" y="295" fill="white" font-size="12" font-weight="600" text-anchor="middle">执行器</text>
+        <text x="790" y="302" fill="#94a3b8" font-size="7" text-anchor="middle">Executor</text>
+        <text x="790" y="322" fill="#94a3b8" font-size="8" text-anchor="middle">调 Handler 接口</text>
+        <text x="790" y="335" fill="#94a3b8" font-size="8" text-anchor="middle">行级 / 列级权限</text>
+        <text x="790" y="348" fill="#94a3b8" font-size="8" text-anchor="middle">逐行过滤 + 投影</text>
+      </g>
+
+      <!-- InnoDB -->
+      <g id="innodb" class="dim">
+        <rect class="bg" x="730" y="490" width="200" height="100" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/>
+        <rect x="730" y="490" width="200" height="100" rx="6" fill="rgba(76,29,149,0.4)" stroke="none"/>
+        <text x="830" y="518" fill="white" font-size="13" font-weight="600" text-anchor="middle">InnoDB</text>
+        <text x="830" y="534" fill="#94a3b8" font-size="8" text-anchor="middle">默认存储引擎 · 8.0</text>
+        <text x="830" y="552" fill="#94a3b8" font-size="8" text-anchor="middle">B+ 树索引 / Buffer Pool</text>
+        <text x="830" y="566" fill="#94a3b8" font-size="8" text-anchor="middle">MVCC / 行锁 / WAL</text>
+        <text x="830" y="580" fill="#a78bfa" font-size="7" text-anchor="middle">Handler API · 引擎无关接口</text>
+      </g>
+
+      <!-- ============ 箭头（每个有 id，render 时调状态） ============ -->
+      <g id="arr-c-c" data-flow="1"><line x1="130" y1="315" x2="168" y2="315" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arr)"/></g>
+      <g id="arr-c-q" data-flow="0"><line x1="292" y1="315" x2="308" y2="315" stroke="#64748b" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#arr-rose)"/></g>
+      <g id="arr-q-a" data-flow="0"><line x1="432" y1="315" x2="448" y2="315" stroke="#64748b" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#arr-rose)"/></g>
+      <g id="arr-a-o" data-flow="0"><line x1="572" y1="315" x2="588" y2="315" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/></g>
+      <g id="arr-o-e" data-flow="0"><line x1="712" y1="315" x2="728" y2="315" stroke="#64748b" stroke-width="1.5" marker-end="url(#arr)"/></g>
+      <g id="arr-e-i" data-flow="0"><path d="M 790 360 L 790 420 L 830 420 L 830 488" fill="none" stroke="#a78bfa" stroke-width="1.5" marker-end="url(#arr)"/></g>
+
+      <!-- 箭头标签（仅在 active 时显示） -->
+      <text id="arr-c-c-label" x="148" y="308" fill="#94a3b8" font-size="8" text-anchor="middle" opacity="0">SQL</text>
+      <text id="arr-a-o-label" x="580" y="308" fill="#94a3b8" font-size="8" text-anchor="middle" opacity="0">AST</text>
+      <text id="arr-o-e-label" x="720" y="308" fill="#94a3b8" font-size="8" text-anchor="middle" opacity="0">执行计划</text>
+      <text id="arr-e-i-label" x="855" y="430" fill="#a78bfa" font-size="9" opacity="0">Handler API</text>
+
+      <!-- 底部行程单 -->
+      <rect x="40" y="620" width="1100" height="68" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+      <text x="60" y="644" fill="#7d8db0" font-size="11">SQL 旅程（当前高亮）：Client → 连接器 → ~~查询缓存~~ → 分析器 → 优化器 → 执行器 → InnoDB</text>
+      <g id="steps"></g>
+    </svg>
+  </div>
+
+  <!-- HTML 要点卡（不会在 SVG 里换行，可放长文） -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#34d399"></div><h3>本帧要点</h3></div>
+      <ul>
+        <li id="insight-main">加载中…</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#a78bfa"></div><h3>术语卡</h3></div>
+      <ul>
+        <li id="term-main">加载中…</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#fb7185"></div><h3>易错点（面试高频）</h3></div>
+      <ul>
+        <li>• ❌「查询缓存能加速读」→ ✅ 8.0 已删，5.7 命中率 < 5%</li>
+        <li>• ❌「权限校验只在连接器」→ ✅ 行级 / 列级在执行器（FSM）</li>
+        <li>• ❌「执行器自己取数据」→ ✅ 通过 Handler 调引擎，Server 与引擎解耦</li>
+        <li>• ❌「优化器一定选最优索引」→ ✅ 基于成本估算，可能错选</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>q01 · 一行 SELECT 的执行过程 · 11 帧动图 · 数据库专题第一题</span>
+    <span>MySQL 8.0 · 配套答卷：doc/database/数据库面试真题答卷-经核实版-v1.md</span>
+  </div>
+</div>
+
+<script>
+/* ============ 帧数据 ============
+   字段约定（避免撞名）：
+     t      : 帧标题（控件栏短文本）
+     ev     : 顶部事件横幅（短文本）
+     term   : 术语卡正文（HTML li，长文本）
+     insight: 本帧要点（HTML li，长文本）
+     note   : ❓ 悬停讲解（多行字符串）
+     hi     : 本帧高亮哪个组件（client/connector/qcache/analyzer/optimizer/executor/innodb/all/edge）
+     edge   : 当 hi=edge 时点亮哪条箭头（c-c/c-q/q-a/a-o/o-e/e-i）
+     step   : 底部行程单点亮哪一格（0=Client,1=Connector,2=Query Cache,3=Analyzer,4=Optimizer,5=Executor,6=InnoDB）
+*/
+const F = [
+  { t:'第 0 帧 · 看图须知',
+    ev:'画面 = 一条 SELECT 的旅程 · 11 帧看完一遍 · 点 ▶ 播放或 ← → 翻页',
+    term:'看图须知：本图把 MySQL 拆成<b>两层</b>——琥珀色虚线框 = Server 层（MySQL 自带），紫色虚线框 = 存储引擎层（默认 InnoDB，可换）。',
+    insight:'一行 SELECT 从应用进程（Client）出发，穿过 Server 层 5 个环节，最后下到 InnoDB 取数。',
+    note:'看图须知：本仓库的动图设计成小白也能直接看：\n• 11 帧讲完一遍，控件条按 ▶ 自动播放或 ← → 手动翻\n• 顶部 ev 写本帧在做什么；左下 insight 给本帧要点；中下 term 给本帧新词白话解释\n• 右下 ❓ 悬停看更详细的多行讲解\n• 颜色含义（看顶部图例条）：灰色=Client，绿色=Server 组件，紫色=存储引擎，红色斜纹=已删除',
+    hi:'all' },
+
+  { t:'第 1 帧 · 一行 SQL 落地',
+    ev:'SELECT id, name FROM users WHERE id = 1  →  从应用进程发出',
+    term:'SQL 文本：客户端把 SQL 当字符串发出去，MySQL 自己负责把它变成可执行动作。',
+    insight:'SQL 从<b>客户端</b>（JDBC / mysql CLI / 应用代码）发出——这一格是"门外汉"，不是 MySQL 的一部分。',
+    note:'一行 SELECT 在客户端只是一段文本：SELECT id, name FROM users WHERE id = 1。\n发出之后交给驱动（JDBC）或 mysql CLI → TCP → MySQL Server 的连接器。\n客户端本身不算 MySQL，只是搬运工。',
+    hi:'client', step:0 },
+
+  { t:'第 2 帧 · 连接器鉴权',
+    ev:'账号 + 密码 + 主机 = 认证 · 通过 → 拿到会话权限',
+    term:'caching_sha2_password：MySQL 8.0 默认认证插件，比 5.7 的 mysql_native_password 更安全（SHA-256 + 缓存）。',
+    insight:'连接器只校验<b>连接级权限</b>（你能连进这台 MySQL 吗）。行级 / 列级权限要等到第 6 帧执行器才校验——这是高频易错点。',
+    note:'连接器做的事：\n1. 校验用户名密码（默认插件 caching_sha2_password）\n2. 拿到该账号的连接级权限快照，存在会话里\n3. 后续所有 SQL 复用这份快照，修改权限要重连才生效\n⚠ 行级 / 列级权限不在这里——它在执行器里用 FSM（Function Search Model）一行一行判断。',
+    hi:'connector', step:1 },
+
+  { t:'第 3 帧 · ~~查询缓存~~ · 8.0 已删',
+    ev:'⚠ 这格在 MySQL 8.0 里根本不存在 —— 是历史包袱',
+    term:'查询缓存（Query Cache）：5.7 默认关闭、命中率极低的 K-V 缓存。任何一次写操作都会让相关表的缓存全失效。',
+    insight:'MySQL 8.0 已<b>彻底删除</b>查询缓存。面试说"查询缓存能加速读"是错的——5.7 命中率普遍 < 5%，写多读少场景反而拖慢。',
+    note:'为什么查询缓存被删：\n• 任何 UPDATE/INSERT/DELETE 都会让对应表的缓存全失效（粒度太粗）\n• 业务一旦写多，命中率立刻掉到个位数\n• 维护成本高、收益小，5.7 就已默认关闭\n8.0 直接砍掉，源码里相关逻辑全删了。如果真要缓存，请走应用层（Redis / Memcached）或 ProxySQL。',
+    hi:'qcache', step:2 },
+
+  { t:'第 4 帧 · 分析器 · AST',
+    ev:'SQL 字符串 → 解析树（AST）· 校验表 / 列是否存在',
+    term:'AST（Abstract Syntax Tree）：把 SQL 拆成结构化树形表示。每个 token 都有类型（关键字 / 标识符 / 字面量），父子关系表达语法。',
+    insight:'分析器做两件事：① 词法分析（拆 token）② 语法分析（建 AST）③ 顺便校验表名 / 列名是否存在。',
+    note:"分析器（Parser / Analyzer）三步走：\n① 词法：把 SELECT id,name FROM users WHERE id=1 拆成 [SELECT, id, ',', name, FROM, users, WHERE, id, '=', 1] 这一个个 token\n② 语法：按 SQL 语法规则建一棵解析树\n③ 语义校验：users 表存不存在？id 列存不存在？\n注意：这一步不做『行不存在』的校验，那是执行器的事。",
+    hi:'analyzer', step:3 },
+
+  { t:'第 5 帧 · 优化器 · CBO',
+    ev:'CBO 成本估算 → 决定走哪个索引 / JOIN 顺序 → 输出执行计划',
+    term:'CBO（Cost-Based Optimizer）：基于成本的优化器。给每个候选方案算一个"成本分数"，挑最低的。和它对立的是 RBO（Rule-Based，规则优化器）。',
+    insight:'优化器输出的是<b>执行计划</b>，不是结果。常见计划类型：全表扫描（ALL）、索引扫描（range/ref）、覆盖索引（index）。',
+    note:'优化器在做的事：\n1. 看 WHERE 条件有哪些索引可用\n2. 对每个候选方案算成本（要扫多少行、要回表几次）\n3. 挑成本最低的方案，输出"执行计划"\n⚠ CBO 不是万能的：统计信息过期、采样失真、复杂 JOIN 估算爆炸时都可能选错索引。可以用 EXPLAIN 看它实际选了啥。',
+    hi:'optimizer', step:4 },
+
+  { t:'第 6 帧 · 执行器 · 权限 + 调引擎',
+    ev:'拿到计划 → 调 Handler 接口 → 一行一行过权限（FSM）',
+    term:'Handler 接口：Server 层调存储引擎的统一入口。所有引擎必须实现这套接口（InnoDB / MyISAM / Memory 都一样）。',
+    insight:'执行器是<b>权限校验</b>真正发生的地方——FSM（Function Search Model）按行检查行级 / 列级权限。连接器只管连接级。',
+    note:'执行器干三件事：\n1. 按执行计划打开表（调 handler::ha_open）\n2. 一行一行调 handler::ha_rnd_next / index_read 取行\n3. 每行过 FSM 权限检查（行级、列级、视图合并规则）\n⚠ 面试高频坑：以为权限只在连接器校验一次。错——行级 / 列级权限在执行器每行检查，连接器只管"你能不能连进来"。',
+    hi:'executor', step:5 },
+
+  { t:'第 7 帧 · 跨层调用 · Handler API',
+    ev:'Server 层 → Handler API → 存储引擎层',
+    term:'Handler API（engine handler interface）：Server 与引擎之间的解耦层。Server 不直接调引擎文件，必须走这套标准接口。',
+    insight:'Handler API 是<b>Server 与引擎解耦</b>的关键——同一句 SQL，换 InnoDB / MyISAM / Memory 时 Server 代码完全不用改。',
+    note:'为什么要 Handler API：\n• Server 层只关心"逻辑 SQL"，不关心"数据怎么存"\n• 每个存储引擎实现同一套 handler 接口（ha_open / ha_rnd_next / index_read 等）\n• 换引擎 = 改一个配置项 --engine=InnoDB，其他代码不动\n• 这也是为什么 MySQL 能同时支持事务引擎（InnoDB）和非事务引擎（MyISAM）',
+    hi:'edge', edge:'e-i', step:5 },
+
+  { t:'第 8 帧 · InnoDB · 取数',
+    ev:'B+ 树定位 → Buffer Pool 命中? → MVCC 读视图 → 返回行',
+    term:'Buffer Pool：InnoDB 的内存页缓存，默认 128MB。读盘先查这里，命中就直接返回，没命中才走磁盘。',
+    insight:'InnoDB 用 <b>B+ 树聚簇索引</b>定位行，二级索引需要回表。Buffer Pool + MVCC 让"读不阻塞写、写不阻塞读"。',
+    note:'InnoDB 取数大致流程：\n1. 优化器选好索引 → 执行器调 handler::index_read\n2. 引擎从 Buffer Pool 找页，命中就直接返；不命中走磁盘预读\n3. MVCC：根据隔离级别（默认 RR）找合适的 undo log 版本\n4. 返回行给执行器，再回给客户端\n⚠ Buffer Pool 满了会触发页面淘汰（LRU 变体），大量冷查询可能"污染"缓存。',
+    hi:'innodb', step:6 },
+
+  { t:'第 9 帧 · 结果回传',
+    ev:'InnoDB → Server → Client · ResultSet 沿原路返回',
+    term:'ResultSet：服务端到客户端的结果集载体。驱动按需 fetch（默认全部拉到客户端内存里，大结果集会爆）。',
+    insight:'结果沿原路径反向流回——不是新通道，是<b>复用同一条连接</b>。大结果集注意驱动端的 fetchSize 配置。',
+    note:'结果回传关键点：\n• TCP 长连接复用（同一条 socket 来回）\n• 协议层：MySQL 自己定义了 result set 协议包，驱动按包解析\n• 大结果集：默认一次性 fetch 到客户端，可调 fetchSize 流式拉取\n• 关闭查询前要确保 ResultSet / Statement / Connection 都 close，否则连接泄漏',
+    hi:'all' },
+
+  { t:'第 10 帧 · 全景回顾',
+    ev:'11 帧走完一遍 · 关键心智模型：Server = 大脑 · Engine = 手脚',
+    term:'心智模型：Server 层负责"怎么想"（解析/优化/执行调度），存储引擎层负责"怎么做"（实际读写数据）。',
+    insight:'一句话：<b>Client → 连接器 → ~~查询缓存~~ → 分析器 → 优化器 → 执行器 → InnoDB</b>。记住这个链路，源码 / EXPLAIN / 慢查询分析都能对号入座。',
+    note:'全景回顾：\n• Client：门外汉，搬运 SQL\n• 连接器：鉴权（连接级）\n• ~~查询缓存~~：8.0 已删\n• 分析器：解析 + 校验（AST）\n• 优化器：CBO 选索引 / JOIN 序\n• 执行器：调 Handler + 行级权限\n• InnoDB：Buffer Pool / B+ 树 / MVCC / WAL\n记住这个链路 = 答 Q1 直接拿满。',
+    hi:'all' }
+];
+
+/* ============ 工具 ============ */
+const $ = id => document.getElementById(id);
+const NS = 'http://www.w3.org/2000/svg';
+const D = s => String(s).replace(/</g,'<').replace(/>/g,'>').replace(/&/g,'&');   // JS 数据裸写 < > &，D 解码
+let cur = 0, timer = null;
+
+function mk(tag, attrs, parent) {
+  const n = document.createElementNS(NS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  parent.appendChild(n);
+  return n;
+}
+
+/* ============ 行程单 ============ */
+const STEPS = ['① Client','② 连接器','③ ~~查询缓存~~','④ 分析器','⑤ 优化器','⑥ 执行器','⑦ InnoDB'];
+(function buildSteps() {
+  const g = $('steps');
+  STEPS.forEach((s, i) => {
+    const x = 60 + i * 150;
+    const w = 142;
+    const id = 'step-' + i;
+    const isDeleted = i === 2;
+    mk('rect', { x, y: 654, width: w, height: 26, rx: 6, fill: '#0f172a', stroke: isDeleted ? '#fb7185' : '#334155', 'stroke-width': 1, 'stroke-dasharray': isDeleted ? '3,3' : '0', id: 'sb-' + i }, g);
+    const t = mk('text', { x: x + w/2, y: 671, 'text-anchor': 'middle', 'font-size': 11.5, fill: isDeleted ? '#fb7185' : '#a5b4cc', id: 'st-' + i }, g);
+    t.textContent = s;
+  });
+})();
+
+/* ============ 组件 ↔ ID 映射 ============ */
+const COMP = ['client','connector','qcache','analyzer','optimizer','executor','innodb'];
+const ARROW_LABEL = {
+  'c-c': 'arr-c-c-label', 'a-o': 'arr-a-o-label',
+  'o-e': 'arr-o-e-label', 'e-i': 'arr-e-i-label'
+};
+
+/* ============ 渲染 ============ */
+function render(i) {
+  const f = F[i]; cur = i;
+  $('ev').textContent = D(f.ev);
+  $('term-main').innerHTML = D(f.term);
+  $('insight-main').innerHTML = D(f.insight);
+  $('cap-title').textContent = D(f.t);
+  $('qmark').title = D(f.note);
+  $('step-ind').textContent = (i + 1) + ' / ' + F.length;
+  $('btn-prev').disabled = i === 0;
+  $('btn-next').disabled = i === F.length - 1;
+  document.querySelectorAll('#dots button').forEach((d, k) => d.classList.toggle('cur', k === i));
+
+  // 组件高亮 / 暗化
+  COMP.forEach(id => {
+    const el = $(id);
+    el.classList.remove('act-box', 'dim');
+    if (f.hi === 'all') {
+      el.classList.add('act-box');   // 全景帧：全部亮
+    } else if (f.hi === id) {
+      el.classList.add('act-box');
+    } else {
+      el.classList.add('dim');
+    }
+  });
+
+  // 箭头状态
+  ['c-c','c-q','q-a','a-o','o-e','e-i'].forEach(e => {
+    const line = $('arr-' + e).querySelector('line, path');
+    let active = false;
+    if (f.hi === 'edge' && f.edge === e) active = true;
+    if (f.hi === 'all') active = true;
+    // 高亮 frame 时不强亮箭头（让组件是主角），仅 edge 帧亮对应箭头
+    if (active) {
+      line.setAttribute('stroke-width', '2.4');
+      line.setAttribute('opacity', '1');
+    } else {
+      line.setAttribute('stroke-width', '1.5');
+      line.setAttribute('opacity', '0.55');
+    }
+    if (ARROW_LABEL[e]) {
+      $(ARROW_LABEL[e]).setAttribute('opacity', active ? '1' : '0');
+    }
+  });
+
+  // 行程单高亮
+  STEPS.forEach((_, s) => {
+    const on = s === f.step;
+    const isDeleted = s === 2;
+    $('sb-' + s).setAttribute('stroke', on ? '#34d399' : (isDeleted ? '#fb7185' : '#334155'));
+    $('sb-' + s).setAttribute('fill', on ? 'rgba(6,78,59,0.5)' : '#0f172a');
+    $('st-' + s).setAttribute('fill', on ? '#f1f5f9' : (isDeleted ? '#fb7185' : '#a5b4cc'));
+    $('st-' + s).setAttribute('font-weight', on ? 700 : 400);
+  });
+}
+
+/* ============ 控件 ============ */
+const dots = $('dots');
+F.forEach((_, k) => {
+  const b = document.createElement('button');
+  b.onclick = () => { stopPlay(); render(k); };
+  dots.appendChild(b);
+});
+$('btn-prev').onclick = () => { stopPlay(); if (cur > 0) render(cur - 1); };
+$('btn-next').onclick = () => { stopPlay(); if (cur < F.length - 1) render(cur + 1); };
+$('btn-reset').onclick = () => { stopPlay(); render(0); };
+$('btn-play').onclick = togglePlay;
+function togglePlay() {
+  if (timer) return stopPlay();
+  if (cur >= F.length - 1) render(0);
+  $('btn-play').textContent = '⏸ 暂停';
+  timer = setInterval(() => { if (cur >= F.length - 1) return stopPlay(); render(cur + 1); }, 2400);
+}
+function stopPlay() { if (timer) { clearInterval(timer); timer = null; $('btn-play').textContent = '▶ 播放'; } }
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { stopPlay(); if (cur < F.length - 1) render(cur + 1); }
+  if (e.key === 'ArrowLeft')  { stopPlay(); if (cur > 0) render(cur - 1); }
+  if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+});
+const m = location.hash.match(/f=(\d+)/);
+render(m ? Math.min(F.length - 1, +m[1]) : 0);
+
+/* ============ 导出 ============ */
+function capture() {
+  const el = document.getElementById('report-container');
+  const r = el.getBoundingClientRect();
+  return html2canvas(document.body, {
+    x: r.left - 32, y: r.top - 32, width: r.width + 64, height: r.height + 64,
+    scale: 2, backgroundColor: '#020617',
+    ignoreElements: n => n.closest && (n.closest('.toolbar') || n.closest('.controls') || n.closest('.dots'))
+  });
+}
+function copyAsImage() { capture().then(c => c.toBlob(b => navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]))); }
+function downloadPNG() {
+  capture().then(c => {
+    const a = document.createElement('a');
+    a.download = 'q01-select-execution-frame-' + (cur + 1) + '.png';
+    a.href = c.toDataURL('image/png');
+    a.click();
+  });
+}
+function downloadPDF() {
+  capture().then(c => {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: c.width >= c.height ? 'l' : 'p', unit: 'px', format: [c.width, c.height] });
+    pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, c.width, c.height);
+    pdf.save('q01-select-execution.pdf');
+  });
+}
+
+/* GIF 导出：逐帧截图 + 编码。Chrome headless 也可用 ?f=N 跑 */
+async function downloadGIF() {
+  // 直接通过逐帧 fetch + encode 也行，但浏览器内不便直接生成 gif（无原生编码）。
+  // 给个清晰的指引：让用户在终端跑一次 capture_frames.sh。
+  const frames = F.length;
+  const dur = 24;  // 秒
+  alert(
+    'GIF 导出指引：\n\n' +
+    '浏览器内不便直接生成 GIF，请用以下命令一次性生成 q01-select-execution.gif：\n\n' +
+    'cd doc/database/diagrams\n' +
+    '# 1) 先把当前 HTML 用 Chrome 逐帧截图（每帧 2 秒）\n' +
+    'mkdir -p _frames && for i in $(seq 0 ' + (frames - 1) + '); do\n' +
+    '  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --disable-gpu --hide-scrollbars \\\n' +
+    '    --window-size=1280,1100 --virtual-time-budget=2000 \\\n' +
+    '    --screenshot=_frames/f$(printf %02d $i).png \\\n' +
+    '    "file://$(pwd)/q01-select-execution.html#f=$i"\n' +
+    'done\n' +
+    '# 2) 用 PIL 合成 GIF\n' +
+    'conda activate py311 && python - <<EOF\n' +
+    'from PIL import Image; import glob, os\n' +
+    'imgs = [Image.open(p).convert("P", palette=Image.ADAPTIVE) for p in sorted(glob.glob("_frames/f*.png"))]\n' +
+    'imgs[0].save("q01-select-execution.gif", save_all=True, append_images=imgs[1:], duration=2400, loop=0, optimize=True)\n' +
+    'print("GIF bytes:", os.path.getsize("q01-select-execution.gif"))\n' +
+    'EOF'
+  );
+}
+</script>
+</body>
+</html>

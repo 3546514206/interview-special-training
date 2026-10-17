@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Q6 · 为什么 SELECT * 不默认走 PK 索引树 · MySQL InnoDB · 7 帧动图</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; min-height: 100vh; }
+  .container { width: 1340px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #fb7185; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(251,113,133,.6); } 70% { box-shadow: 0 0 0 10px rgba(251,113,133,0); } 100% { box-shadow: 0 0 0 0 rgba(251,113,133,0); } }
+  .header h1 { font-size: 21px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 13px; color: #7d8db0; margin-top: 5px; }
+  .toolbar { position: relative; }
+  .toolbar-toggle { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 16px; font-family: inherit; }
+  .toolbar-toggle:hover { color: #e2e8f0; border-color: #475569; }
+  .toolbar-actions { display: none; position: absolute; right: 0; top: 38px; gap: 6px; z-index: 10; }
+  .toolbar.open .toolbar-actions { display: flex; }
+  .toolbar-actions button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; }
+  .toolbar-actions button:hover { color: #f1f5f9; border-color: #64748b; }
+  @media print { .toolbar { display: none !important; } }
+
+  .controls { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .controls button { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 6px; padding: 7px 16px; cursor: pointer; font-size: 14px; font-family: inherit; }
+  .controls button:hover { border-color: #64748b; }
+  .controls button:disabled { opacity: 0.35; cursor: default; }
+  .step-ind { font-size: 14px; color: #cbd5e1; min-width: 70px; }
+  .frame-title { font-size: 14px; color: #fb7185; font-weight: 700; }
+  .qmark { cursor: help; font-size: 15px; color: #7d8db0; }
+  .key-hint { font-size: 12px; color: #64748b; }
+  .dots { display: flex; gap: 6px; margin-left: auto; align-items: center; flex-wrap: wrap; }
+  .dots button { width: 11px; height: 11px; border-radius: 50%; padding: 0; background: #1e293b; border: 1px solid #334155; cursor: pointer; }
+  .dots button.cur { background: #fb7185; border-color: #fb7185; }
+  .dots button:hover { border-color: #fb7185; }
+
+  .legend { display: flex; gap: 18px; align-items: center; font-size: 12px; color: #a5b4cc; margin-bottom: 10px; flex-wrap: wrap; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 16px 18px; }
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+  .card-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; }
+  .card ul { list-style: none; }
+  .card li { font-size: 13px; color: #a5b4cc; line-height: 1.75; }
+  .card li b { color: #e2e8f0; font-weight: 600; }
+  .card li code { background: #1e293b; padding: 1px 5px; border-radius: 3px; font-size: 12px; color: #fbbf24; }
+
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>Q6 · 为什么 SELECT * 不默认走 PK 索引树</h1>
+        <div class="subtitle">零基础 · 7 帧解答「PK 树就含所有列，为什么不直接走它？」的常见误解</div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbar').classList.toggle('open')">⋯</button>
+      <div class="toolbar-actions">
+        <button onclick="downloadGIF()">🎞 GIF</button>
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="btn-reset">⏮</button>
+    <button id="btn-prev">◀</button>
+    <button id="btn-play">▶ 播放</button>
+    <button id="btn-next">▶|</button>
+    <span class="step-ind" id="step-ind">1 / 7</span>
+    <span class="frame-title" id="cap-title"></span>
+    <span class="qmark" id="qmark" title="">❓</span>
+    <span class="key-hint">← → 键翻页 · ❓ 悬停看本帧讲解</span>
+    <div class="dots" id="dots"></div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw" style="background:#a78bfa"></span>PK 树（行按 PK 排序）</span>
+    <span><span class="sw" style="background:#22d3ee"></span>name 二级索引</span>
+    <span><span class="sw" style="background:#34d399"></span>PK 树直接定位（无需回表）</span>
+    <span><span class="sw" style="background:#fb7185"></span>PK 树全表扫描（不划算）</span>
+    <span style="color:#64748b">关键：PK 树的行是<b>按 PK 排</b>的，不是按 name 排的</span>
+  </div>
+
+  <div class="diagram-card">
+    <svg class="diagram" viewBox="0 0 1340 760" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+        </pattern>
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="3" result="blur"/>
+          <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+        </filter>
+      </defs>
+      <rect width="1340" height="760" fill="#020617"/>
+      <rect width="1340" height="760" fill="url(#grid)"/>
+
+      <!-- 顶部事件横幅 -->
+      <rect x="40" y="20" width="1260" height="56" rx="10" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+      <text x="60" y="44" fill="#7d8db0" font-size="10.5">本帧在解答什么疑问</text>
+      <text id="ev" x="60" y="64" fill="#f8fafc" font-size="15" font-weight="700"></text>
+
+      <!-- 左侧：PK 树 -->
+      <rect x="40" y="100" width="600" height="540" rx="12" fill="rgba(167,139,250,0.03)" stroke="#a78bfa" stroke-width="1" stroke-dasharray="8,4"/>
+      <text x="56" y="120" fill="#a78bfa" font-size="11" font-weight="600">PK 聚簇索引树</text>
+      <text id="pk-subtitle" x="56" y="135" fill="#64748b" font-size="9.5">叶子节点按 PK 排序：5 → 17 → 33 → 42 → 88 → 91</text>
+
+      <!-- 右侧：name 二级索引 -->
+      <rect x="660" y="100" width="640" height="540" rx="12" fill="rgba(34,211,238,0.03)" stroke="#22d3ee" stroke-width="1" stroke-dasharray="8,4"/>
+      <text x="676" y="120" fill="#22d3ee" font-size="11" font-weight="600">name 二级索引树</text>
+      <text id="name-subtitle" x="676" y="135" fill="#64748b" font-size="9.5">叶子节点按 name 排序：李四 → 孙八 → 王五 → 张三</text>
+
+      <!-- ============ PK 树 ============ -->
+      <g id="n_pk_root">
+        <rect x="270" y="170" width="140" height="36" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5" data-default-stroke="#a78bfa"/>
+        <text x="340" y="192" fill="#a78bfa" font-size="11" font-weight="700" text-anchor="middle">PK 根 [17, 42]</text>
+      </g>
+      <g id="n_pk_int1">
+        <rect x="100" y="230" width="100" height="32" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="150" y="250" fill="#cbd5e1" font-size="10" text-anchor="middle">[5]</text>
+      </g>
+      <g id="n_pk_int2">
+        <rect x="260" y="230" width="100" height="32" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="310" y="250" fill="#cbd5e1" font-size="10" text-anchor="middle">[17, 33]</text>
+      </g>
+      <g id="n_pk_int3">
+        <rect x="420" y="230" width="100" height="32" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="470" y="250" fill="#cbd5e1" font-size="10" text-anchor="middle">[42, 88]</text>
+      </g>
+
+      <g id="n_pk_leaf_5">
+        <rect x="60" y="380" width="100" height="90" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="110" y="402" fill="#f1f5f9" font-size="11" font-weight="700" text-anchor="middle">PK=5</text>
+        <text x="110" y="420" fill="#94a3b8" font-size="10" text-anchor="middle">赵六</text>
+        <text x="110" y="434" fill="#94a3b8" font-size="10" text-anchor="middle">25 M</text>
+        <text x="110" y="450" fill="#475569" font-size="8" text-anchor="middle">+ 完整行</text>
+      </g>
+      <g id="n_pk_leaf_17">
+        <rect x="170" y="380" width="100" height="90" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="220" y="402" fill="#f1f5f9" font-size="11" font-weight="700" text-anchor="middle">PK=17</text>
+        <text x="220" y="420" fill="#94a3b8" font-size="10" text-anchor="middle">李四</text>
+        <text x="220" y="434" fill="#94a3b8" font-size="10" text-anchor="middle">30 F</text>
+        <text x="220" y="450" fill="#475569" font-size="8" text-anchor="middle">+ 完整行</text>
+      </g>
+      <g id="n_pk_leaf_33">
+        <rect x="280" y="380" width="100" height="90" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="330" y="402" fill="#f1f5f9" font-size="11" font-weight="700" text-anchor="middle">PK=33</text>
+        <text x="330" y="420" fill="#94a3b8" font-size="10" text-anchor="middle">孙八</text>
+        <text x="330" y="434" fill="#94a3b8" font-size="10" text-anchor="middle">28 M</text>
+        <text x="330" y="450" fill="#475569" font-size="8" text-anchor="middle">+ 完整行</text>
+      </g>
+      <g id="n_pk_leaf_42">
+        <rect x="390" y="380" width="100" height="90" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="440" y="402" fill="#f1f5f9" font-size="11" font-weight="700" text-anchor="middle">PK=42</text>
+        <text x="440" y="420" fill="#94a3b8" font-size="10" text-anchor="middle">张三</text>
+        <text x="440" y="434" fill="#94a3b8" font-size="10" text-anchor="middle">35 M</text>
+        <text x="440" y="450" fill="#475569" font-size="8" text-anchor="middle">+ 完整行</text>
+      </g>
+      <g id="n_pk_leaf_88">
+        <rect x="500" y="380" width="100" height="90" rx="6" fill="#0f172a" stroke="#a78bfa" stroke-width="1.5"/>
+        <text x="550" y="402" fill="#f1f5f9" font-size="11" font-weight="700" text-anchor="middle">PK=88</text>
+        <text x="550" y="420" fill="#94a3b8" font-size="10" text-anchor="middle">王五</text>
+        <text x="550" y="434" fill="#94a3b8" font-size="10" text-anchor="middle">40 F</text>
+        <text x="550" y="450" fill="#475569" font-size="8" text-anchor="middle">+ 完整行</text>
+      </g>
+
+      <!-- PK 树边 -->
+      <g stroke="#475569" stroke-width="1.2" fill="none">
+        <line x1="320" y1="206" x2="150" y2="230"/>
+        <line x1="360" y1="206" x2="310" y2="230"/>
+        <line x1="380" y1="206" x2="470" y2="230"/>
+        <line x1="125" y1="262" x2="110" y2="380"/>
+        <line x1="285" y1="262" x2="220" y2="380"/>
+        <line x1="335" y1="262" x2="330" y2="380"/>
+        <line x1="445" y1="262" x2="440" y2="380"/>
+        <line x1="495" y1="262" x2="550" y2="380"/>
+      </g>
+      <g id="n_pk_leaf_chain" stroke="#a78bfa" stroke-width="1.4" fill="none" opacity="0.7">
+        <line x1="160" y1="425" x2="170" y2="425"/>
+        <line x1="270" y1="425" x2="280" y2="425"/>
+        <line x1="380" y1="425" x2="390" y2="425"/>
+        <line x1="490" y1="425" x2="500" y2="425"/>
+      </g>
+
+      <!-- ============ name 树 ============ -->
+      <g id="n_name_root">
+        <rect x="900" y="170" width="140" height="36" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="970" y="192" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">name 根 [孙, 王]</text>
+      </g>
+      <g id="n_name_int1">
+        <rect x="730" y="230" width="100" height="32" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="780" y="250" fill="#cbd5e1" font-size="10" text-anchor="middle">[李]</text>
+      </g>
+      <g id="n_name_int2">
+        <rect x="900" y="230" width="100" height="32" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="950" y="250" fill="#cbd5e1" font-size="10" text-anchor="middle">[王, 张]</text>
+      </g>
+      <g id="n_name_int3">
+        <rect x="1080" y="230" width="100" height="32" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="1130" y="250" fill="#cbd5e1" font-size="10" text-anchor="middle">[赵]</text>
+      </g>
+
+      <g id="n_name_leaf_li">
+        <rect x="700" y="380" width="86" height="60" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="743" y="402" fill="#f1f5f9" font-size="11" text-anchor="middle">李四</text>
+        <text x="743" y="417" fill="#94a3b8" font-size="10" text-anchor="middle">→ PK 17</text>
+        <text x="743" y="430" fill="#475569" font-size="7.5" text-anchor="middle">leaf</text>
+      </g>
+      <g id="n_name_leaf_sun">
+        <rect x="790" y="380" width="86" height="60" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="833" y="402" fill="#f1f5f9" font-size="11" text-anchor="middle">孙八</text>
+        <text x="833" y="417" fill="#94a3b8" font-size="10" text-anchor="middle">→ PK 33</text>
+        <text x="833" y="430" fill="#475569" font-size="7.5" text-anchor="middle">leaf</text>
+      </g>
+      <g id="n_name_leaf_wang">
+        <rect x="930" y="380" width="86" height="60" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="973" y="402" fill="#f1f5f9" font-size="11" text-anchor="middle">王五</text>
+        <text x="973" y="417" fill="#94a3b8" font-size="10" text-anchor="middle">→ PK 88</text>
+        <text x="973" y="430" fill="#475569" font-size="7.5" text-anchor="middle">leaf</text>
+      </g>
+      <g id="n_name_leaf_zhang">
+        <rect x="1020" y="380" width="86" height="60" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="1063" y="402" fill="#f1f5f9" font-size="11" text-anchor="middle">张三</text>
+        <text x="1063" y="417" fill="#94a3b8" font-size="10" text-anchor="middle">→ PK 42</text>
+        <text x="1063" y="430" fill="#475569" font-size="7.5" text-anchor="middle">leaf</text>
+      </g>
+      <g id="n_name_leaf_zhao">
+        <rect x="1160" y="380" width="86" height="60" rx="6" fill="#0f172a" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="1203" y="402" fill="#f1f5f9" font-size="11" text-anchor="middle">赵六</text>
+        <text x="1203" y="417" fill="#94a3b8" font-size="10" text-anchor="middle">→ PK 5</text>
+        <text x="1203" y="430" fill="#475569" font-size="7.5" text-anchor="middle">leaf</text>
+      </g>
+
+      <!-- name 树边 -->
+      <g stroke="#475569" stroke-width="1.2" fill="none">
+        <line x1="940" y1="206" x2="780" y2="230"/>
+        <line x1="990" y1="206" x2="950" y2="230"/>
+        <line x1="1010" y1="206" x2="1130" y2="230"/>
+        <line x1="755" y1="262" x2="743" y2="380"/>
+        <line x1="925" y1="262" x2="833" y2="380"/>
+        <line x1="975" y1="262" x2="973" y2="380"/>
+        <line x1="1005" y1="262" x2="1063" y2="380"/>
+        <line x1="1110" y1="262" x2="1203" y2="380"/>
+      </g>
+      <g id="n_name_leaf_chain" stroke="#22d3ee" stroke-width="1.4" fill="none" opacity="0.7">
+        <line x1="786" y1="410" x2="790" y2="410"/>
+        <line x1="876" y1="410" x2="930" y2="410"/>
+        <line x1="1016" y1="410" x2="1020" y2="410"/>
+        <line x1="1106" y1="410" x2="1160" y2="410"/>
+      </g>
+
+      <!-- ============ 中央对比说明 ============ -->
+      <rect x="60" y="540" width="1240" height="80" rx="8" fill="#0f172a" stroke="#1e293b" stroke-width="1"/>
+      <text id="cmp-title" x="80" y="562" fill="#fbbf24" font-size="13" font-weight="700">本帧关键对比</text>
+      <text id="cmp-pk" x="80" y="585" fill="#a78bfa" font-size="11.5"></text>
+      <text id="cmp-name" x="80" y="605" fill="#22d3ee" font-size="11.5"></text>
+
+      <!-- 注释：PK 树无法用 name 定位 -->
+      <g id="scan-overlay" opacity="0">
+        <rect x="40" y="290" width="600" height="200" rx="8" fill="rgba(251,113,133,0.05)" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="4,4"/>
+        <text x="340" y="315" fill="#fb7185" font-size="12" font-weight="700" text-anchor="middle">⚠ PK 树上无法快速定位 name='张三'</text>
+        <text x="340" y="335" fill="#f1f5f9" font-size="11" text-anchor="middle">叶子按 PK 排，不是按 name 排</text>
+        <text x="340" y="352" fill="#94a3b8" font-size="10.5" text-anchor="middle">WHERE name='张三' 只能从第一个叶子开始<b>逐个扫</b>...</text>
+        <text x="340" y="375" fill="#fb7185" font-size="11" font-weight="600" text-anchor="middle">扫 6 行才找到 1 行 = type=ALL 全表扫描</text>
+        <text x="340" y="395" fill="#64748b" font-size="10" text-anchor="middle">（每行还要 PK 树 → 完整行的回表，但本质是 O(N) 扫描）</text>
+        <text x="340" y="475" fill="#fb7185" font-size="10" text-anchor="middle" opacity="0.85">所以优化器宁可选「name 索引 + 回表」</text>
+      </g>
+
+      <!-- 注释：name 树直接命中 -->
+      <g id="hit-overlay" opacity="0">
+        <rect x="660" y="290" width="640" height="200" rx="8" fill="rgba(52,211,153,0.05)" stroke="#34d399" stroke-width="1.5" stroke-dasharray="4,4"/>
+        <text x="980" y="315" fill="#34d399" font-size="12" font-weight="700" text-anchor="middle">✓ name 树可二分定位 name='张三'</text>
+        <text x="980" y="335" fill="#f1f5f9" font-size="11" text-anchor="middle">叶子按 name 排 → 二分查找</text>
+        <text x="980" y="352" fill="#94a3b8" font-size="10.5" text-anchor="middle">O(log N) 找到 name='张三' → PK=42</text>
+        <text x="980" y="375" fill="#34d399" font-size="11" font-weight="600" text-anchor="middle">代价：叶子只有 name+PK，必须回表 1 次拿完整行</text>
+        <text x="980" y="395" fill="#64748b" font-size="10" text-anchor="middle">（1 次随机 I/O 比扫 6 行快得多）</text>
+        <text x="980" y="475" fill="#34d399" font-size="10" text-anchor="middle" opacity="0.85">所以优化器选这条路：type=ref + 回表</text>
+      </g>
+
+      <!-- 底部状态条 -->
+      <rect x="40" y="640" width="1260" height="22" rx="6" fill="#0f172a" stroke="#1e293b" stroke-width="1" opacity="0.4"/>
+    </svg>
+  </div>
+
+  <!-- HTML 要点卡 -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#fb7185"></div><h3>本帧要点</h3></div>
+      <ul><li id="insight-main">加载中…</li></ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#22d3ee"></div><h3>术语卡</h3></div>
+      <ul><li id="term-main">加载中…</li></ul>
+    </div>
+    <div class="card">
+      <div class="card-header"><div class="card-dot" style="background:#fbbf24"></div><h3>易错点（面试高频）</h3></div>
+      <ul>
+        <li>• ❌「PK 树包含所有列，走它就不回表」→ ✅ PK 树行<b>按 PK 排</b>，WHERE 非 PK 列时帮不上忙</li>
+        <li>• ❌「name 索引走完还要回表，不如直接 PK 全表扫」→ ✅ 1 次 name 二分 + 1 次回表 < 全表扫 N 行</li>
+        <li>• ❌「回表可以避免，只要走 PK」→ ✅ 只有 WHERE/ORDER BY 用 PK 列时才能纯走 PK 树</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>q06 · 为什么 SELECT * 不默认走 PK 索引树 · 7 帧动图</span>
+    <span>数据库专题 · 配套 Q6 答卷</span>
+  </div>
+</div>
+
+<script>
+/* ============ 帧数据 ============
+   字段约定（避免撞名 cap/size/thr/pct）：
+     t      : 帧标题
+     ev     : 顶部事件横幅
+     term   : 术语卡（HTML，长文本）
+     insight: 本帧要点（HTML）
+     note   : ❓ 悬停讲解
+     hi     : 高亮哪些组件（数组）
+     pkSubtitle / nameSubtitle: 树顶副标题
+     cmpTitle / cmpPk / cmpName: 中部对比文本
+     showScanOverlay / showHitOverlay: 显示对应高亮框
+*/
+const F = [
+  { t:'第 0 帧 · 看图须知',
+    ev:'疑问：SELECT * 时 · PK 树就含全部列 · 为什么不直接走 PK 树？',
+    term:'本图回答一个高频误解：<b>「PK 树含完整行，SELECT * 直接走 PK 不就能避免回表了吗？」</b>答案是：<b>不能</b>，因为 PK 树的行是按 PK 排序的，不是按 WHERE 列排序的。',
+    insight:'一句话回答：<b>索引是用来「定位」的，不是用来「取数据」的</b>——PK 树能快速定位 PK，但 WHERE name=『张三』时，PK 树帮不上定位的忙。',
+    note:'看图须知：\n• 7 帧讲完这个常见误解\n• 左侧紫色 = PK 树（叶子按 PK 排）；右侧青色 = name 二级索引（叶子按 name 排）\n• 关键观察：PK 树叶子按 PK 排序的「顺序」对 WHERE name 完全没用\n• 关键结论：WHERE 在哪一列，优化器就找「按那一列排」的索引来定位\n\n误解拆解：\n• PK 树叶子 = 完整行（含所有列）✓ 这个事实没错\n• 但 PK 树叶子 = <b>按 PK 排序</b>，不是按 name 排序 ✗ 这是关键\n• WHERE name=『张三』 在 PK 树上 = 全表扫描 O(N)，不比回表便宜',
+    hi:[],
+    pkSubtitle:'叶子节点按 PK 排序：5 → 17 → 33 → 42 → 88 → 91',
+    nameSubtitle:'叶子节点按 name 排序：李四 → 孙八 → 王五 → 张三 → 赵六',
+    cmpTitle:'关键观察',
+    cmpPk:'PK 树叶子按 PK 排 → 找 name 必须逐个扫（O(N)）',
+    cmpName:'name 树叶子按 name 排 → 二分定位（O(log N)）',
+    showScanOverlay:false, showHitOverlay:false },
+
+  { t:'第 1 帧 · PK 树的本质：按 PK 排序',
+    ev:'PK 树的叶子是按 PK 排的：5 → 17 → 33 → 42 → 88 → 91',
+    term:'聚簇索引（clustered）：InnoDB 的数据文件本身就是按主键排序的 B+ 树，叶子节点按 PK 升序串联成链表。',
+    insight:'关键事实：<b>PK 树的叶子不是按 name 排的</b>——按 PK 排是为了快速 PK 等值/范围查询，对 WHERE name 完全没帮助。',
+    note:'PK 树排序的本质：\n• 数据行按 PK 升序存储\n• 这是 InnoDB 物理存储顺序\n• 二分查找只能按 PK 来做\n\n举例：\n• WHERE id = 42 → 二分找 42 → 3 次比较定位 ✓ 快\n• WHERE name = 『张三』 → 没法二分 → 必须从第一个叶子开始扫 ✗ 慢\n• WHERE age > 30 → 没法二分 → 必须扫所有叶子 ✗ 慢',
+    hi:['n_pk_root','n_pk_int2','n_pk_int3','n_pk_leaf_5','n_pk_leaf_17','n_pk_leaf_33','n_pk_leaf_42','n_pk_leaf_88'],
+    pkSubtitle:'叶子节点按 PK 排序：5 → 17 → 33 → 42 → 88 → 91',
+    nameSubtitle:'叶子节点按 name 排序：李四 → 孙八 → 王五 → 张三 → 赵六',
+    cmpTitle:'PK 树的物理顺序',
+    cmpPk:'按 PK 排：5 → 17 → 33 → 42 → 88 → 91',
+    cmpName:'→ 只能对 PK 做二分，对 name 无能为力',
+    showScanOverlay:false, showHitOverlay:false },
+
+  { t:'第 2 帧 · 场景 A：WHERE id=42 → 走 PK 树（无需回表）',
+    ev:'WHERE id=42 → PK 树二分定位 → 直接拿完整行（type=const）',
+    term:'type=const：MySQL 优化器在主键/唯一索引上做等值查询时返回「最多 1 行」，直接走 PK 树定位，无须回表（因为 PK 叶子就是完整行）。',
+    insight:'SELECT * + WHERE PK 列时，<b>真的不需要回表</b>——PK 树叶子 = 完整行，直接拿。这就是你说的「走 PK 就能避免回表」的唯一适用场景。',
+    note:'场景 A：WHERE id=42\n• PK 树按 PK 排 → 二分定位 PK=42\n• 叶子节点 = 完整行 → 直接拿所有列\n• EXPLAIN type=const，Extra 没有任何回表关键字\n• 代价：3 次 I/O（树高）+ 0 次回表\n• <b>所以你说的没错，但只对 PK 列有效</b>',
+    hi:['n_pk_root','n_pk_int3','n_pk_leaf_42'],
+    pkSubtitle:'✓ 走 PK 树二分定位 PK=42（O(log N)）',
+    nameSubtitle:'name 树完全用不上（你 WHERE 的是 PK，不是 name）',
+    cmpTitle:'场景 A · WHERE id=42',
+    cmpPk:'✓ 走 PK 树，二分定位，直接拿完整行（type=const）',
+    cmpName:'不参与',
+    showScanOverlay:false, showHitOverlay:false },
+
+  { t:'第 3 帧 · 场景 B：WHERE name=『张三』 走 PK 树 = 全表扫',
+    ev:'如果硬走 PK 树：6 行全扫一遍才找到张三（type=ALL）',
+    term:'type=ALL：全表扫描。当优化器判断走任何索引都不如直接扫表快时，会退化成 ALL。对 PK 树来说，扫 6 行找 1 行 = O(N) = 不划算。',
+    insight:'「走 PK 就能避免回表」这话<b>只对 WHERE PK 列有效</b>。WHERE name 时硬走 PK 树 = 全表扫描 = 浪费生命。',
+    note:'场景 B-失败：硬走 PK 树找 name=『张三』\n• PK 树按 PK 排：5(赵六), 17(李四), 33(孙八), 42(张三), 88(王五), 91(钱七)\n• 找 name=『张三』：必须从头逐个打开叶子看 name 字段\n• 6 行才找到 1 行 = O(N) = type=ALL = 全表扫描\n• 这种「走 PK 树」比「name 索引 + 回表」<b>慢得多</b>\n\n关键：索引的「排序方向」决定能不能用来定位目标。',
+    hi:['n_pk_root','n_pk_int2','n_pk_int3','n_pk_leaf_5','n_pk_leaf_17','n_pk_leaf_33','n_pk_leaf_42','n_pk_leaf_88'],
+    pkSubtitle:'⚠ 必须逐个叶子打开看 name 字段',
+    nameSubtitle:'name 树在另一边就能直接定位（见下帧）',
+    cmpTitle:'场景 B · WHERE name=张三 硬走 PK 树',
+    cmpPk:'扫 6 行才找到 1 行 = type=ALL（不划算）',
+    cmpName:'name 树：二分定位 → 1 次回表（划算）',
+    showScanOverlay:true, showHitOverlay:false },
+
+  { t:'第 4 帧 · 场景 C：WHERE name=『张三』 走 name 索引 + 回表',
+    ev:'走 name 树：二分定位 → 拿到 PK=42 → 回表 1 次拿完整行',
+    term:'name 二级索引：叶子按 name 排序，找 name=『张三』 是二分查找 O(log N)。代价是叶子只有 name+PK，要拿其他列必须回表 1 次。',
+    insight:'优化器的选择：<b>name 二分定位 + 1 次回表</b>（O(log N) + 1 次 I/O）远比 <b>PK 树全表扫</b>（O(N)）快。',
+    note:'场景 C：走 name 索引 + 回表\n• name 树按 name 排：二分定位 → name=『张三』 叶子 → PK=42\n• 这一步只告诉你 PK=42，叶子里没有张三的 age/phone/sex\n• 拿 PK=42 跳到 PK 树 → 叶子 PK=42 = 完整行 ✓\n• 总代价：name 树 3 层 + PK 树 3 层 = 6 次比较 + 1 次回表（磁盘随机 I/O）\n• 比 PK 树全表扫 6 行<b>快得多</b>\n\n为什么优化器不让你走 PK 树：因为 PK 树根本帮不上定位的忙。',
+    hi:['n_name_root','n_name_int2','n_name_leaf_zhang','n_pk_leaf_42'],
+    pkSubtitle:'PK 树在这次查询里只承担「回表」角色',
+    nameSubtitle:'name 树二分定位 name=『张三』 → PK=42',
+    cmpTitle:'场景 C · WHERE name=张三 走 name 索引 + 回表',
+    cmpPk:'只回表 1 次（PK=42 → 完整行）',
+    cmpName:'二分定位 name=张三（O(log N)）',
+    showScanOverlay:false, showHitOverlay:true },
+
+  { t:'第 5 帧 · 优化器选择矩阵：哪条 WHERE 走哪种索引？',
+    ev:'WHERE 列 = 哪棵树能定位 → 优化器选哪棵',
+    term:'优化器选择策略：WHERE/ORDER BY/JOIN 用到的列，哪棵索引能直接定位（按该列排序），就选哪棵。PK 树只在 WHERE PK 时被选中。',
+    insight:'记忆口诀：<b>「按哪列查，就用按哪列排的索引」</b>。PK 树只在「按 PK 查」时被选中，其他情况优化器宁可回表也不用 PK 树做扫描。',
+    note:'优化器选择矩阵：\n\n| WHERE 列 | 选哪个索引 | 原因 |\n|---|---|---|\n| id (PK) | PK 树 | PK 树按 PK 排，能二分定位 |\n| name | name 索引 + 回表 | PK 树帮不上，name 索引能定位 |\n| age | age 索引 + 回表 | 同上 |\n| city | city 索引 + 回表 | 同上 |\n| 多个非 PK 列 | 联合索引 + 回表 | 单列索引不够 |\n\n所以你问的「为什么不默认走 PK 树」——答案是<b>默认走 PK 树只有在 WHERE PK 时才划算</b>。',
+    hi:[],
+    pkSubtitle:'WHERE PK 列时被选中（直接定位）',
+    nameSubtitle:'WHERE name 列时被选中（回表 1 次）',
+    cmpTitle:'优化器选择规则',
+    cmpPk:'WHERE PK 列 → PK 树（type=const/ref）',
+    cmpName:'WHERE name 列 → name 索引 + 回表（type=ref）',
+    showScanOverlay:false, showHitOverlay:false },
+
+  { t:'第 6 帧 · 心智模型总结',
+    ev:'索引是用来「定位」的 · PK 树叶子是「结果」，不是「入口」',
+    term:'一句话心法：索引的「排序方向」决定它能用来定位哪些 WHERE 列。PK 树按 PK 排，所以只能用来定位 PK 列。',
+    insight:'回答你的疑问：<b>不是优化器傻</b>，而是 PK 树的「排序方向」决定了它对 WHERE name 帮不上忙。优化器宁可让你回表，也不愿意让你做全表扫。',
+    note:'总结：\n• PK 树叶子 = 完整行（✓ 这个事实）\n• PK 树叶子按 PK 排序（这个顺序对 WHERE PK 之外的列没用）\n• WHERE name 时硬走 PK 树 = 全表扫描 O(N)，比回表 O(log N + 1) 慢得多\n• 所以优化器宁可选「name 索引 + 回表」也不选「PK 树全表扫」\n\n推广：\n• WHERE/ORDER BY/JOIN 用哪个列，就找「按那个列排」的索引\n• 索引的「排序方向」是它的<b>核心属性</b>，不是细节\n• 这就是为什么「联合索引」要讲究列顺序（按查询频度排）',
+    hi:[],
+    pkSubtitle:'PK 树 = 完整行的有序存储',
+    nameSubtitle:'name 树 = 按 name 排的「目录」',
+    cmpTitle:'一句话总结',
+    cmpPk:'PK 树是「数据」不是「入口」——只能按 PK 定位',
+    cmpName:'name 索引是「入口」——按 name 定位 → 回表拿数据',
+    showScanOverlay:false, showHitOverlay:false }
+];
+
+/* ============ 工具 ============ */
+const $ = id => document.getElementById(id);
+const D = s => String(s).replace(/</g,'<').replace(/>/g,'>').replace(/&/g,'&');
+let cur = 0, timer = null;
+
+/* ============ 显式高亮控制（避免 CSS 特异性坑） ============
+   对每个树节点：默认 stroke-width 1.5 + 默认 fill
+   高亮时：stroke-width 2.6 + 加 filter glow + stroke 加粗
+   暗化时：opacity 0.4（对 group）
+*/
+function setNodeState(id, state, defaultStroke) {
+  const el = $(id);
+  if (!el) return;
+  const rect = el.querySelector('rect');
+  if (state === 'act') {
+    el.removeAttribute('opacity');
+    if (rect) {
+      rect.setAttribute('stroke-width', '2.6');
+      rect.setAttribute('filter', 'url(#glow)');
+    }
+  } else {
+    el.setAttribute('opacity', '0.4');
+    if (rect) {
+      rect.setAttribute('stroke-width', '1.5');
+      rect.removeAttribute('filter');
+    }
+  }
+}
+
+function render(i) {
+  const f = F[i]; cur = i;
+  $('ev').textContent = D(f.ev);
+  $('term-main').innerHTML = D(f.term);
+  $('insight-main').innerHTML = D(f.insight);
+  $('cap-title').textContent = D(f.t);
+  $('qmark').title = D(f.note);
+  $('step-ind').textContent = (i + 1) + ' / ' + F.length;
+  $('btn-prev').disabled = i === 0;
+  $('btn-next').disabled = i === F.length - 1;
+  document.querySelectorAll('#dots button').forEach((d, k) => d.classList.toggle('cur', k === i));
+
+  $('pk-subtitle').textContent = D(f.pkSubtitle);
+  $('name-subtitle').textContent = D(f.nameSubtitle);
+  $('cmp-title').textContent = D(f.cmpTitle);
+  $('cmp-pk').textContent = D(f.cmpPk);
+  $('cmp-name').textContent = D(f.cmpName);
+  $('scan-overlay').setAttribute('opacity', f.showScanOverlay ? '1' : '0');
+  $('hit-overlay').setAttribute('opacity', f.showHitOverlay ? '1' : '0');
+
+  // 所有可高亮节点
+  const allIds = ['n_pk_root','n_pk_int1','n_pk_int2','n_pk_int3',
+    'n_pk_leaf_5','n_pk_leaf_17','n_pk_leaf_33','n_pk_leaf_42','n_pk_leaf_88',
+    'n_name_root','n_name_int1','n_name_int2','n_name_int3',
+    'n_name_leaf_li','n_name_leaf_sun','n_name_leaf_wang','n_name_leaf_zhang','n_name_leaf_zhao'];
+  allIds.forEach(id => {
+    setNodeState(id, f.hi.includes(id) ? 'act' : 'dim');
+  });
+}
+
+/* ============ 控件 ============ */
+const dots = $('dots');
+F.forEach((_, k) => {
+  const b = document.createElement('button');
+  b.onclick = () => { stopPlay(); render(k); };
+  dots.appendChild(b);
+});
+$('btn-prev').onclick = () => { stopPlay(); if (cur > 0) render(cur - 1); };
+$('btn-next').onclick = () => { stopPlay(); if (cur < F.length - 1) render(cur + 1); };
+$('btn-reset').onclick = () => { stopPlay(); render(0); };
+$('btn-play').onclick = togglePlay;
+function togglePlay() {
+  if (timer) return stopPlay();
+  if (cur >= F.length - 1) render(0);
+  $('btn-play').textContent = '⏸ 暂停';
+  timer = setInterval(() => { if (cur >= F.length - 1) return stopPlay(); render(cur + 1); }, 2400);
+}
+function stopPlay() { if (timer) { clearInterval(timer); timer = null; $('btn-play').textContent = '▶ 播放'; } }
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight') { stopPlay(); if (cur < F.length - 1) render(cur + 1); }
+  if (e.key === 'ArrowLeft')  { stopPlay(); if (cur > 0) render(cur - 1); }
+  if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+});
+const m = location.hash.match(/f=(\d+)/);
+render(m ? Math.min(F.length - 1, +m[1]) : 0);
+
+/* ============ 导出 ============ */
+function capture() {
+  const el = document.getElementById('report-container');
+  const r = el.getBoundingClientRect();
+  return html2canvas(document.body, {
+    x: r.left - 32, y: r.top - 32, width: r.width + 64, height: r.height + 64,
+    scale: 2, backgroundColor: '#020617',
+    ignoreElements: n => n.closest && (n.closest('.toolbar') || n.closest('.controls') || n.closest('.dots'))
+  });
+}
+function copyAsImage() { capture().then(c => c.toBlob(b => navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]))); }
+function downloadPNG() {
+  capture().then(c => {
+    const a = document.createElement('a');
+    a.download = 'q06-pk-why-not-frame-' + (cur + 1) + '.png';
+    a.href = c.toDataURL('image/png');
+    a.click();
+  });
+}
+function downloadPDF() {
+  capture().then(c => {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({ orientation: c.width >= c.height ? 'l' : 'p', unit: 'px', format: [c.width, c.height] });
+    pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, c.width, c.height);
+    pdf.save('q06-pk-why-not.pdf');
+  });
+}
+function downloadGIF() {
+  const frames = F.length;
+  alert(
+    'GIF 导出指引：\n\n' +
+    'cd doc/database/diagrams\n' +
+    'mkdir -p _frames && for i in $(seq 0 ' + (frames - 1) + '); do\n' +
+    '  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --disable-gpu --hide-scrollbars \\\n' +
+    '    --window-size=1380,1300 --virtual-time-budget=3000 \\\n' +
+    '    --screenshot=_frames/f$(printf %02d $i).png \\\n' +
+    '    "file://$(pwd)/q06-pk-why-not.html#f=$i"\n' +
+    'done\n' +
+    'conda activate py311 && python - <<EOF\n' +
+    'from PIL import Image; import glob, os\n' +
+    'imgs = [Image.open(p).convert("RGB") for p in sorted(glob.glob("_frames/f*.png"))]\n' +
+    'imgs = [im.resize((900, int(im.height * 900 / im.width)), Image.LANCZOS) for im in imgs]\n' +
+    'imgs[0].save("q06-pk-why-not.gif", save_all=True, append_images=imgs[1:], duration=2400, loop=0, optimize=True)\n' +
+    'print("GIF bytes:", os.path.getsize("q06-pk-why-not.gif"))\n' +
+    'EOF'
+  );
+}
+</script>
+</body>
+</html>
