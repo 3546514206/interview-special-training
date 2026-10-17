@@ -16,21 +16,14 @@
 | [sql/q05_window.sql](./sql/q05_window.sql) | 行转列 + TopN + 连续登录 + 留存率 |
 | `src/main/java/edu/zjnu/interview/database/q01/PoolLab.java` | HikariCP 连接池实验（100 线程抢 10 连接） |
 | `src/main/java/edu/zjnu/interview/database/q02/LockLab.java` | 行锁/间隙锁/死锁/当前读实验 |
+| `src/main/java/edu/zjnu/interview/database/q05/BackToTableLab.java` | 回表 vs 覆盖索引 vs 全表扫 4 场景实验（100 万行 user_big） |
+| [sql/q05_back_to_table.sql](./sql/q05_back_to_table.sql) | 配套 SQL：建表 + 灌 100 万行 + 4 条 EXPLAIN 演示 + 耗时对比 |
 | [diagrams/q01-select-execution.html](./diagrams/q01-select-execution.html) | Q1 一行 SELECT 执行过程 · 11 帧动图 |
 | [diagrams/q01-select-execution.gif](./diagrams/q01-select-execution.gif) | 同上 · 嵌 Markdown 用（26 秒循环） |
 | [diagrams/q01-select-execution.png](./diagrams/q01-select-execution.png) | 同上 · 静态封面（看图须知帧） |
-| [diagrams/q05-back-to-table.html](./diagrams/q05-back-to-table.html) | Q5 回表 · 二级索引的代价 · 12 帧动图 |
-| [diagrams/q05-back-to-table.gif](./diagrams/q05-back-to-table.gif) | 同上 · 嵌 Markdown 用（29 秒循环） |
-| [diagrams/q05-back-to-table.png](./diagrams/q05-back-to-table.png) | 同上 · 静态封面（看图须知帧） |
-| [diagrams/q06-extra-explain.html](./diagrams/q06-extra-explain.html) | Q6+Q18 SELECT * / 覆盖索引 / EXPLAIN Extra · 13 帧动图 |
-| [diagrams/q06-extra-explain.gif](./diagrams/q06-extra-explain.gif) | 同上 · 嵌 Markdown 用（31 秒循环） |
-| [diagrams/q06-extra-explain.png](./diagrams/q06-extra-explain.png) | 同上 · 静态封面（看图须知帧） |
-| [diagrams/q06-pk-why-not.html](./diagrams/q06-pk-why-not.html) | Q6 常见误解：为什么 SELECT * 不默认走 PK 索引树 · 7 帧动图 |
-| [diagrams/q06-pk-why-not.gif](./diagrams/q06-pk-why-not.gif) | 同上 · 嵌 Markdown 用（17 秒循环） |
-| [diagrams/q06-pk-why-not.png](./diagrams/q06-pk-why-not.png) | 同上 · 静态封面（看图须知帧） |
-| [diagrams/q06-no-where-all.html](./diagrams/q06-no-where-all.html) | Q6 没有 WHERE 的 SELECT * 怎么走（走 PK 树全表扫）· 6 帧动图 |
-| [diagrams/q06-no-where-all.gif](./diagrams/q06-no-where-all.gif) | 同上 · 嵌 Markdown 用（14 秒循环） |
-| [diagrams/q06-no-where-all.png](./diagrams/q06-no-where-all.png) | 同上 · 静态封面（看图须知帧） |
+| [diagrams/q03-varchar-len.html](./diagrams/q03-varchar-len.html) | Q3 VARCHAR(100) vs VARCHAR(10) 4 层差异 · 7 帧动图 |
+| [diagrams/q03-varchar-len.gif](./diagrams/q03-varchar-len.gif) | 同上 · 嵌 Markdown 用（17 秒循环） |
+| [diagrams/q03-varchar-len.png](./diagrams/q03-varchar-len.png) | 同上 · 静态封面（看图须知帧） |
 
 ## 快速开始
 
@@ -62,16 +55,29 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.database.q02.LockLa
 ## 进度
 
 - [x] V1 经核实版答卷（25 题）
-- [x] SQL 练习脚本（5 套）
-- [x] Java Lab（2 个）
+- [x] SQL 练习脚本（6 套：原 5 套 + q05 回表 100 万行实验）
+- [x] Java Lab（3 个：q01 连接池 / q02 行锁 / q05 回表 4 场景）
 - [x] HTML 配图 · Q1 一行 SELECT 执行过程（11 帧动图）
-- [x] HTML 配图 · Q5 回表（12 帧动图）
-- [x] HTML 配图 · Q6 覆盖索引 + Q18 EXPLAIN Extra（13 帧动图，三幕剧情）
-- [x] HTML 配图 · Q6 常见误解：为什么 SELECT * 不默认走 PK 树（7 帧动图）
-- [x] HTML 配图 · Q6 没有 WHERE 的 SELECT * 怎么走（6 帧动图）
+- [x] HTML 配图 · Q3 VARCHAR(100) vs VARCHAR(10) 4 层差异（7 帧动图）
 - [ ] HTML 配图（Q12 MVCC / Q15 间隙锁 / Q25 连续登录）
+- [x] ~~Q5/Q6 回表 4 帧动图~~ 改用 SQL + Java 实验直接验证（更准，比示意图靠谱）
 - [ ] V2 进阶（Redis / 缓存三大问题 / 分布式锁）
 - [ ] V3 大厂真题面经汇总（按公司：阿里/字节/腾讯/美团）
+
+## Q5/Q6 · 回表 4 场景实验
+
+> 关键澄清：「走 PK 索引树」歧义 —— 既可指 PK 条件定位（type=const/ref），也可指全表扫顺序遍历 PK 树（type=ALL, key=NULL）。`key=NULL` 不等于「没读 PK 树」。
+
+**实验 SQL + Java 已就绪**（`user_big` 100 万行, age 均匀分布 20~60）：
+
+| # | SQL | 预期 EXPLAIN | 物理路径 | 实测耗时参考 |
+|---|---|---|---|---|
+| ① | `SELECT * WHERE age > 20` | type=ALL, key=NULL | 顺序扫 PK 树 ~100 万行（97.5 万次回表 > 100 万行顺序 I/O） | 几秒 |
+| ② | `SELECT * WHERE age = 25` | type=ref, key=idx_age, Extra=Using where | 扫 idx_age ~24400 叶子 + 24400 次回表 | 几百 ms |
+| ③ | `SELECT id,age WHERE age = 25` | type=ref, key=idx_age, **Extra=Using index** | 扫 idx_age ~24400 叶子，**0 次回表** | 几十 ms |
+| ④ | `SELECT * WHERE id = 12345` | type=const, key=PRIMARY, rows=1 | PK 树二分定位 1 行 | < 1ms |
+
+跑法见 [`q05_back_to_table.sql`](./sql/q05_back_to_table.sql) 和 [`BackToTableLab.java`](../../src/main/java/edu/zjnu/interview/database/q05/BackToTableLab.java)。
 
 ## 参考
 
