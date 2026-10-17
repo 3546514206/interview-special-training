@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Q6 · 最左前缀原理 · MySQL 8.0 · 联合索引 (name, age) 6 场景交互 · users 表真实数据 · 3 层 B+ 树</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pZ1ncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; min-height: 100vh; }
+  .container { width: 1240px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #a78bfa; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(167,139,250,.6); } 70% { box-shadow: 0 0 0 10px rgba(167,139,250,0); } 100% { box-shadow: 0 0 0 0 rgba(167,139,250,0); } }
+  .header h1 { font-size: 21px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 13px; color: #7d8db0; margin-top: 5px; }
+  .toolbar { position: relative; }
+  .toolbar-toggle { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 16px; font-family: inherit; }
+  .toolbar-toggle:hover { color: #e2e8f0; border-color: #475569; }
+  .toolbar-actions { display: none; position: absolute; right: 0; top: 38px; gap: 6px; z-index: 10; }
+  .toolbar.open .toolbar-actions { display: flex; }
+  .toolbar-actions button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; }
+  .toolbar-actions button:hover { color: #f1f5f9; border-color: #64748b; }
+  @media print { .toolbar { display: none !important; } }
+
+  /* ── 场景按钮组 ── */
+  .scenarios { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
+  .scenario-btn {
+    background: #0f172a; border: 1.5px solid #334155; color: #e2e8f0; border-radius: 8px; padding: 11px 14px;
+    cursor: pointer; font-family: inherit; text-align: left; transition: all 0.18s ease;
+  }
+  .scenario-btn:hover { border-color: #64748b; transform: translateY(-1px); }
+  .scenario-btn.active { border-color: #a78bfa; background: rgba(167,139,250,0.08); box-shadow: 0 0 0 3px rgba(167,139,250,0.12); }
+  .scenario-btn .tag { font-size: 10px; color: #94a3b8; margin-bottom: 3px; letter-spacing: 0.05em; }
+  .scenario-btn .sql { font-size: 13px; color: #f1f5f9; font-weight: 600; }
+  .scenario-btn .verdict { font-size: 10px; margin-top: 4px; padding: 2px 7px; border-radius: 3px; display: inline-block; }
+  .v-good { background: rgba(52,211,153,0.15); color: #34d399; }
+  .v-bad { background: rgba(251,113,133,0.15); color: #fb7185; }
+  .v-warn { background: rgba(251,191,36,0.15); color: #fbbf24; }
+
+  /* ── Legend ── */
+  .legend { display: flex; gap: 22px; align-items: center; font-size: 12px; color: #a5b4cc; margin-bottom: 12px; flex-wrap: wrap; }
+  .legend .sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+  /* ── 主图表卡片 ── */
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  .diagram-card-body { padding: 18px 22px 22px; }
+
+  /* ── B+ 树视图 ── */
+  .bplus-card { margin-bottom: 22px; padding: 18px 14px 8px; background: rgba(15,23,42,0.5); border: 1px solid #1e293b; border-radius: 8px; }
+  .bplus-title { font-size: 11px; color: #7d8db0; margin-bottom: 12px; letter-spacing: 0.05em; padding-left: 4px; display: flex; align-items: center; gap: 6px; }
+  .bplus-title .badge { background: rgba(167,139,250,0.18); color: #c4b5fd; padding: 2px 7px; border-radius: 3px; font-size: 9px; }
+  .bplus-svg { display: block; width: 100%; height: auto; }
+  .bplus-svg text { font-family: 'JetBrains Mono', monospace; }
+  .bplus-node rect { transition: all 0.2s ease; }
+  .node-root rect { fill: rgba(167,139,250,0.18); stroke: #a78bfa; stroke-width: 1.5; }
+  .node-internal rect { fill: rgba(99,102,241,0.14); stroke: #818cf8; stroke-width: 1.5; }
+  .node-leaf rect { fill: rgba(15,23,42,0.85); stroke: #64748b; stroke-width: 1.5; }
+  .node-hit rect { fill: rgba(52,211,153,0.22) !important; stroke: #34d399 !important; stroke-width: 2.2 !important; filter: drop-shadow(0 0 6px rgba(52,211,153,0.45)); }
+  .node-scan rect { fill: rgba(167,139,250,0.18) !important; stroke: #a78bfa !important; stroke-width: 1.8 !important; }
+  .node-skip rect { fill: rgba(15,23,42,0.35) !important; stroke: #334155 !important; opacity: 0.45 !important; }
+  .leaf-rows text { fill: #94a3b8; font-size: 12px; }
+  .row-hit text { fill: #34d399 !important; font-weight: 600; }
+  .row-scan text { fill: #c4b5fd !important; }
+  .row-skip text { fill: #475569 !important; opacity: 0.7; }
+  .arrow { stroke: #64748b; stroke-width: 1.2; fill: none; }
+  .arrow-active { stroke: #34d399; stroke-width: 2.4; fill: none; filter: drop-shadow(0 0 3px rgba(52,211,153,0.6)); }
+  .arrow-chain { stroke: #fb923c; stroke-width: 2; fill: none; stroke-dasharray: 5 3; }
+  .arrow-chain-active { stroke: #fbbf24; stroke-width: 2.4; fill: none; stroke-dasharray: 5 3; }
+
+  /* ── 索引叶子表 ── */
+  .leaf-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .leaf-table thead th {
+    background: #0f172a; color: #cbd5e1; font-weight: 600; padding: 10px 12px;
+    text-align: center; border-bottom: 1.5px solid #334155; position: relative;
+  }
+  .leaf-table tbody td {
+    padding: 10px 12px; text-align: center; border-bottom: 1px solid #1e293b;
+    color: #e2e8f0; font-family: inherit;
+  }
+  .leaf-table .row-hit td { background: rgba(52,211,153,0.18); color: #34d399; font-weight: 600; }
+  .leaf-table .row-scan td { background: rgba(167,139,250,0.10); color: #cbd5e1; }
+  .leaf-table .row-skip { opacity: 0.35; }
+  .col-active { background: rgba(251,191,36,0.22) !important; color: #fbbf24 !important; }
+  .col-active-head { background: rgba(251,191,36,0.22) !important; color: #fbbf24 !important; }
+
+  /* ── B+ 树叶子链表 ── */
+  .leaf-chain { margin-top: 22px; padding: 14px; background: rgba(15,23,42,0.4); border-radius: 8px; border: 1px solid #1e293b; }
+  .leaf-chain-title { font-size: 11px; color: #7d8db0; margin-bottom: 10px; letter-spacing: 0.05em; }
+  .chain-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+  .chain-cell {
+    min-width: 56px; padding: 8px 10px; border-radius: 5px; font-size: 12px;
+    text-align: center; font-weight: 600; border: 1px solid #334155; background: #0f172a;
+  }
+  .chain-cell.hit { background: rgba(52,211,153,0.22); border-color: #34d399; color: #34d399; }
+  .chain-cell.scan { background: rgba(167,139,250,0.20); border-color: #a78bfa; color: #c4b5fd; }
+  .chain-cell .small { font-size: 9px; color: #94a3b8; font-weight: 400; display: block; margin-top: 2px; }
+  .chain-arrow { color: #475569; font-size: 14px; }
+
+  /* ── EXPLAIN 模拟框 ── */
+  .explain-box { margin-top: 18px; padding: 14px 18px; background: rgba(15,23,42,0.7); border-radius: 8px; border: 1px solid #1e293b; font-size: 13px; }
+  .explain-title { font-size: 11px; color: #94a3b8; margin-bottom: 8px; letter-spacing: 0.05em; }
+  .explain-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+  .explain-cell { padding: 8px 10px; background: #0f172a; border-radius: 5px; border: 1px solid #1e293b; }
+  .explain-cell .label { font-size: 9px; color: #7d8db0; letter-spacing: 0.05em; margin-bottom: 3px; }
+  .explain-cell .val { font-size: 13px; color: #f1f5f9; font-weight: 600; }
+  .explain-cell.ok .val { color: #34d399; }
+  .explain-cell.bad .val { color: #fb7185; }
+  .explain-cell.warn .val { color: #fbbf24; }
+
+  /* ── 说明区 ── */
+  .explanation-card { border: 1px solid #1e293b; border-radius: 12px; background: rgba(15,23,42,0.5); padding: 18px 22px; margin-bottom: 14px; }
+  .explanation-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .explanation-head .verdict-badge { padding: 3px 10px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+  .explanation-head h3 { font-size: 15px; color: #f1f5f9; font-weight: 600; }
+  .explanation-body { font-size: 13px; color: #a5b4cc; line-height: 1.75; }
+  .explanation-body code { background: #0f172a; color: #c4b5fd; padding: 2px 7px; border-radius: 3px; font-size: 12px; border: 1px solid #1e293b; }
+  .explanation-body b { color: #f1f5f9; font-weight: 600; }
+  .explanation-body .hl-green { color: #34d399; font-weight: 600; }
+  .explanation-body .hl-red { color: #fb7185; font-weight: 600; }
+  .explanation-body .hl-yellow { color: #fbbf24; font-weight: 600; }
+
+  /* ── 底部 3 张总结卡片 ── */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 16px 18px; }
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+  .card-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; }
+  .card ul { list-style: none; }
+  .card li { font-size: 13px; color: #a5b4cc; line-height: 1.75; padding-left: 14px; position: relative; }
+  .card li::before { content: '·'; position: absolute; left: 4px; color: #a78bfa; font-weight: 700; }
+  .card li b { color: #e2e8f0; font-weight: 600; }
+  .card li code { background: #0f172a; color: #c4b5fd; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+
+  /* ── SQL 块 ── */
+  .sql-block { background: #0b1220; border: 1px solid #1e293b; border-radius: 6px; padding: 10px 14px; font-size: 13px; color: #c4b5fd; margin: 10px 0; }
+  .kw { color: #a78bfa; font-weight: 600; }
+  .str { color: #fbbf24; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>Q6 · 联合索引最左前缀原理 · MySQL 8.0 · 6 场景交互</h1>
+        <div class="subtitle">idx_name_age(name, age) · 联合索引 · users 表 18 行真实数据 · 3 层 B+ 树（1 Root + 3 Internal + 6 Leaves） · 点任一场景看 EXPLAIN、命中行、扫描路径</div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbar').classList.toggle('open')">⋯</button>
+      <div class="toolbar-actions">
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 6 个场景按钮 ── -->
+  <div class="scenarios" id="scenarios"></div>
+
+  <!-- ── Legend ── -->
+  <div class="legend">
+    <span><span class="sw" style="background:#34d399"></span>命中行（走索引取出）</span>
+    <span><span class="sw" style="background:#a78bfa"></span>扫描指针经过</span>
+    <span><span class="sw" style="background:#fbbf24"></span>本次真正使用的索引列</span>
+    <span><span class="sw" style="background:rgba(167,139,250,0.10)"></span>未命中 / 全表扫</span>
+  </div>
+
+  <!-- ── 主图表卡片 ── -->
+  <div class="diagram-card">
+    <div class="diagram-card-body">
+
+      <div class="bplus-card">
+        <div class="bplus-title">
+          🌲 B+ 树结构（idx_name_age 联合索引 · Root → Internal → Leaves）
+          <span class="badge">点切换场景看扫描路径</span>
+        </div>
+        <svg class="bplus-svg" id="bplus-svg" viewBox="0 0 1750 720" preserveAspectRatio="xMidYMid meet"></svg>
+        <div class="tree-legend">
+          <span style="color:#a78bfa">▢</span> 内部节点（Root）
+          <span style="color:#94a3b8; margin-left:14px">▢</span> 叶子节点
+          <span style="color:#34d399; margin-left:14px">━━</span> 扫描命中
+          <span style="color:#fb923c; margin-left:14px">┄┄</span> 叶子链表
+        </div>
+      </div>
+
+      <div style="font-size:12px; color:#7d8db0; margin-bottom:8px;">📋 叶子节点 · 按字典序 (name, age) 排序 · 链表连接（数据：users 表前 18 行真实样本）</div>
+      <table class="leaf-table" id="leaf-table"></table>
+
+      <div class="leaf-chain">
+        <div class="leaf-chain-title">🔗 叶子链表（按 (name, age) 顺序遍历 =「走索引」）</div>
+        <div class="chain-row" id="chain-row"></div>
+      </div>
+
+      <div class="explain-box">
+        <div class="explain-title">📊 EXPLAIN 模拟输出</div>
+        <div class="explain-grid" id="explain-grid"></div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ── 详细说明 ── -->
+  <div class="explanation-card" id="explanation-card"></div>
+
+  <!-- ── 底部 3 张总结卡 ── -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#a78bfa"></div>
+        <h3>核心原理</h3>
+      </div>
+      <ul>
+        <li><b>本质</b>：联合索引 idx_name_age 按 <code>(name, age)</code> 整体排序，叶子存 (name, age) + 聚簇 id</li>
+        <li><b>排序规则</b>：先按 a 排序，a 相同按 b 排序，b 相同按 c 排序</li>
+        <li><b>最左前缀</b>：从最左列开始匹配，<b>不能跳过中间列</b>，但可以只用前缀列</li>
+        <li><b>范围截断</b>：遇到范围查询 <code>b &gt; 2</code> 后，b 之后的 c 就走不到索引</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#fb7185"></div>
+        <h3>失效原因</h3>
+      </div>
+      <ul>
+        <li><b>跳过头部列</b>：<code>WHERE b=2</code> 没 a → b 在链表中<b>无序</b> → 全表扫</li>
+        <li><b>中间列断层</b>：<code>WHERE a=1 AND c=3</code> a 走，c 失效（c 不能跳过 b）</li>
+        <li><b>范围断后</b>：<code>WHERE a=1 AND b&gt;2 AND c=3</code> b 用范围后 c 失效</li>
+        <li>失效根本原因：<b>破坏 B+ 树的有序性</b></li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#34d399"></div>
+        <h3>实战建议</h3>
+      </div>
+      <ul>
+        <li><b>列顺序</b>：区分度高 + 常用等值放前，范围列放最后</li>
+        <li><b>建索引</b>：<code>(a, b)</code> ≠ <code>(b, a)</code> → 顺序就是「最左」</li>
+        <li><b>覆盖索引</b>：经常查 <code>(a, b)</code> → 直接命中，不回表</li>
+        <li>验证：<code>EXPLAIN</code> 看 <code>key_len</code> 算出用了几列</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>数据库面试专项 · Q6 配图 · @杨海波 (Setsuna Yang)</span>
+    <span>idx_name_age(name, age) · 18 行 · 6 场景交互 · 3 层 B+ 树</span>
+  </div>
+
+</div>
+
+<script>
+// ============ 数据（users 表实际数据，按 (name, age) 索引排序） ============
+// 数据来源：doc/database/sql/00_init.sql users 表前 18 行真实样本
+// 联合索引：idx_name_age (name, age) → 叶子节点按 (name, age) 字典序 + id 聚簇指针
+// 数据来源：users 表前 30 行（真实姓）+ 同姓扩展（让叶子内 age 严格升序，
+//          凸显联合索引第二列的"局部有序性"）。
+// 字典序全序：李<梁<林<刘<马<孙<吴<谢<徐<杨<郑<周<朱
+const USERS = [
+  // === L1：李娜×3（同段 age 严格升序 25→28→32） ===
+  { id: 31, name: '李娜', age: 25, phone: '13800000031', status: 1 },
+  { id:  3, name: '李娜', age: 28, phone: '13800000003', status: 1 },
+  { id: 32, name: '李娜', age: 32, phone: '13800000032', status: 1 },
+
+  // === L2：梁勇 + 林萍×2（林萍内 age 升序 28→33） ===
+  { id: 21, name: '梁勇', age: 27, phone: '13800000021', status: 1 },
+  { id: 33, name: '林萍', age: 28, phone: '13800000033', status: 1 },
+  { id: 18, name: '林萍', age: 33, phone: '13800000018', status: 1 },
+
+  // === L3：刘洋 + 马琳×2（马琳内 age 升序 24→28） ===
+  { id:  4, name: '刘洋', age: 35, phone: '13800000004', status: 0 },
+  { id: 34, name: '马琳', age: 24, phone: '13800000034', status: 1 },
+  { id: 13, name: '马琳', age: 28, phone: '13800000013', status: 1 },
+
+  // === L4：孙浩 + 吴强×2（吴强内 age 升序 31→34） ===
+  { id: 12, name: '孙浩', age: 38, phone: '13800000012', status: 1 },
+  { id: 35, name: '吴强', age: 31, phone: '13800000035', status: 1 },
+  { id: 10, name: '吴强', age: 34, phone: '13800000010', status: 1 },
+
+  // === L5：谢军 + 徐丽 + 杨杰（独特名段，无局部 age 顺序） ===
+  { id: 23, name: '谢军', age: 29, phone: '13800000023', status: 1 },
+  { id: 11, name: '徐丽', age: 27, phone: '13800000011', status: 1 },
+  { id:  6, name: '杨杰', age: 40, phone: '13800000006', status: 1 },
+
+  // === L6：郑华 + 周婷 + 朱凯（独特名段） ===
+  { id: 20, name: '郑华', age: 40, phone: '13800000020', status: 1 },
+  { id:  9, name: '周婷', age: 29, phone: '13800000009', status: 1 },
+  { id: 14, name: '朱凯', age: 32, phone: '13800000014', status: 1 },
+];
+
+// ============ B+ 树结构定义 ============
+// 3 层典型 B+ 树：1 Root + 3 Internal + 6 Leaves（每叶 3 行 = 18 行）
+// 关键设计：每个内部节点的「分隔键」= 该子树中 (name, age) 最大项
+// 子树内部：同 name 内 age 升序（局部）；不同 name 切换时 age 重置
+const TREE = {
+  root: {
+    x: 595, y: 30, w: 560, h: 180,
+    keys: [
+      { label: '林萍 33', isSep: true },
+      { label: '吴强 34', isSep: true },
+    ],
+    children: ['I1', 'I2', 'I3'],
+  },
+  internals: [
+    { id: 'I1', x: 15,   y: 250, w: 560, h: 190, label: 'I₁',
+      keys: [{ label: '梁勇 27', isSep: true }],
+      leaves: ['L1', 'L2'] },
+    { id: 'I2', x: 595,  y: 250, w: 560, h: 190, label: 'I₂',
+      keys: [{ label: '刘洋 35', isSep: true }],
+      leaves: ['L3', 'L4'] },
+    { id: 'I3', x: 1175, y: 250, w: 560, h: 190, label: 'I₃',
+      keys: [{ label: '徐丽 27', isSep: true }],
+      leaves: ['L5', 'L6'] },
+  ],
+  leaves: [
+    { id: 'L1', x: 20,   rows: [0, 1, 2] },
+    { id: 'L2', x: 300,  rows: [3, 4, 5] },
+    { id: 'L3', x: 600,  rows: [6, 7, 8] },
+    { id: 'L4', x: 880,  rows: [9, 10, 11] },
+    { id: 'L5', x: 1180, rows: [12, 13, 14] },
+    { id: 'L6', x: 1460, rows: [15, 16, 17] },
+  ],
+  leafW: 270,
+  leafY: 500,
+  leafH_PER_ROW: 38,
+  leafPAD: 56,
+};
+
+// 工具
+const userIdx = (n) => USERS.findIndex(u => u.name === n);
+
+// ============ 6 个场景 ============
+const SCENARIOS = [
+  {
+    key: 'name', label: '场景 ①', sql: "WHERE name = '李娜'",
+    verdict: 'GOOD', verdictText: '✅ 全走 + 第二列赠送排序',
+    usedCols: ['name'], hitIds: [0, 1, 2],
+    explain: { type: 'ref', key: 'idx_name_age', key_len: '202', rows: '3', extra: 'NULL' },
+    explTitle: 'name 命中整段 · age 局部有序（最大的隐藏价值）',
+    explBody: `
+      <p><b>核心</b>：name='李娜' 命中 L1 全部 3 行（<code>李娜25, 李娜28, 李娜32</code>）→ <span class="hl-green">顺序读出，age 自动 25→28→32 升序</span>。</p>
+      <p>扫描路径：<code>Root → I₁ → L1（3 行连续命中）</code></p>
+      <p class="sql-block"><span class="kw">EXPLAIN</span>: <code>type=ref</code>，<code>key_len=202</code>，<span class="hl-green">3 行</span>。</p>
+      <p>👉 <b>联合索引最大的隐藏价值</b>：<span class="hl-green">只用 name 也得到 age 升序结果</span>。如果你想 <code>WHERE name=? ORDER BY age</code>，<b>不用再加 filesort</b>。</p>
+    `
+  },
+  {
+    key: 'name_age', label: '场景 ②', sql: "WHERE name = '李娜' AND age = 28",
+    verdict: 'GOOD', verdictText: '✅ 双列精确',
+    usedCols: ['name','age'], hitIds: [1],
+    explain: { type: 'ref', key: 'idx_name_age', key_len: '206', rows: '1', extra: 'NULL' },
+    explTitle: '联合索引双列精确命中',
+    explBody: `
+      <p><b>核心</b>：name='李娜' 定位 L1 → age=28 段内二分 → <b>命中李娜 28（id=3）</b>。</p>
+      <p>扫描路径：<code>Root → I₁ → L1 第 2 行</code></p>
+      <p class="sql-block"><span class="kw">EXPLAIN</span>: <code>key_len=206</code>（name 202 + age 4），<span class="hl-green">name + age 都用上</span>。</p>
+      <p>👉 同段内 age 有序让"等值查找"成本极低。如果没有联合索引，<b>需扫完 L1 全部 3 行再逐一过滤</b>。</p>
+    `
+  },
+  {
+    key: 'covering', label: '场景 ③', sql: "SELECT id, name, age WHERE name='李娜' AND age=28",
+    verdict: 'GOOD', verdictText: '✅ 覆盖索引',
+    usedCols: ['name','age'], hitIds: [1], covering: true,
+    explain: { type: 'ref', key: 'idx_name_age', key_len: '206', rows: '1', extra: 'Using index' },
+    explTitle: '覆盖索引：0 次回表',
+    explBody: `
+      <p><b>核心</b>：SELECT 列表 <code>(id, name, age)</code> 全部在 idx_name_age 叶子节点里（叶子 = (name, age, id)）→ <span class="hl-green">不用回聚簇索引</span>。</p>
+      <p class="sql-block"><span class="kw">EXPLAIN</span>: <span class="hl-green">Extra=Using index</span> 是覆盖索引标志。</p>
+      <p>👉 联合索引设计核心法则：<b>常用查询列全在索引里</b> → 0 回表。</p>
+    `
+  },
+  {
+    key: 'skip', label: '场景 ④', sql: "WHERE age = 28",
+    verdict: 'BAD', verdictText: '❌ 全表扫 · age 全局乱序',
+    usedCols: [], hitIds: [], scanAll: true,
+    explain: { type: 'ALL', key: 'NULL', key_len: 'NULL', rows: '18', extra: 'Using where' },
+    explTitle: '跳过 name · 第二列"跨段无序"是最经典失效',
+    explBody: `
+      <p><span class="hl-red">跳过第 1 列 name</span> → age 在 idx_name_age 中<span class="hl-red">全局无序</span>。</p>
+      <p class="sql-block">全局视角的 age 序列（按叶子顺序）：<br>
+      L1: 25, 28, 32 <span class="hl-green">↑ 局部有序</span><br>
+      L2: 27, <b style="color:#fb7185">28</b>, 33 <span class="hl-green">↑ 局部有序</span><br>
+      L3: 35, 24, <b style="color:#fb7185">28</b> <span style="color:#fb7185">↓ 跨段时 age 重置变小</span><br>
+      L4: 38, 31, 34 <span class="hl-red">↑ 又乱</span><br>
+      L5: 29, 27, 40 完全不规律<br>
+      L6: 40, 29, 32 完全不规律</p>
+      <p>👉 <b>核心观察</b>：联合索引仅在<span class="hl-yellow">"同 name 段"</span>内保持 age 严格升序；<span class="hl-red">跨 name 时 age 立刻"重置"（不是有序的）</span>。这就是为什么"只查 age"必须扫整棵树。</p>
+    `
+  },
+  {
+    key: 'like', label: '场景 ⑤', sql: "WHERE name = '林萍'",
+    verdict: 'GOOD', verdictText: '✅ 同段年龄升序',
+    usedCols: ['name'], hitIds: [4, 5],
+    explain: { type: 'ref', key: 'idx_name_age', key_len: '202', rows: '2', extra: 'NULL' },
+    explTitle: '同 name 多行 · age 自然有序',
+    explBody: `
+      <p><b>核心</b>：name='林萍' 命中 L2 第 2、3 行（<code>林萍28, 林萍33</code>）→ <span class="hl-green">age 自动 28 → 33 升序</span>。</p>
+      <p>👉 注意：上次是 where name='李娜'，整段都是李娜；这次是 name='林萍'，只是「林萍段」2 行。<br>
+      <b>关键</b>：每个 name 段之间才出现"<span class="hl-red">age 重置</span>"，所以 <code>WHERE name IN ('李娜','林萍') ORDER BY name, age</code> 同样零 filesort。</p>
+    `
+  },
+  {
+    key: 'range_cut', label: '场景 ⑥', sql: "WHERE name > '梁勇' AND age = 33",
+    verdict: 'WARN', verdictText: '⚠️ name 范围 → age 截断',
+    usedCols: ['name'], hitIds: [5], filterAge: true,
+    explain: { type: 'range', key: 'idx_name_age', key_len: '202', rows: '1', extra: 'Using where' },
+    explTitle: 'name 范围后 · 第二列"局部有序"被打断',
+    explBody: `
+      <p><b>核心</b>：name > '梁勇' 是<span class="hl-yellow">范围</span> → MySQL 从 L2 第 2 行起顺序扫描（梁勇之后的所有行）。</p>
+      <p>扫描区间：<code>L2(林萍28, 林萍33) → L3(刘洋, 马琳×2) → L4(孙浩, 吴强×2) → L5 → L6</code> → <b>共 14 行</b>。</p>
+      <p>但 server 层过滤 age=33 → <span class="hl-yellow">只匹配 林萍33</span>（其余 age=33 的都不在范围内）。</p>
+      <p class="sql-block"><span class="kw">EXPLAIN</span>: <code>type=range</code>，<code>key_len=202</code>（<span class="hl-yellow">age 没贡献长度</span>）。</p>
+      <p>👉 <b>为什么 age 不参与索引</b>：name 是范围时，age 的"局部有序"被打破——跨段后 age 不连续，优化器宁愿 <span class="hl-yellow">server 过滤</span> 更安全。所以"<span class="hl-yellow">只走 name 段内有序的部分</span>"无法靠 idx 完成。</p>
+    `
+  },
+];
+
+// ============ 渲染主逻辑 ============
+let curIdx = 0;
+
+function render() {
+  const s = SCENARIOS[curIdx];
+
+  // 1. 按钮高亮
+  document.querySelectorAll('.scenario-btn').forEach((btn, i) => {
+    btn.classList.toggle('active', i === curIdx);
+  });
+
+  // 2. 渲染叶子表（按 (name, age) 排序的 USERS）
+  const tbl = document.getElementById('leaf-table');
+  let html = '<thead><tr><th>#</th><th class="col-name">name</th><th class="col-age">age</th><th>id (PK)</th><th>说明</th></tr></thead><tbody>';
+  USERS.forEach((u, i) => {
+    let rowCls = '';
+    let note = '';
+    const hitSet = new Set(s.hitIds);
+    if (s.scanAll) {
+      rowCls = 'row-skip';
+      note = '⚠ 全表扫遍历';
+    } else if (hitSet.has(i)) {
+      if (s.filterAge) {
+        const ok = u.age === 33;
+        rowCls = ok ? 'row-hit' : 'row-scan';
+        note = ok ? '✅ 命中（age 符合）' : '🟡 取出后 server 过滤 age';
+      } else if (s.covering) {
+        rowCls = 'row-hit';
+        note = '✅ 命中 + 覆盖索引';
+      } else {
+        rowCls = 'row-hit';
+        note = '✅ 命中';
+      }
+    } else if (s.key === 'range_cut' && s.hitIds.length > 0) {
+      // 范围截断：扫描路径经过的非命中行
+      const maxHitIdx = Math.max(...s.hitIds);
+      if (i > maxHitIdx - 2 && i < maxHitIdx + 4) {
+        rowCls = 'row-scan';
+        note = '🔍 范围扫描经过';
+      }
+    }
+    const nameCls = s.usedCols.includes('name') ? 'col-active' : '';
+    const ageCls  = s.usedCols.includes('age')  ? 'col-active' : '';
+    html += `<tr class="${rowCls}">
+      <td>${i + 1}</td>
+      <td class="${nameCls} col-name">${u.name}</td>
+      <td class="${ageCls} col-age">${u.age}</td>
+      <td style="color:#94a3b8; font-size:12px;">${u.id}</td>
+      <td style="text-align:left; font-size:11px; color:#94a3b8;">${note}</td>
+    </tr>`;
+  });
+  html += '</tbody>';
+  tbl.innerHTML = html;
+  // 重设表头列高亮
+  const ths = tbl.querySelectorAll('thead th');
+  if (s.usedCols.includes('name')) ths[1].classList.add('col-active-head');
+  if (s.usedCols.includes('age'))  ths[2].classList.add('col-active-head');
+
+  // 3. 链表可视化
+  const chain = document.getElementById('chain-row');
+  let chHtml = '';
+  USERS.forEach((u, i) => {
+    if (i > 0) chHtml += '<span class="chain-arrow">→</span>';
+    let cls = '';
+    const hitSet = new Set(s.hitIds);
+    if (s.scanAll) cls = 'scan';
+    else if (hitSet.has(i)) cls = 'hit';
+    chHtml += `<div class="chain-cell ${cls}">${u.name} <span style="color:#fbbf24">${u.age}</span><span class="small">叶子节点</span></div>`;
+  });
+  chain.innerHTML = chHtml;
+
+  // 4. EXPLAIN 输出
+  const exp = document.getElementById('explain-grid');
+  const e = s.explain;
+  const typeCls = e.type === 'ALL' ? 'bad' : (e.type === 'range' ? 'warn' : 'ok');
+  const keyCls  = e.key === 'NULL' ? 'bad' : 'ok';
+  const lenCls  = e.key_len === 'NULL' ? 'bad' : 'ok';
+  const extraCls = e.extra.includes('Using index') ? 'ok' : (e.extra === 'NULL' ? 'ok' : 'warn');
+  exp.innerHTML = `
+    <div class="explain-cell ${typeCls}"><div class="label">type</div><div class="val">${e.type}</div></div>
+    <div class="explain-cell ${keyCls}"><div class="label">key</div><div class="val">${e.key}</div></div>
+    <div class="explain-cell ${lenCls}"><div class="label">key_len</div><div class="val">${e.key_len}</div></div>
+    <div class="explain-cell"><div class="label">rows</div><div class="val">${e.rows}</div></div>
+    <div class="explain-cell ${extraCls}"><div class="label">Extra</div><div class="val">${e.extra}</div></div>
+  `;
+
+  // 5. 详细说明卡片
+  const vCls = s.verdict === 'GOOD' ? 'v-good' : s.verdict === 'BAD' ? 'v-bad' : 'v-warn';
+  document.getElementById('explanation-card').innerHTML = `
+    <div class="explanation-head">
+      <span class="verdict-badge ${vCls}">${s.verdictText}</span>
+      <h3>${s.label} · <code style="color:#c4b5fd;">${s.sql}</code></h3>
+    </div>
+    <div class="explanation-body">
+      <h4 style="color:#a78bfa; font-size:13px; margin-bottom:6px;">📖 ${s.explTitle}</h4>
+      ${s.explBody}
+    </div>
+  `;
+
+  // B+ 树视图（同步刷新）
+  renderBPlus();
+}
+
+// ============ B+ 树渲染（3 层：Root → Internal → Leaves） ============
+function renderBPlus() {
+  const s = SCENARIOS[curIdx];
+  const hitSet = new Set(s.hitIds);
+  const out = [];
+
+  // ── 计算每层节点的状态 ──
+  // Internal 状态：含命中叶子 → hit；与命中范围相交但未命中 → scan；其余 skip
+  // Leaf 状态：含命中行 → hit；路径经过但无命中 → scan；其余 skip
+  function leafState(leaf) {
+    if (s.scanAll) return 'skip';
+    if (leaf.rows.some(id => hitSet.has(id))) return 'hit';
+    // 部分范围场景（范围截断）：路径经过
+    if (s.key === 'range_cut') return 'scan';
+    return 'skip';
+  }
+  function internalState(internal) {
+    if (s.scanAll) return 'skip';
+    return internal.leaves.some(lid => {
+      const lf = TREE.leaves.find(l => l.id === lid);
+      return leafState(lf) !== 'skip';
+    }) ? 'hit' : 'skip';
+  }
+  function rootState() {
+    if (s.scanAll) return 'skip';
+    return TREE.internals.some(i => internalState(i) === 'hit') ? 'hit' : 'skip';
+  }
+  function rowState(idxInUsers) {
+    if (s.scanAll) return 'skip';
+    if (hitSet.has(idxInUsers)) {
+      // 范围截断场景：name 命中行中要 server 层过滤 age
+      if (s.filterAge) {
+        const u = USERS[idxInUsers];
+        if (u.age === 33) return 'hit';
+        return 'scan';
+      }
+      return 'hit';
+    }
+    // 范围截断：扫描路径经过的非命中行
+    if (s.key === 'range_cut' && s.hitIds.length > 0) {
+      const minHitIdx = Math.min(...s.hitIds);
+      const maxHitIdx = Math.max(...s.hitIds);
+      if (idxInUsers >= minHitIdx && idxInUsers <= maxHitIdx) return 'scan';
+      // 范围截断场景下后续叶子（非命中区间）也会被扫
+      const minIdx = Math.min(...s.hitIds);
+      if (idxInUsers > maxHitIdx) return 'scan';
+    }
+    return 'skip';
+  }
+
+  // ═══════ 1. defs ═══════
+  out.push(`
+    <defs>
+      <marker id="bp-arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+        <polygon points="0 0, 9 3.5, 0 7" fill="#64748b" />
+      </marker>
+      <marker id="bp-arrow-active" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+        <polygon points="0 0, 9 3.5, 0 7" fill="#34d399" />
+      </marker>
+      <marker id="bp-arrow-orange" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+        <polygon points="0 0, 9 3.5, 0 7" fill="#fb923c" />
+      </marker>
+      <marker id="bp-arrow-orange-rev" markerWidth="9" markerHeight="7" refX="1" refY="3.5" orient="auto-start-reverse">
+        <polygon points="0 0, 9 3.5, 0 7" fill="#fb923c" />
+      </marker>
+    </defs>
+  `);
+
+  // ═══════ 2. 三层连接线（先画，在最底层） ═══════
+  // Root → Internal
+  TREE.internals.forEach((intn, i) => {
+    const nInternal = TREE.internals.length;
+    const splitX = TREE.root.x + TREE.root.w * (i + 1) / nInternal;
+    const fromY = TREE.root.y + TREE.root.h;
+    const toX = intn.x + intn.w / 2;
+    const toY = intn.y;
+    const st = internalState(intn);
+    const cls = st === 'hit' ? 'arrow-active' : 'arrow';
+    const marker = st === 'hit' ? 'bp-arrow-active' : 'bp-arrow';
+    out.push(`<path class="${cls}" d="M${splitX},${fromY} L${toX},${toY}" marker-end="url(#${marker})" />`);
+  });
+
+  // Internal → Leaves
+  TREE.internals.forEach(intn => {
+    intn.leaves.forEach((lid, j) => {
+      const leaf = TREE.leaves.find(l => l.id === lid);
+      const nLeaves = intn.leaves.length;
+      const splitX = intn.x + intn.w * (j + 1) / nLeaves;
+      const fromY = intn.y + intn.h;
+      const toX = leaf.x + TREE.leafW / 2;
+      const toY = TREE.leafY;
+      const st = leafState(leaf);
+      const cls = st === 'hit' ? 'arrow-active' : 'arrow';
+      const marker = st === 'hit' ? 'bp-arrow-active' : 'bp-arrow';
+      out.push(`<path class="${cls}" d="M${splitX},${fromY} L${toX},${toY}" marker-end="url(#${marker})" />`);
+    });
+  });
+
+  // 叶子间双向链表（横向虚线）
+  for (let i = 0; i < TREE.leaves.length - 1; i++) {
+    const a = TREE.leaves[i];
+    const b = TREE.leaves[i + 1];
+    const x1 = a.x + TREE.leafW;
+    const x2 = b.x;
+    const y = TREE.leafY + 16;
+    const sa = leafState(a);
+    const sb = leafState(b);
+    const active = (sa === 'hit' || sa === 'scan') && (sb === 'hit' || sb === 'scan');
+    const cls = active ? 'arrow-chain-active' : 'arrow-chain';
+    // 双向箭头
+    if (active) {
+      out.push(`<path class="${cls}" d="M${x2 - 6},${y} L${x1 + 6},${y}" marker-end="url(#bp-arrow-orange-rev)" />`);
+    }
+    out.push(`<path class="${cls}" d="M${x1},${y} L${x2},${y}" marker-end="url(#bp-arrow-orange)" />`);
+  }
+
+  // ═══════ 3. Root 节点（指针格子化） ═══════
+  const rSt = rootState();
+  const rCls = rSt === 'hit' ? 'node-hit' : (s.scanAll ? 'node-skip' : 'node-root');
+  const rActive = (s.usedCols.includes('name') || s.scanAll) && !s.scanAll;
+  out.push(`
+    <g class="bplus-node ${rCls}" transform="translate(${TREE.root.x}, ${TREE.root.y})">
+      <rect width="${TREE.root.w}" height="${TREE.root.h}" rx="8" />
+      <text x="${TREE.root.w / 2}" y="28" fill="#c4b5fd" font-size="14" font-weight="700" text-anchor="middle" font-weight="600" letter-spacing="0.04em">Root · 内部节点 (Level 0)</text>
+      <text x="${TREE.root.w / 2}" y="48" fill="#94a3b8" font-size="12" text-anchor="middle">指向 ${TREE.root.children.length} 个子节点（各含指针 + 子树范围）</text>
+      <line x1="0" y1="68" x2="${TREE.root.w}" y2="40" stroke="#334155" stroke-width="1" />
+  `);
+  // ── 3 个指针格子（指向 3 个 internal）──
+  const rNCells = TREE.root.children.length;
+  for (let i = 0; i < rNCells; i++) {
+    const cw = TREE.root.w / rNCells;
+    const cx = i * cw + cw / 2;
+    const childIntId = TREE.root.children[i];
+    // 比较条件（边界）
+    let cond;
+    if (i === 0)                      cond = `< ${TREE.root.keys[0].label}`;
+    else if (i === rNCells - 1)       cond = `≥ ${TREE.root.keys[i - 1].label}`;
+    else                              cond = `[${TREE.root.keys[i - 1].label}, ${TREE.root.keys[i].label})`;
+    // 子树范围
+    const intn = TREE.internals.find(x => x.id === childIntId);
+    const allRows = intn ? intn.leaves.flatMap(lid => TREE.leaves.find(l => l.id === lid).rows) : [];
+    const u0 = USERS[Math.min(...allRows)];
+    const u1 = USERS[Math.max(...allRows)];
+    const rangeShort = `${u0.name}..${u1.name}`;
+    const lblColor = rActive ? '#fbbf24' : '#a5b4cc';
+    out.push(`
+      <text x="${cx}" y="92" fill="${lblColor}" font-size="17" text-anchor="middle" font-weight="600">${cond}</text>
+      <text x="${cx}" y="124" fill="#a78bfa" font-size="22" text-anchor="middle" font-weight="700">↓ ${childIntId}</text>
+      <text x="${cx}" y="150" fill="#67e8f9" font-size="14" text-anchor="middle">(${rangeShort})</text>
+      <text x="${cx}" y="167" fill="#64748b" font-size="11" text-anchor="middle">${intn ? intn.leaves.join(',') : ''}</text>
+    `);
+    // 格子间分隔线
+    if (i > 0) {
+      out.push(`<line x1="${i * cw}" y1="42" x2="${i * cw}" y2="${TREE.root.h - 2}" stroke="#1e293b" stroke-width="1" />`);
+    }
+  }
+  out.push(`</g>`);
+
+  // ═══════ 4. Internal 节点（指针格子化） ═══════
+  TREE.internals.forEach(intn => {
+    const st = internalState(intn);
+    const stateCls = st === 'hit' ? 'node-hit' : 'node-skip';
+    const kActive = s.usedCols.includes('name') && (st === 'hit') && !s.scanAll;
+    out.push(`
+      <g class="bplus-node node-internal ${stateCls}" transform="translate(${intn.x}, ${intn.y})">
+        <rect width="${intn.w}" height="${intn.h}" rx="7" />
+        <text x="20" y="32" fill="#c4b5fd" font-size="17" font-weight="700">${intn.label}</text>
+        <text x="${intn.w - 20}" y="32" fill="#7d8db0" font-size="9" text-anchor="end">Level 1</text>
+        <text x="${intn.w / 2}" y="56" fill="#94a3b8" font-size="12" text-anchor="middle">指向 ${intn.leaves.length} 个叶子节点</text>
+        <line x1="0" y1="64" x2="${intn.w}" y2="38" stroke="#334155" stroke-width="1" />
+    `);
+    // ── 每个叶子指针一格 ──
+    const nL = intn.leaves.length;
+    for (let i = 0; i < nL; i++) {
+      const cw = intn.w / nL;
+      const cx = i * cw + cw / 2;
+      const leaf = TREE.leaves.find(l => l.id === intn.leaves[i]);
+      let cond;
+      if (i === 0)             cond = `< ${intn.keys[0].label}`;
+      else if (i === nL - 1)   cond = `≥ ${intn.keys[i - 1].label}`;
+      else                     cond = `[${intn.keys[i - 1].label}, ${intn.keys[i].label})`;
+      const u0 = USERS[leaf.rows[0]];
+      const u1 = USERS[leaf.rows[leaf.rows.length - 1]];
+      const rangeShort = `${u0.name}..${u1.name}`;
+      const condColor = kActive ? '#fbbf24' : '#a5b4cc';
+      out.push(`
+        <text x="${cx}" y="92" fill="${condColor}" font-size="17" text-anchor="middle" font-weight="600">${cond}</text>
+        <text x="${cx}" y="130" fill="#a78bfa" font-size="22" text-anchor="middle" font-weight="700">↓ ${leaf.id}</text>
+        <text x="${cx}" y="156" fill="#67e8f9" font-size="14" text-anchor="middle">(${rangeShort})</text>
+        <text x="${cx}" y="180" fill="#64748b" font-size="11" text-anchor="middle">${leaf.rows.length} 行</text>
+      `);
+      if (i > 0) {
+        out.push(`<line x1="${i * cw}" y1="40" x2="${i * cw}" y2="${intn.h - 2}" stroke="#1e293b" stroke-width="1" />`);
+      }
+    }
+    out.push(`</g>`);
+  });
+
+  // ═══════ 5. 叶子节点（6 个，含"段内 age↑" 标记） ═══════
+  TREE.leaves.forEach(leaf => {
+    const st = leafState(leaf);
+    const stateCls = st === 'hit' ? 'node-hit' : st === 'scan' ? 'node-scan' : 'node-skip';
+    const firstName = USERS[leaf.rows[0]].name;
+    const lastName  = USERS[leaf.rows[leaf.rows.length - 1]].name;
+    const h = TREE.leafPAD + leaf.rows.length * TREE.leafH_PER_ROW;
+    out.push(`
+      <g class="bplus-node ${stateCls}" transform="translate(${leaf.x}, ${TREE.leafY})">
+        <rect width="${TREE.leafW}" height="${h}" rx="6" />
+        <text x="16" y="26" fill="#c4b5fd" font-size="16" font-weight="700">${leaf.id}</text>
+        <text x="${TREE.leafW - 16}" y="26" fill="#fbbf24" font-size="14" text-anchor="end" font-weight="600">${firstName} … ${lastName}</text>
+        <text x="16" y="46" fill="#94a3b8" font-size="11" letter-spacing="0.04em">同 name 段内 age ↑ 顺序</text>
+        <line x1="0" y1="56" x2="${TREE.leafW}" y2="28" stroke="#334155" stroke-width="1" />
+        <g class="leaf-rows">
+    `);
+    let prevU = null;
+    leaf.rows.forEach((idx, i) => {
+      const u = USERS[idx];
+      const rState = rowState(idx);
+      const rCls = rState === 'hit' ? 'row-hit' : rState === 'scan' ? 'row-scan' : 'row-skip';
+      const y = 56 + (i + 1) * TREE.leafH_PER_ROW - 12;
+      // ── 同段 vs 段切换的可视化 ──
+      let segmentMark = '';
+      let segmentLine = '';
+      if (prevU) {
+        if (u.name === prevU.name) {
+          // 同段：画绿色向上箭头 + age 增量
+          segmentMark = `<text x="10" y="${y - 4}" font-size="17" fill="#34d399" font-weight="700">↑</text>`;
+          segmentLine = `<text x="10" y="${y + 12}" font-size="11" fill="#67e8f9">${prevU.age}→${u.age}</text>`;
+        } else {
+          // 段切换：画红色横线 + 重置标注
+          segmentMark = `<text x="10" y="${y - 4}" font-size="17" fill="#fb7185" font-weight="700">┊</text>`;
+          segmentLine = `<text x="24" y="${y + 12}" font-size="11" fill="#fb7185" font-weight="600">${prevU.name}→${u.name} 重置</text>`;
+        }
+      }
+      out.push(`
+        <g class="${rCls}">
+          ${segmentMark}${segmentLine}
+          <text x="${prevU && u.name !== prevU.name ? 100 : 28}" y="${y}" font-size="15">id=${u.id}</text>
+          <text x="${TREE.leafW - 20}" y="${y}" text-anchor="end" font-size="18" font-weight="600">${u.name} <tspan fill="#fbbf24">${u.age}</tspan></text>
+        </g>
+      `);
+      prevU = u;
+    });
+    out.push(`</g></g>`);
+  });
+
+  // ═══════ 6. 底部路径文字 ═══════
+  let pathText = '';
+  if (s.scanAll) {
+    pathText = '❌ 全表扫：绕开 idx_name_age 直接扫 PK 树';
+  } else if (s.hitIds.length > 0) {
+    const activeInts = TREE.internals.filter(i => internalState(i) === 'hit').map(i => i.label);
+    const activeLeafs = TREE.leaves.filter(l => leafState(l) === 'hit').map(l => l.id);
+    pathText = `✅ 扫描路径： Root → ${activeInts.join(' / ')} → ${activeLeafs.join(' / ')}`;
+  } else {
+    pathText = '⚠️ 索引未命中';
+  }
+  out.push(`<text x="875" y="700" fill="#a5b4cc" font-size="20" text-anchor="middle" font-weight="600">${pathText}</text>`);
+
+  document.getElementById('bplus-svg').innerHTML = out.join('\n');
+}
+
+// ============ 初始化场景按钮 ============
+function buildButtons() {
+  const wrap = document.getElementById('scenarios');
+  SCENARIOS.forEach((s, i) => {
+    const vCls = s.verdict === 'GOOD' ? 'v-good' : s.verdict === 'BAD' ? 'v-bad' : 'v-warn';
+    const btn = document.createElement('button');
+    btn.className = 'scenario-btn' + (i === 0 ? ' active' : '');
+    btn.innerHTML = `
+      <div class="tag">${s.label}</div>
+      <div class="sql">${s.sql}</div>
+      <span class="verdict ${vCls}">${s.verdictText}</span>
+    `;
+    btn.onclick = () => { curIdx = i; render(); };
+    wrap.appendChild(btn);
+  });
+}
+
+buildButtons();
+render();
+
+// ============ 导出（复用 architecture-diagram skill 模板） ============
+function $id(id){return document.getElementById(id);}
+async function capture() {
+  const el = $id('report-container');
+  const rect = el.getBoundingClientRect();
+  return await html2canvas(document.body, {
+    x: rect.left - 32, y: rect.top - 32,
+    width: rect.width + 64, height: rect.height + 64,
+    backgroundColor: '#020617', scale: 2,
+    ignoreElements: e => e.classList && (e.classList.contains('toolbar') || e.classList.contains('toolbar-actions') || e.classList.contains('toolbar-toggle'))
+  });
+}
+function copyAsImage() {
+  capture().then(c => c.toBlob(b => {
+    if (navigator.clipboard && window.ClipboardItem) {
+      navigator.clipboard.write([new ClipboardItem({'image/png': b})]).then(()=>alert('已复制到剪贴板')).catch(()=>alert('复制失败'));
+    } else alert('当前环境不支持剪贴板 API');
+  }));
+}
+function downloadPNG() {
+  capture().then(c => {
+    const a = document.createElement('a');
+    a.download = 'q06-leftmost-prefix.png'; a.href = c.toDataURL('image/png'); a.click();
+  });
+}
+function downloadPDF() {
+  capture().then(c => {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({orientation:'landscape', unit:'px', format:[c.width, c.height]});
+    pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, c.width, c.height);
+    pdf.save('q06-leftmost-prefix.pdf');
+  });
+}
+
+// 暴露给 toolbar onclick
+window.copyAsImage = copyAsImage;
+window.downloadPNG = downloadPNG;
+window.downloadPDF = downloadPDF;
+</script>
+</body>
+</html>

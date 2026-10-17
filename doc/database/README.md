@@ -27,6 +27,7 @@
 | [diagrams/q05-back-to-table-4cases.html](./diagrams/q05-back-to-table-4cases.html) | Q5/Q6 · 回表 4 场景对比 · 可切换交互图（user_big 100万行实测） |
 | [diagrams/q05-back-to-table-4cases.gif](./diagrams/q05-back-to-table-4cases.gif) | 同上 · 4 帧循环（16 秒） |
 | [diagrams/q05-back-to-table-4cases.png](./diagrams/q05-back-to-table-4cases.png) | 同上 · 2x2 网格封面（4 场景一览） |
+| [diagrams/q06-leftmost-prefix.html](./diagrams/q06-leftmost-prefix.html) | Q6 · 联合索引最左前缀 6 场景交互（idx_abc(a,b,c) · 9 行 · 点切换看 EXPLAIN + 命中行 + 失效原因） |
 
 ## 快速开始
 
@@ -63,6 +64,7 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.database.q02.LockLa
 - [x] HTML 配图 · Q1 一行 SELECT 执行过程（11 帧动图）
 - [x] HTML 配图 · Q3 VARCHAR(100) vs VARCHAR(10) 4 层差异（7 帧动图）
 - [x] HTML 配图 · Q5/Q6 回表 4 场景对比（4 场景可切换 + 2x2 封面）
+- [x] HTML 配图 · Q6 最左前缀 6 场景交互（idx_abc · 走/失效/范围截断全覆盖）
 - [ ] HTML 配图（Q12 MVCC / Q15 间隙锁 / Q25 连续登录）
 - [x] SQL+Java 实验 · Q5/Q6 回表 100万行实测（覆盖索引 vs 回表 vs 全表扫 vs 主键定位）
 - [ ] V2 进阶（Redis / 缓存三大问题 / 分布式锁）
