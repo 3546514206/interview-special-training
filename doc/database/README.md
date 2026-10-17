@@ -28,6 +28,8 @@
 | [diagrams/q05-back-to-table-4cases.gif](./diagrams/q05-back-to-table-4cases.gif) | 同上 · 4 帧循环（16 秒） |
 | [diagrams/q05-back-to-table-4cases.png](./diagrams/q05-back-to-table-4cases.png) | 同上 · 2x2 网格封面（4 场景一览） |
 | [diagrams/q06-leftmost-prefix.html](./diagrams/q06-leftmost-prefix.html) | Q6 · 联合索引最左前缀 6 场景交互（idx_abc(a,b,c) · 9 行 · 点切换看 EXPLAIN + 命中行 + 失效原因） |
+| [diagrams/q09-mysql-architecture.html](./diagrams/q09-mysql-architecture.html) | Q9 · MySQL 整体架构 4 层分层 · binlog/redo/undo 落点 · 两阶段提交时序 · 崩溃恢复三种判断 |
+| [diagrams/q09-mysql-logs.html](./diagrams/q09-mysql-logs.html) | **Q9 · MySQL 8 类日志家族全景图** · 用途速查矩阵 · 三件套 2PC 协作 · 4 个运维场景（崩溃/慢查询/同步延迟/误删恢复） |
 
 ## 快速开始
 
@@ -65,6 +67,8 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.database.q02.LockLa
 - [x] HTML 配图 · Q3 VARCHAR(100) vs VARCHAR(10) 4 层差异（7 帧动图）
 - [x] HTML 配图 · Q5/Q6 回表 4 场景对比（4 场景可切换 + 2x2 封面）
 - [x] HTML 配图 · Q6 最左前缀 6 场景交互（idx_abc · 走/失效/范围截断全覆盖）
+- [x] HTML 配图 · Q9 MySQL 整体架构（4 层 + binlog/redo/undo + 2PC 时序 + 崩溃恢复）
+- [x] HTML 配图 · Q9 MySQL 8 类日志家族（三件套 + 5 类排查类 · 用途矩阵 · 4 场景速查）
 - [ ] HTML 配图（Q12 MVCC / Q15 间隙锁 / Q25 连续登录）
 - [x] SQL+Java 实验 · Q5/Q6 回表 100万行实测（覆盖索引 vs 回表 vs 全表扫 vs 主键定位）
 - [ ] V2 进阶（Redis / 缓存三大问题 / 分布式锁）

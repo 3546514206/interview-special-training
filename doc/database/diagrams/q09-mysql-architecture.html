@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Q9 · MySQL 架构图 · binlog / redo / undo 分布与协作</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pZ1ncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; min-height: 100vh; }
+  .container { width: 1280px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #34d399; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(52,211,153,.6); } 70% { box-shadow: 0 0 0 10px rgba(52,211,153,0); } 100% { box-shadow: 0 0 0 0 rgba(52,211,153,0); } }
+  .header h1 { font-size: 21px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 13px; color: #7d8db0; margin-top: 5px; }
+  .toolbar { position: relative; }
+  .toolbar-toggle { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 16px; font-family: inherit; }
+  .toolbar-toggle:hover { color: #e2e8f0; border-color: #475569; }
+  .toolbar-actions { display: none; position: absolute; right: 0; top: 38px; gap: 6px; z-index: 10; }
+  .toolbar.open .toolbar-actions { display: flex; }
+  .toolbar-actions button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; }
+  .toolbar-actions button:hover { color: #f1f5f9; border-color: #64748b; }
+  @media print { .toolbar { display: none !important; } }
+
+  .legend { display: flex; gap: 22px; align-items: center; font-size: 12px; color: #a5b4cc; margin-bottom: 12px; flex-wrap: wrap; }
+  .legend .sw { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  .diagram-card-body { padding: 18px 22px; }
+  svg.diagram { display: block; width: 100%; height: auto; }
+
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 18px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 16px 18px; }
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 12px; }
+  .card-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; }
+  .card ul { list-style: none; }
+  .card li { font-size: 13px; color: #a5b4cc; line-height: 1.75; padding-left: 14px; position: relative; }
+  .card li::before { content: '·'; position: absolute; left: 4px; color: #a78bfa; font-weight: 700; }
+  .card li b { color: #e2e8f0; font-weight: 600; }
+  .card li code { background: #0f172a; color: #c4b5fd; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>Q9 · MySQL 整体架构图 · binlog / redo / undo 分布与协作</h1>
+        <div class="subtitle">4 层分层架构 · 日志落点 · 两阶段提交 · 崩溃恢复 · 配套 Q9 事务 ACID / Q16 三件套 / Q17 2PC</div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbar').classList.toggle('open')">⋯</button>
+      <div class="toolbar-actions">
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><span class="sw" style="background:#22d3ee"></span>连接层</span>
+    <span><span class="sw" style="background:#a78bfa"></span>Server 层（含 binlog）</span>
+    <span><span class="sw" style="background:#34d399"></span>存储引擎层（InnoDB + redo + undo）</span>
+    <span><span class="sw" style="background:#fbbf24"></span>系统文件层（磁盘）</span>
+    <span><span class="sw" style="background:#fb7185"></span>两阶段提交关键路径</span>
+    <span><span class="sw" style="background:#94a3b8"></span>SQL 执行路径</span>
+  </div>
+
+  <div class="diagram-card">
+    <div class="diagram-card-body">
+      <svg class="diagram" viewBox="0 0 1240 920" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+          <marker id="arrow-gray" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <marker id="arrow-flow" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
+          </marker>
+          <marker id="arrow-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185" />
+          </marker>
+          <marker id="arrow-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#34d399" />
+          </marker>
+          <marker id="arrow-purple" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#a78bfa" />
+          </marker>
+        </defs>
+
+        <!-- 背景网格 -->
+        <rect width="1240" height="920" fill="url(#grid)" opacity="0.5"/>
+
+        <!-- =============== Layer 1: 连接层 =============== -->
+        <g id="layer-connector">
+          <rect x="160" y="20" width="920" height="64" rx="8"
+                fill="rgba(8,51,68,0.35)" stroke="#22d3ee" stroke-width="1.5"/>
+          <text x="172" y="44" fill="#22d3ee" font-size="14" font-weight="700">① 连接层 · Connectors</text>
+          <text x="172" y="62" fill="#a5b4cc" font-size="11">JDBC · ODBC · Python · .NET · PHP · ... / TCP+协议握手 + 用户鉴权</text>
+          <text x="172" y="78" fill="#7d8db0" font-size="9">不同语言客户端通过协议与 MySQL Server 建立连接</text>
+        </g>
+
+        <!-- 向下：连接层 → Server 层（灰） -->
+        <line x1="620" y1="84" x2="620" y2="118" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-flow)"/>
+        <text x="630" y="105" fill="#94a3b8" font-size="10">SQL 语句</text>
+
+        <!-- =============== Layer 2: Server 层 =============== -->
+        <g id="layer-server">
+          <rect x="60" y="120" width="1120" height="290" rx="10"
+                fill="rgba(76,29,149,0.30)" stroke="#a78bfa" stroke-width="2"/>
+
+          <text x="76" y="145" fill="#c4b5fd" font-size="15" font-weight="700">② MySQL Server 层</text>
+          <text x="76" y="163" fill="#a5b4cc" font-size="11">SQL 处理 + 优化 + 执行 + binlog 落盘（与具体引擎无关）</text>
+
+          <!-- 上排 5 个组件：连接器 → 查询缓存 → 分析器 → 优化器 → 执行器 -->
+          <g id="exec-flow">
+            <!-- 连接器 -->
+            <g transform="translate(80, 180)">
+              <rect width="180" height="100" rx="6" fill="#1e1b4b" stroke="#a78bfa" stroke-width="1.2"/>
+              <text x="90" y="22" fill="#e9d5ff" font-size="13" font-weight="700" text-anchor="middle">连接器</text>
+              <text x="14" y="44" fill="#94a3b8" font-size="9.5">· 鉴权账号密码</text>
+              <text x="14" y="58" fill="#94a3b8" font-size="9.5">· 权限校验</text>
+              <text x="14" y="72" fill="#94a3b8" font-size="9.5">· 连接管理 / 超时</text>
+              <text x="14" y="86" fill="#64748b" font-size="8.5">(caching_sha2_password)</text>
+            </g>
+            <line x1="266" y1="230" x2="296" y2="230" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-flow)"/>
+
+            <!-- 查询缓存 -->
+            <g transform="translate(300, 180)">
+              <rect width="160" height="100" rx="6" fill="#1e1b4b" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="4 3" opacity="0.55"/>
+              <text x="80" y="22" fill="#a78bfa" font-size="13" font-weight="700" text-anchor="middle">查询缓存</text>
+              <text x="80" y="40" fill="#fb7185" font-size="9" text-anchor="middle" font-weight="700">8.0 已删除</text>
+              <text x="14" y="58" fill="#94a3b8" font-size="9.5">· 5.7 默认关闭</text>
+              <text x="14" y="72" fill="#94a3b8" font-size="9.5">· 命中率极低</text>
+              <text x="14" y="86" fill="#64748b" font-size="8.5">(任何写都失效)</text>
+            </g>
+            <line x1="466" y1="230" x2="496" y2="230" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-flow)"/>
+
+            <!-- 分析器 -->
+            <g transform="translate(500, 180)">
+              <rect width="180" height="100" rx="6" fill="#1e1b4b" stroke="#a78bfa" stroke-width="1.2"/>
+              <text x="90" y="22" fill="#e9d5ff" font-size="13" font-weight="700" text-anchor="middle">分析器</text>
+              <text x="14" y="44" fill="#94a3b8" font-size="9.5">· 词法分析（token）</text>
+              <text x="14" y="58" fill="#94a3b8" font-size="9.5">· 语法分析（AST）</text>
+              <text x="14" y="72" fill="#94a3b8" font-size="9.5">· 校验表/列是否存在</text>
+              <text x="14" y="86" fill="#64748b" font-size="8.5">解析树</text>
+            </g>
+            <line x1="686" y1="230" x2="716" y2="230" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-flow)"/>
+
+            <!-- 优化器 -->
+            <g transform="translate(720, 180)">
+              <rect width="180" height="100" rx="6" fill="#1e1b4b" stroke="#a78bfa" stroke-width="1.2"/>
+              <text x="90" y="22" fill="#e9d5ff" font-size="13" font-weight="700" text-anchor="middle">优化器</text>
+              <text x="14" y="44" fill="#94a3b8" font-size="9.5">· 成本估算选索引</text>
+              <text x="14" y="58" fill="#94a3b8" font-size="9.5">· JOIN 顺序</text>
+              <text x="14" y="72" fill="#94a3b8" font-size="9.5">· SELECT * 改写</text>
+              <text x="14" y="86" fill="#64748b" font-size="8.5">执行计划</text>
+            </g>
+            <line x1="906" y1="230" x2="936" y2="230" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrow-flow)"/>
+
+            <!-- 执行器 -->
+            <g transform="translate(940, 180)">
+              <rect width="220" height="100" rx="6" fill="#1e1b4b" stroke="#a78bfa" stroke-width="1.4"/>
+              <text x="110" y="22" fill="#e9d5ff" font-size="13" font-weight="700" text-anchor="middle">执行器</text>
+              <text x="14" y="44" fill="#94a3b8" font-size="9.5">· 按执行计划调存储引擎 API</text>
+              <text x="14" y="58" fill="#94a3b8" font-size="9.5">· 行级权限校验（FSM）</text>
+              <text x="14" y="72" fill="#94a3b8" font-size="9.5">· 排序 / 聚合 / LIMIT</text>
+              <text x="14" y="86" fill="#64748b" font-size="8.5">结果集 → 客户端</text>
+            </g>
+          </g>
+
+          <!-- 下排 binlog 大框（横跨整层） -->
+          <g id="binlog-box" transform="translate(80, 300)">
+            <rect width="1080" height="92" rx="6" fill="rgba(167,139,250,0.10)" stroke="#a78bfa" stroke-width="1.6" stroke-dasharray="6 3"/>
+            <text x="20" y="22" fill="#c4b5fd" font-size="14" font-weight="700">📦 binlog（Server 层）</text>
+            <text x="20" y="40" fill="#a5b4cc" font-size="10.5">逻辑日志 · 与引擎无关 · 事务<span style="color:#fbbf24;font-weight:700"> COMMIT</span> 时写入</text>
+
+            <text x="20" y="64" fill="#e9d5ff" font-size="11" font-weight="600">格式：</text>
+            <g transform="translate(75, 52)">
+              <rect width="100" height="22" rx="3" fill="#312e81" stroke="#a78bfa" stroke-width="1"/>
+              <text x="50" y="14.5" fill="#c4b5fd" font-size="10" text-anchor="middle">STATEMENT</text>
+              <text x="50" y="36" fill="#7d8db0" font-size="8" text-anchor="middle">记 SQL · 体积小</text>
+            </g>
+            <g transform="translate(195, 52)">
+              <rect width="100" height="22" rx="3" fill="#312e81" stroke="#fbbf24" stroke-width="1.2"/>
+              <text x="50" y="14.5" fill="#fbbf24" font-size="10" text-anchor="middle" font-weight="700">ROW（推荐）</text>
+              <text x="50" y="36" fill="#7d8db0" font-size="8" text-anchor="middle">记行镜像 · 安全</text>
+            </g>
+            <g transform="translate(315, 52)">
+              <rect width="100" height="22" rx="3" fill="#312e81" stroke="#a78bfa" stroke-width="1"/>
+              <text x="50" y="14.5" fill="#c4b5fd" font-size="10" text-anchor="middle">MIXED</text>
+              <text x="50" y="36" fill="#7d8db0" font-size="8" text-anchor="middle">5.7+ 默认 ROW</text>
+            </g>
+
+            <text x="445" y="64" fill="#e9d5ff" font-size="11" font-weight="600">用途：</text>
+            <text x="490" y="64" fill="#a5b4cc" font-size="10">主从同步 · 数据归档 · 误删恢复 · 审计</text>
+
+            <text x="20" y="84" fill="#64748b" font-size="9">⚠ binlog 与 redo log 通过"两阶段提交"保持一致（参见下方时序图）</text>
+          </g>
+
+          <!-- 执行器 → binlog 写入（红/两阶段提交路径） -->
+          <path d="M 1050 282 L 1050 300" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="3 3" marker-end="url(#arrow-red)"/>
+        </g>
+
+        <!-- Server 层 → InnoDB 层（执行器调引擎 API） -->
+        <line x1="620" y1="412" x2="620" y2="442" stroke="#34d399" stroke-width="1.8" marker-end="url(#arrow-green)"/>
+        <text x="630" y="430" fill="#34d399" font-size="10" font-weight="600">调引擎 API</text>
+
+        <!-- =============== Layer 3: 引擎层 =============== -->
+        <g id="layer-engines">
+          <rect x="20" y="442" width="1200" height="220" rx="10"
+                fill="rgba(6,78,59,0.30)" stroke="#34d399" stroke-width="2"/>
+
+          <text x="36" y="467" fill="#a7f3d0" font-size="15" font-weight="700">③ MySQL 存储引擎层</text>
+          <text x="36" y="485" fill="#a5b4cc" font-size="11">插件式架构 · 通过 Handler API 对接 · 关注点：事务、锁、索引、IO</text>
+
+          <!-- 引擎选择行 -->
+          <g id="engine-list">
+            <!-- InnoDB 选中 -->
+            <g transform="translate(40, 498)">
+              <rect width="280" height="68" rx="6" fill="#064e3b" stroke="#34d399" stroke-width="1.6"/>
+              <text x="140" y="22" fill="#a7f3d0" font-size="13" font-weight="700" text-anchor="middle">InnoDB ⭐ 默认</text>
+              <text x="14" y="40" fill="#d1fae5" font-size="10">· 事务 ACID · 行锁 · MVCC · 聚簇索引</text>
+              <text x="14" y="55" fill="#d1fae5" font-size="10">· 支持事务 · 崩溃恢复</text>
+              <text x="14" y="68" fill="#fbbf24" font-size="9" font-weight="700">→ 重点对象（本图后续）</text>
+            </g>
+            <!-- MyISAM -->
+            <g transform="translate(340, 498)">
+              <rect width="180" height="68" rx="6" fill="rgba(6,78,59,0.45)" stroke="#34d399" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+              <text x="90" y="22" fill="#a7f3d0" font-size="12" font-weight="600" text-anchor="middle">MyISAM</text>
+              <text x="14" y="40" fill="#94a3b8" font-size="10">· 表锁 · 不支持事务</text>
+              <text x="14" y="55" fill="#94a3b8" font-size="10">· 5.5 前默认</text>
+              <text x="14" y="68" fill="#64748b" font-size="9">已不推荐新项目</text>
+            </g>
+            <!-- Memory -->
+            <g transform="translate(540, 498)">
+              <rect width="180" height="68" rx="6" fill="rgba(6,78,59,0.45)" stroke="#34d399" stroke-width="1" stroke-dasharray="4 3" opacity="0.7"/>
+              <text x="90" y="22" fill="#a7f3d0" font-size="12" font-weight="600" text-anchor="middle">Memory</text>
+              <text x="14" y="40" fill="#94a3b8" font-size="10">· 内存 · Hash 索引</text>
+              <text x="14" y="55" fill="#94a3b8" font-size="10">· 不持久化</text>
+              <text x="14" y="68" fill="#64748b" font-size="9">临时表 / 缓存</text>
+            </g>
+            <!-- 其他 -->
+            <g transform="translate(740, 498)">
+              <rect width="80" height="68" rx="6" fill="rgba(6,78,59,0.45)" stroke="#34d399" stroke-width="1" stroke-dasharray="4 3" opacity="0.6"/>
+              <text x="40" y="22" fill="#a7f3d0" font-size="12" font-weight="600" text-anchor="middle">CSV</text>
+              <text x="14" y="40" fill="#94a3b8" font-size="9">文本</text>
+            </g>
+            <g transform="translate(840, 498)">
+              <rect width="80" height="68" rx="6" fill="rgba(6,78,59,0.45)" stroke="#34d399" stroke-width="1" stroke-dasharray="4 3" opacity="0.6"/>
+              <text x="40" y="22" fill="#a7f3d0" font-size="12" font-weight="600" text-anchor="middle">Archive</text>
+              <text x="14" y="40" fill="#94a3b8" font-size="9">压缩归档</text>
+            </g>
+            <g transform="translate(940, 498)">
+              <rect width="80" height="68" rx="6" fill="rgba(6,78,59,0.45)" stroke="#34d399" stroke-width="1" stroke-dasharray="4 3" opacity="0.6"/>
+              <text x="40" y="22" fill="#a7f3d0" font-size="12" font-weight="600" text-anchor="middle">NDB</text>
+              <text x="14" y="40" fill="#94a3b8" font-size="9">集群</text>
+            </g>
+            <g transform="translate(1040, 498)">
+              <rect width="160" height="68" rx="6" fill="rgba(15,23,42,0.6)" stroke="#475569" stroke-width="1" stroke-dasharray="3 3" opacity="0.5"/>
+              <text x="80" y="22" fill="#94a3b8" font-size="11" font-weight="600" text-anchor="middle">...</text>
+              <text x="14" y="42" fill="#64748b" font-size="9">第三方插件引擎</text>
+            </g>
+          </g>
+
+          <!-- InnoDB 内部 -->
+          <g id="innodb-internals" transform="translate(40, 580)">
+            <rect width="1160" height="74" rx="6" fill="rgba(6,78,59,0.25)" stroke="#34d399" stroke-width="1.4" stroke-dasharray="3 3"/>
+            <text x="16" y="22" fill="#a7f3d0" font-size="13" font-weight="700">🔬 InnoDB 内部关键组件</text>
+
+            <!-- Buffer Pool -->
+            <g transform="translate(16, 30)">
+              <rect width="320" height="36" rx="4" fill="#022c22" stroke="#34d399" stroke-width="1"/>
+              <text x="160" y="14" fill="#d1fae5" font-size="11" font-weight="700" text-anchor="middle">Buffer Pool（内存数据页缓存）</text>
+              <text x="160" y="28" fill="#6ee7b7" font-size="9" text-anchor="middle">LRU 淘汰 · 热点页常驻</text>
+            </g>
+
+            <!-- redo log -->
+            <g transform="translate(360, 30)">
+              <rect width="370" height="36" rx="4" fill="#7f1d1d" stroke="#fb7185" stroke-width="1.2" opacity="0.85"/>
+              <text x="14" y="14" fill="#fecaca" font-size="11" font-weight="700">📍 redo log · 重做日志</text>
+              <text x="14" y="28" fill="#fda4af" font-size="9">物理日志 · 崩溃恢复 · prepare → commit</text>
+            </g>
+
+            <!-- undo log -->
+            <g transform="translate(754, 30)">
+              <rect width="370" height="36" rx="4" fill="#5b21b6" stroke="#c4b5fd" stroke-width="1.2" opacity="0.75"/>
+              <text x="14" y="14" fill="#e9d5ff" font-size="11" font-weight="700">↩ undo log · 回滚日志</text>
+              <text x="14" y="28" fill="#c4b5fd" font-size="9">逻辑反向 · 回滚 + MVCC 版本链</text>
+            </g>
+          </g>
+        </g>
+
+        <!-- 引擎层 → 文件层（持久化） -->
+        <line x1="620" y1="662" x2="620" y2="692" stroke="#fbbf24" stroke-width="1.8" marker-end="url(#arrow-flow)"/>
+        <text x="630" y="680" fill="#fbbf24" font-size="10" font-weight="600">持久化到磁盘</text>
+
+        <!-- =============== Layer 4: 系统文件层 =============== -->
+        <g id="layer-files">
+          <rect x="20" y="694" width="1200" height="170" rx="10"
+                fill="rgba(120,53,15,0.20)" stroke="#fbbf24" stroke-width="2"/>
+
+          <text x="36" y="718" fill="#fde68a" font-size="15" font-weight="700">④ 系统文件层（磁盘）</text>
+          <text x="36" y="736" fill="#a5b4cc" font-size="11">MySQL 把内存中的修改异步刷到三类文件</text>
+
+          <!-- 数据文件区（左） -->
+          <g transform="translate(40, 754)">
+            <text x="14" y="14" fill="#fde68a" font-size="12" font-weight="700">📁 数据文件</text>
+            <rect x="14" y="22" width="280" height="92" rx="6"
+                  fill="rgba(120,53,15,0.25)" stroke="#fbbf24" stroke-width="1.2"/>
+            <text x="28" y="42" fill="#fde68a" font-size="11" font-weight="700">.ibd · tablespace</text>
+            <text x="28" y="60" fill="#fcd34d" font-size="9.5">· 默认 16KB / 页</text>
+            <text x="28" y="76" fill="#fcd34d" font-size="9.5">· 段 → 区 → 页 → 行</text>
+            <text x="28" y="92" fill="#fcd34d" font-size="9.5">· 聚簇索引（数据即索引）</text>
+            <text x="28" y="108" fill="#a78bfa" font-size="9">⚡ 由 Buffer Pool 后台 flush 异步刷盘</text>
+          </g>
+
+          <!-- 箭头：Buffer Pool → .ibd -->
+          <line x1="200" y1="660" x2="200" y2="780" stroke="#fbbf24" stroke-width="1.3" stroke-dasharray="3 3" marker-end="url(#arrow-flow)" opacity="0.6"/>
+
+          <!-- 日志文件区（右） -->
+          <g transform="translate(360, 754)">
+            <text x="14" y="14" fill="#fde68a" font-size="12" font-weight="700">📂 日志文件（三类，对应三种日志）</text>
+
+            <!-- redo -->
+            <g transform="translate(14, 22)">
+              <rect width="820" height="28" rx="4" fill="rgba(127,29,29,0.30)" stroke="#fb7185" stroke-width="1.2"/>
+              <text x="20" y="14" fill="#fda4af" font-size="10" font-weight="700">ib_logfile × 4 (默认 48MB 循环)</text>
+              <text x="200" y="14" fill="#fda4af" font-size="10">↳</text>
+              <text x="220" y="14" fill="#fda4af" font-size="10"><tspan font-weight="700">redo log</tspan> 落盘</text>
+              <text x="320" y="14" fill="#fecaca" font-size="9">崩溃恢复 · WAL 写前日志 · 物理日志</text>
+              <text x="700" y="14" fill="#fda4af" font-size="9" text-anchor="end">⚠ InnoDB 专属</text>
+            </g>
+
+            <!-- undo -->
+            <g transform="translate(14, 56)">
+              <rect width="820" height="28" rx="4" fill="rgba(91,33,182,0.25)" stroke="#c4b5fd" stroke-width="1.2"/>
+              <text x="20" y="14" fill="#e9d5ff" font-size="10" font-weight="700">undo tablespace</text>
+              <text x="200" y="14" fill="#e9d5ff" font-size="10">↳</text>
+              <text x="220" y="14" fill="#e9d5ff" font-size="10"><tspan font-weight="700">undo log</tspan> 落盘</text>
+              <text x="320" y="14" fill="#ddd6fe" font-size="9">回滚段（rollback segment）+ MVCC 版本链</text>
+              <text x="700" y="14" fill="#e9d5ff" font-size="9" text-anchor="end">⚠ InnoDB 专属</text>
+            </g>
+
+            <!-- binlog -->
+            <g transform="translate(14, 90)">
+              <rect width="820" height="28" rx="4" fill="rgba(76,29,149,0.28)" stroke="#a78bfa" stroke-width="1.2"/>
+              <text x="20" y="14" fill="#c4b5fd" font-size="10" font-weight="700">binlog.000001 ... (默认无限追加)</text>
+              <text x="240" y="14" fill="#c4b5fd" font-size="10">↳</text>
+              <text x="260" y="14" fill="#c4b5fd" font-size="10"><tspan font-weight="700">binlog</tspan> 落盘</text>
+              <text x="360" y="14" fill="#ddd6fe" font-size="9">主从同步 · 误删恢复 · 数据归档</text>
+              <text x="700" y="14" fill="#c4b5fd" font-size="9" text-anchor="end">⚠ Server 层 · 跨引擎</text>
+            </g>
+          </g>
+        </g>
+
+        <!-- =============== 两阶段提交时序图（底部） =============== -->
+        <g id="twopc" transform="translate(20, 880)">
+          <text x="0" y="0" fill="#fb7185" font-size="14" font-weight="700">🔴 两阶段提交时序图（崩溃恢复一致性关键）</text>
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <!-- 两阶段提交时序独立 SVG -->
+  <div class="diagram-card">
+    <div class="diagram-card-body" style="padding-top:8px;">
+      <div style="font-size:12px; color:#7d8db0; margin-bottom:6px; padding:0 4px;">📜 InnoDB redo (prepare) → Server 写 binlog → InnoDB redo (commit) · 单机 MySQL 内部一致性协议</div>
+      <svg class="diagram" viewBox="0 0 1240 320" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrow-flow2" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
+          </marker>
+          <marker id="arrow-red2" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185" />
+          </marker>
+          <marker id="arrow-green2" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#34d399" />
+          </marker>
+        </defs>
+
+        <!-- 横向时间轴 -->
+        <line x1="40" y1="170" x2="1200" y2="170" stroke="#475569" stroke-width="1.5"/>
+        <text x="40" y="190" fill="#7d8db0" font-size="10">时间轴 →</text>
+
+        <!-- 6 个步骤圆点 -->
+        <g font-family="JetBrains Mono">
+          <!-- Step 1 -->
+          <circle cx="100" cy="170" r="14" fill="#1e1b4b" stroke="#a78bfa" stroke-width="2"/>
+          <text x="100" y="174" fill="#c4b5fd" font-size="12" font-weight="700" text-anchor="middle">1</text>
+          <text x="100" y="40" fill="#c4b5fd" font-size="11" font-weight="700" text-anchor="middle">客户端发起事务</text>
+          <text x="100" y="58" fill="#94a3b8" font-size="10" text-anchor="middle">BEGIN;</text>
+
+          <!-- Step 2 -->
+          <circle cx="280" cy="170" r="14" fill="#7f1d1d" stroke="#fb7185" stroke-width="2"/>
+          <text x="280" y="174" fill="#fecaca" font-size="12" font-weight="700" text-anchor="middle">2</text>
+          <text x="280" y="40" fill="#fda4af" font-size="11" font-weight="700" text-anchor="middle">执行 UPDATE</text>
+          <text x="280" y="58" fill="#94a3b8" font-size="10" text-anchor="middle">改 Buffer Pool</text>
+          <text x="280" y="72" fill="#94a3b8" font-size="10" text-anchor="middle">写 undo log</text>
+
+          <!-- Step 3 - InnoDB prepare -->
+          <circle cx="460" cy="170" r="14" fill="#7f1d1d" stroke="#fb7185" stroke-width="2"/>
+          <text x="460" y="174" fill="#fecaca" font-size="12" font-weight="700" text-anchor="middle">3</text>
+          <text x="460" y="40" fill="#fda4af" font-size="11" font-weight="700" text-anchor="middle">InnoDB · prepare</text>
+          <text x="460" y="58" fill="#94a3b8" font-size="10" text-anchor="middle">写 redo log</text>
+          <text x="460" y="72" fill="#fb7185" font-size="10" text-anchor="middle" font-weight="700">状态 = prepare</text>
+
+          <!-- Step 4 - 写 binlog -->
+          <circle cx="640" cy="170" r="14" fill="#1e1b4b" stroke="#a78bfa" stroke-width="2"/>
+          <text x="640" y="174" fill="#c4b5fd" font-size="12" font-weight="700" text-anchor="middle">4</text>
+          <text x="640" y="40" fill="#c4b5fd" font-size="11" font-weight="700" text-anchor="middle">Server · binlog</text>
+          <text x="640" y="58" fill="#94a3b8" font-size="10" text-anchor="middle">事务 commit 时</text>
+          <text x="640" y="72" fill="#94a3b8" font-size="10" text-anchor="middle">写 binlog.X</text>
+
+          <!-- Step 5 - redo commit -->
+          <circle cx="820" cy="170" r="14" fill="#34d399" stroke="#34d399" stroke-width="2"/>
+          <text x="820" y="174" fill="#022c22" font-size="12" font-weight="700" text-anchor="middle">5</text>
+          <text x="820" y="40" fill="#a7f3d0" font-size="11" font-weight="700" text-anchor="middle">InnoDB · commit</text>
+          <text x="820" y="58" fill="#94a3b8" font-size="10" text-anchor="middle">redo 状态 → commit</text>
+          <text x="820" y="72" fill="#34d399" font-size="10" text-anchor="middle" font-weight="700">持久化完成 ✓</text>
+
+          <!-- Step 6 - 客户端返回 -->
+          <circle cx="1000" cy="170" r="14" fill="#475569" stroke="#94a3b8" stroke-width="2"/>
+          <text x="1000" y="174" fill="#e2e8f0" font-size="12" font-weight="700" text-anchor="middle">6</text>
+          <text x="1000" y="40" fill="#cbd5e1" font-size="11" font-weight="700" text-anchor="middle">返回客户端</text>
+          <text x="1000" y="58" fill="#94a3b8" font-size="10" text-anchor="middle">OK / 失败</text>
+        </g>
+
+        <!-- 箭头连接（红色虚线 = 2PC 关键路径） -->
+        <line x1="114" y1="170" x2="266" y2="170" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrow-flow2)"/>
+        <line x1="294" y1="170" x2="446" y2="170" stroke="#fb7185" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#arrow-red2)"/>
+        <line x1="474" y1="170" x2="626" y2="170" stroke="#fb7185" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#arrow-red2)"/>
+        <line x1="654" y1="170" x2="806" y2="170" stroke="#fb7185" stroke-width="1.6" stroke-dasharray="3 3" marker-end="url(#arrow-red2)"/>
+        <line x1="834" y1="170" x2="986" y2="170" stroke="#34d399" stroke-width="1.6" marker-end="url(#arrow-green2)"/>
+
+        <!-- 关键标注 -->
+        <g transform="translate(460, 220)">
+          <rect width="720" height="80" rx="6" fill="rgba(127,29,29,0.12)" stroke="#fb7185" stroke-width="1" stroke-dasharray="4 3"/>
+          <text x="14" y="20" fill="#fda4af" font-size="12" font-weight="700">⚠ 崩溃恢复时的三种判断</text>
+          <text x="14" y="42" fill="#fecaca" font-size="10">· redo = commit → 直接提交（数据必已持久化）</text>
+          <text x="14" y="58" fill="#fecaca" font-size="10">· redo = prepare + binlog 完整 → 重做提交（用 binlog 补救）</text>
+          <text x="14" y="74" fill="#fecaca" font-size="10">· redo = prepare + binlog 不完整 → 回滚（用 undo log）</text>
+        </g>
+
+        <text x="14" y="305" fill="#64748b" font-size="10">📌 关键洞见：redo (物理 + 引擎层) 与 binlog (逻辑 + Server 层) 粒度不同，必须"两边都对"才一致 — 这就是 2PC 存在的原因</text>
+      </svg>
+    </div>
+  </div>
+
+  <!-- 三张总结卡 -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#a78bfa"></div>
+        <h3>三种日志层级归属</h3>
+      </div>
+      <ul>
+        <li><b>binlog</b>：Server 层，<b>与引擎无关</b>，跨 InnoDB/MyISAM</li>
+        <li><b>redo log</b>：InnoDB 专属，<b>物理日志</b>，页级偏移</li>
+        <li><b>undo log</b>：InnoDB 专属，<b>逻辑反向</b>，事务回滚 + MVCC</li>
+        <li>👉 引擎层两兄弟：<b>redo 保"已提交"</b>、<b>undo 保"可回滚"</b></li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#fb7185"></div>
+        <h3>为什么必须 2PC？</h3>
+      </div>
+      <ul>
+        <li><b>物理 vs 逻辑</b>：redo 记"哪个页改什么"，binlog 记"哪行怎么变"</li>
+        <li><b>粒度不齐</b>：一个 UPDATE 可能跨多个页 + 多行</li>
+        <li>如果只写一边就 commit → <b>主从不一致 / 备份不可用</b></li>
+        <li>👉 2PC = "<b>两边都 OK 才告诉客户端成功</b>"</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#34d399"></div>
+        <h3>ACID 是怎么落的？</h3>
+      </div>
+      <ul>
+        <li><b>A 原子性</b>：undo log（未提交 → 回滚）</li>
+        <li><b>C 一致性</b>：A+I+D 共同保证 + 业务约束</li>
+        <li><b>I 隔离性</b>：锁 + MVCC（undo log 版本链）</li>
+        <li><b>D 持久性</b>：redo log + binlog 两阶段提交</li>
+        <li>👉 <b>三件日志 = 事务机制的物理基础</b></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>数据库面试专项 · Q9 配图 · @杨海波 (Setsuna Yang)</span>
+    <span>MySQL 整体架构 · 4 层 + 2PC 时序 · 配套 Q9 / Q16 / Q17</span>
+  </div>
+
+</div>
+
+<script>
+async function capture() {
+  const el = document.getElementById('report-container');
+  const rect = el.getBoundingClientRect();
+  return await html2canvas(document.body, {
+    x: rect.left - 32, y: rect.top - 32,
+    width: rect.width + 64, height: rect.height + 64,
+    backgroundColor: '#020617', scale: 2,
+    ignoreElements: e => e.classList && (e.classList.contains('toolbar') || e.classList.contains('toolbar-actions') || e.classList.contains('toolbar-toggle'))
+  });
+}
+function copyAsImage() {
+  capture().then(c => c.toBlob(b => {
+    if (navigator.clipboard && window.ClipboardItem)
+      navigator.clipboard.write([new ClipboardItem({'image/png': b})]).then(()=>alert('已复制'), ()=>alert('失败'));
+    else alert('当前环境不支持');
+  }));
+}
+function downloadPNG() {
+  capture().then(c => { const a = document.createElement('a'); a.download='q09-mysql-architecture.png'; a.href=c.toDataURL('image/png'); a.click(); });
+}
+function downloadPDF() {
+  capture().then(c => {
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({orientation:'landscape', unit:'px', format:[c.width, c.height]});
+    pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, c.width, c.height);
+    pdf.save('q09-mysql-architecture.pdf');
+  });
+}
+window.copyAsImage = copyAsImage;
+window.downloadPNG = downloadPNG;
+window.downloadPDF = downloadPDF;
+</script>
+</body>
+</html>
