@@ -16,6 +16,12 @@
 | [sql/q05_window.sql](./sql/q05_window.sql) | 行转列 + TopN + 连续登录 + 留存率 |
 | `src/main/java/edu/zjnu/interview/database/q01/PoolLab.java` | HikariCP 连接池实验（100 线程抢 10 连接） |
 | `src/main/java/edu/zjnu/interview/database/q02/LockLab.java` | 行锁/间隙锁/死锁/当前读实验 |
+| [diagrams/q01-select-execution.html](./diagrams/q01-select-execution.html) | Q1 一行 SELECT 执行过程 · 11 帧动图 |
+| [diagrams/q01-select-execution.gif](./diagrams/q01-select-execution.gif) | 同上 · 嵌 Markdown 用（26 秒循环） |
+| [diagrams/q01-select-execution.png](./diagrams/q01-select-execution.png) | 同上 · 静态封面（看图须知帧） |
+| [diagrams/q05-back-to-table.html](./diagrams/q05-back-to-table.html) | Q5 回表 · 二级索引的代价 · 12 帧动图 |
+| [diagrams/q05-back-to-table.gif](./diagrams/q05-back-to-table.gif) | 同上 · 嵌 Markdown 用（29 秒循环） |
+| [diagrams/q05-back-to-table.png](./diagrams/q05-back-to-table.png) | 同上 · 静态封面（看图须知帧） |
 
 ## 快速开始
 
@@ -49,6 +55,8 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.database.q02.LockLa
 - [x] V1 经核实版答卷（25 题）
 - [x] SQL 练习脚本（5 套）
 - [x] Java Lab（2 个）
+- [x] HTML 配图 · Q1 一行 SELECT 执行过程（11 帧动图）
+- [x] HTML 配图 · Q5 回表（12 帧动图）
 - [ ] HTML 配图（Q12 MVCC / Q15 间隙锁 / Q25 连续登录）
 - [ ] V2 进阶（Redis / 缓存三大问题 / 分布式锁）
 - [ ] V3 大厂真题面经汇总（按公司：阿里/字节/腾讯/美团）
