@@ -30,6 +30,11 @@
 | [diagrams/q06-leftmost-prefix.html](./diagrams/q06-leftmost-prefix.html) | Q6 · 联合索引最左前缀 6 场景交互（idx_abc(a,b,c) · 9 行 · 点切换看 EXPLAIN + 命中行 + 失效原因） |
 | [diagrams/q09-mysql-architecture.html](./diagrams/q09-mysql-architecture.html) | Q9 · MySQL 整体架构 4 层分层 · binlog/redo/undo 落点 · 两阶段提交时序 · 崩溃恢复三种判断 |
 | [diagrams/q09-mysql-logs.html](./diagrams/q09-mysql-logs.html) | **Q9 · MySQL 8 类日志家族全景图** · 用途速查矩阵 · 三件套 2PC 协作 · 4 个运维场景（崩溃/慢查询/同步延迟/误删恢复） |
+| [diagrams/q09-logs-workflow.html](./diagrams/q09-logs-workflow.html) | **Q9 · 三大日志工作图** · redo/undo/binlog 10 步可交互（UPDATE → 2PC → 崩溃恢复 → 复制/PITR） |
+| [logs/README.md](./logs/README.md) | **日志体系专题**：8 类日志全景 + 学习路线 + 面试题/实验索引 |
+| [logs/interview-questions.md](./logs/interview-questions.md) | 日志体系面试题 35 题（三件套 / 2PC / 运维 / 复制 / 场景） |
+| [logs/lab-guide.md](./logs/lab-guide.md) | 日志体系实验教程 8 个 Lab（error / general / slow / binlog / redo / undo / relay / 崩溃恢复） |
+| [sql/q09_logs.sql](./sql/q09_logs.sql) | 配套 SQL：日志开关 + binlog 事件 + LSN/MVCC 实验 |
 
 ## 快速开始
 
@@ -69,6 +74,8 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.database.q02.LockLa
 - [x] HTML 配图 · Q6 最左前缀 6 场景交互（idx_abc · 走/失效/范围截断全覆盖）
 - [x] HTML 配图 · Q9 MySQL 整体架构（4 层 + binlog/redo/undo + 2PC 时序 + 崩溃恢复）
 - [x] HTML 配图 · Q9 MySQL 8 类日志家族（三件套 + 5 类排查类 · 用途矩阵 · 4 场景速查）
+- [x] 日志体系专题（35 题 + 8 个实验 + SQL）
+- [x] HTML 配图 · 三大日志工作图（redo / undo / binlog · 10 步可交互）
 - [ ] HTML 配图（Q12 MVCC / Q15 间隙锁 / Q25 连续登录）
 - [x] SQL+Java 实验 · Q5/Q6 回表 100万行实测（覆盖索引 vs 回表 vs 全表扫 vs 主键定位）
 - [ ] V2 进阶（Redis / 缓存三大问题 / 分布式锁）
@@ -90,6 +97,15 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.database.q02.LockLa
 跑法见 [`q05_back_to_table.sql`](./sql/q05_back_to_table.sql) 和 [`BackToTableLab.java`](../../src/main/java/edu/zjnu/interview/database/q05/BackToTableLab.java)。
 
 **配套交互图**：[`diagrams/q05-back-to-table-4cases.html`](./diagrams/q05-back-to-table-4cases.html) — 4 场景可点击切换（?frame=0~3 深链接），每场景展示 EXPLAIN + B+树可视化 + 物理路径，扫一眼就能把 4 个例子的"为什么"串起来。
+
+## Q9/Q16/Q17 · 日志体系专题
+
+- 专题总览（8 类日志速查 + 学习路线）：[`logs/README.md`](./logs/README.md)
+- 面试题 35 题：[`logs/interview-questions.md`](./logs/interview-questions.md)
+- 实验教程 8 个 Lab：[`logs/lab-guide.md`](./logs/lab-guide.md)
+- 配套 SQL：[`sql/q09_logs.sql`](./sql/q09_logs.sql)
+- 日志全景图：[`diagrams/q09-mysql-logs.html`](./diagrams/q09-mysql-logs.html)
+- 三大日志工作图：[`diagrams/q09-logs-workflow.html`](./diagrams/q09-logs-workflow.html)
 
 ## 参考
 

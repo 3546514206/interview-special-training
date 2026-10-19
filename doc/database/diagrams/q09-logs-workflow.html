@@ -1,0 +1,1044 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MySQL 三大日志工作图 · redo / undo / binlog</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'JetBrains Mono', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+
+    .container { max-width: 1240px; margin: 0 auto; }
+
+    .header { margin-bottom: 2rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+
+    .pulse-dot {
+      width: 12px; height: 12px; background: #fbbf24; border-radius: 50%;
+      animation: pulse 2s infinite; flex-shrink: 0;
+    }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
+
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.82rem; margin-left: 1.75rem; line-height: 1.6; }
+
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1.5rem;
+      overflow-x: auto;
+    }
+
+    svg { width: 100%; min-width: 980px; display: block; }
+
+    /* ---------- SVG state ---------- */
+    .node { opacity: .58; transition: opacity .25s ease; }
+    .node.active { opacity: 1; }
+    .node .box { transition: stroke-width .25s ease, filter .25s ease; }
+    .node.active .box {
+      stroke-width: 2.5;
+      filter: drop-shadow(0 0 10px rgba(255,255,255,.40));
+    }
+
+    .flow {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.4;
+      opacity: .16;
+      transition: opacity .25s ease, stroke-width .25s ease;
+    }
+    .flow.dashed { stroke-dasharray: 4 4; }
+    .flow.active {
+      opacity: 1;
+      stroke-width: 2.4;
+      stroke-dasharray: 8 4;
+      animation: flowDash .8s linear infinite;
+    }
+    @keyframes flowDash { to { stroke-dashoffset: -24; } }
+
+    .flow-label { font-size: 8px; fill: #94a3b8; }
+    .layer-label { font-size: 10px; font-weight: 600; }
+    .state-text { font-size: 9px; fill: #cbd5e1; }
+    .badge-text { font-size: 7.5px; fill: #94a3b8; }
+    .legend-text { font-size: 8px; fill: #94a3b8; }
+
+    /* ---------- controls ---------- */
+    .controls {
+      display: flex; align-items: center; gap: .5rem;
+      margin-top: 1rem; flex-wrap: wrap;
+    }
+    .controls button {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid #334155;
+      color: #cbd5e1;
+      padding: .45rem .8rem;
+      border-radius: .45rem;
+      font-family: inherit;
+      font-size: .72rem;
+      cursor: pointer;
+      transition: all .2s;
+    }
+    .controls button:hover { background: rgba(51,65,85,.9); color: #fff; border-color: #475569; }
+    .controls button:disabled { opacity: .35; cursor: not-allowed; }
+    .controls .counter { margin-left: auto; color: #64748b; font-size: .72rem; }
+
+    /* ---------- timeline ---------- */
+    .timeline {
+      display: flex; align-items: flex-start; gap: 0;
+      margin-top: 1rem; padding: 1rem .75rem;
+      background: rgba(15,23,42,.5);
+      border: 1px solid #1e293b;
+      border-radius: .75rem;
+      overflow-x: auto;
+    }
+    .tl-step {
+      display: flex; flex-direction: column; align-items: center; gap: .35rem;
+      min-width: 92px; cursor: pointer; background: none; border: none;
+      font-family: inherit; padding: 0;
+    }
+    .tl-dot {
+      width: 11px; height: 11px; border-radius: 50%;
+      border: 2px solid #334155; background: #0f172a;
+      transition: all .2s;
+    }
+    .tl-step.active .tl-dot {
+      border-color: #fbbf24; background: #fbbf24;
+      box-shadow: 0 0 10px rgba(251,191,36,.8);
+    }
+    .tl-label {
+      font-size: .62rem; color: #64748b; white-space: nowrap;
+      transition: color .2s;
+    }
+    .tl-step.active .tl-label { color: #f8fafc; }
+    .tl-line { width: 24px; height: 1px; background: #1e293b; margin-top: 5px; flex-shrink: 0; }
+
+    /* ---------- step panel ---------- */
+    .step-panel {
+      margin-top: 1rem; padding: 1.15rem 1.25rem;
+      background: rgba(15,23,42,.5);
+      border: 1px solid #1e293b;
+      border-radius: .75rem;
+    }
+    .step-head { display: flex; align-items: baseline; gap: .7rem; }
+    .step-index { color: #fbbf24; font-size: .72rem; font-weight: 700; }
+    .step-title { font-size: .95rem; font-weight: 600; }
+    .step-desc { color: #94a3b8; font-size: .76rem; line-height: 1.75; margin-top: .5rem; }
+    .state-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin-top: .75rem; }
+
+    .chip {
+      display: inline-flex; align-items: center; gap: .35rem;
+      font-size: .65rem; padding: .22rem .55rem;
+      border-radius: 999px; border: 1px solid;
+    }
+    .chip .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .chip-amber   { color: #fcd34d; border-color: rgba(251,191,36,.35); background: rgba(120,53,15,.25); }
+    .chip-amber   .dot { background: #fbbf24; }
+    .chip-cyan    { color: #67e8f9; border-color: rgba(34,211,238,.35); background: rgba(8,51,68,.35); }
+    .chip-cyan    .dot { background: #22d3ee; }
+    .chip-orange  { color: #fdba74; border-color: rgba(251,146,60,.35); background: rgba(124,45,18,.25); }
+    .chip-orange  .dot { background: #fb923c; }
+    .chip-violet  { color: #c4b5fd; border-color: rgba(167,139,250,.35); background: rgba(76,29,149,.25); }
+    .chip-violet  .dot { background: #a78bfa; }
+    .chip-emerald { color: #6ee7b7; border-color: rgba(52,211,153,.35); background: rgba(6,78,59,.3); }
+    .chip-emerald .dot { background: #34d399; }
+    .chip-rose    { color: #fda4af; border-color: rgba(251,113,133,.35); background: rgba(136,19,55,.25); }
+    .chip-rose    .dot { background: #fb7185; }
+    .chip-slate   { color: #cbd5e1; border-color: rgba(148,163,184,.35); background: rgba(30,41,59,.5); }
+    .chip-slate   .dot { background: #94a3b8; }
+
+    /* ---------- cards ---------- */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+    .card {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 0.75rem;
+      border: 1px solid #1e293b;
+      padding: 1.25rem;
+    }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+    .card-dot.orange { background: #fb923c; }
+    .card h3 { font-size: 0.85rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.7rem; line-height: 1.8; }
+    .card li { margin-bottom: 0.25rem; }
+
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.72rem; }
+
+    /* ---------- toolbar ---------- */
+    .toolbar { display: flex; gap: 0.5rem; margin-left: auto; flex-shrink: 0; align-items: center; }
+    .toolbar-toggle {
+      background: transparent; border: none; color: #475569; cursor: pointer;
+      font-size: 1.25rem; line-height: 1; padding: 0.25rem 0.5rem;
+      border-radius: 0.375rem; transition: color 0.2s, background 0.2s;
+    }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
+    .toolbar-actions { display: none; gap: 0.5rem; }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button {
+      background: rgba(30, 41, 59, 0.8); border: 1px solid #334155; color: #94a3b8;
+      padding: 0.375rem 0.75rem; border-radius: 0.375rem; font-family: inherit;
+      font-size: 0.75rem; cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    }
+    .toolbar-actions button:hover { background: rgba(51, 65, 85, 0.8); color: white; border-color: #475569; }
+
+    @media print {
+      body { background: #020617; padding: 1rem; }
+      .toolbar, .controls, .timeline { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container" id="report-container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>MySQL 三大日志工作图 · redo / undo / binlog</h1>
+        <div class="toolbar">
+          <div class="toolbar-actions">
+            <button onclick="copyAsImage(this)">📋 Copy</button>
+            <button onclick="downloadPNG(this)">🖼️ PNG</button>
+            <button onclick="downloadPDF(this)">📄 PDF</button>
+          </div>
+          <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
+        </div>
+      </div>
+      <p class="subtitle">
+        一个 UPDATE 从执行到提交、崩溃恢复、复制与 PITR · 点击步骤或按 ← / → 切换
+      </p>
+    </div>
+
+    <!-- Main Diagram -->
+    <div class="diagram-container">
+      <svg viewBox="0 0 1200 720" role="img" aria-label="MySQL redo undo binlog workflow">
+        <defs>
+          <marker id="arrow-slate" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+          </marker>
+          <marker id="arrow-amber" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24" />
+          </marker>
+          <marker id="arrow-cyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <marker id="arrow-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb923c" />
+          </marker>
+          <marker id="arrow-violet" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#a78bfa" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background Grid -->
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- ============================================================
+             LAYER BOUNDARIES
+             ============================================================ -->
+        <rect x="200" y="40" width="420" height="210" rx="12"
+              fill="rgba(6,78,59,0.07)" stroke="#34d399" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="214" y="58" class="layer-label" fill="#34d399">MySQL Server 层</text>
+
+        <rect x="200" y="290" width="420" height="250" rx="12"
+              fill="rgba(76,29,149,0.07)" stroke="#a78bfa" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="214" y="308" class="layer-label" fill="#a78bfa">InnoDB 引擎层</text>
+
+        <rect x="700" y="40" width="470" height="580" rx="12"
+              fill="rgba(251,191,36,0.03)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="714" y="58" class="layer-label" fill="#fbbf24">磁盘 / 持久化</text>
+
+        <!-- ============================================================
+             FLOWS (drawn before boxes so they sit behind)
+             ============================================================ -->
+        <!-- client -> executor -->
+        <line id="flow-sql-exec" class="flow" x1="170" y1="105" x2="228" y2="105"
+              style="color:#94a3b8" marker-end="url(#arrow-slate)"/>
+
+        <!-- executor -> buffer pool -->
+        <line id="flow-exec-bp" class="flow" x1="300" y1="145" x2="300" y2="328"
+              style="color:#a78bfa" marker-end="url(#arrow-violet)"/>
+
+        <!-- buffer pool -> undo -->
+        <line id="flow-bp-undo" class="flow" x1="400" y1="365" x2="428" y2="365"
+              style="color:#22d3ee" marker-end="url(#arrow-cyan)"/>
+
+        <!-- buffer pool -> redo -->
+        <line id="flow-bp-redo" class="flow" x1="400" y1="405" x2="428" y2="455"
+              style="color:#fbbf24" marker-end="url(#arrow-amber)"/>
+
+        <!-- read view -> undo (MVCC) -->
+        <path id="flow-readview-undo" class="flow dashed"
+              d="M 170 325 L 420 325 Q 428 325 428 333"
+              style="color:#22d3ee" marker-end="url(#arrow-cyan)"/>
+
+        <!-- executor -> binlog buffer -->
+        <line id="flow-exec-binlog" class="flow" x1="380" y1="115" x2="428" y2="115"
+              style="color:#fb923c" marker-end="url(#arrow-orange)"/>
+
+        <!-- binlog buffer -> binlog file -->
+        <path id="flow-binlog-disk" class="flow"
+              d="M 590 115 L 650 115 Q 670 115 670 95 L 670 80 Q 670 70 680 70 L 1130 70 Q 1150 70 1150 90 L 1150 275 Q 1150 285 1138 285 L 1132 285"
+              style="color:#fb923c" marker-end="url(#arrow-orange)"/>
+
+        <!-- redo buffer -> redo file -->
+        <path id="flow-redo-disk" class="flow"
+              d="M 590 467 L 650 467 Q 670 467 670 447 L 670 290 Q 670 270 690 270 L 738 270"
+              style="color:#fbbf24" marker-end="url(#arrow-amber)"/>
+
+        <!-- undo buffer -> undo file -->
+        <path id="flow-undo-disk" class="flow"
+              d="M 590 355 L 650 355 Q 670 355 670 335 L 670 190 Q 670 180 690 180 L 1035 180 Q 1045 180 1045 174"
+              style="color:#22d3ee" marker-end="url(#arrow-cyan)"/>
+
+        <!-- buffer pool -> data file (checkpoint) -->
+        <line id="flow-bp-data" class="flow dashed" x1="400" y1="330" x2="738" y2="150"
+              style="color:#a78bfa" marker-end="url(#arrow-violet)"/>
+
+        <!-- binlog -> replica / PITR -->
+        <line id="flow-binlog-relay" class="flow" x1="1045" y1="320" x2="1045" y2="416"
+              style="color:#fb923c" marker-end="url(#arrow-orange)"/>
+
+        <!-- ============================================================
+             LEFT COLUMN
+             ============================================================ -->
+        <g class="node" id="client">
+          <rect x="30" y="60" width="140" height="60" rx="6" fill="#0f172a"/>
+          <rect class="box" x="30" y="60" width="140" height="60" rx="6"
+                fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+          <text x="100" y="84" fill="white" font-size="11" font-weight="600" text-anchor="middle">Client / SQL</text>
+          <text x="100" y="102" fill="#94a3b8" font-size="9" text-anchor="middle">BEGIN; UPDATE...</text>
+        </g>
+
+        <g class="node" id="tx-box">
+          <rect x="30" y="150" width="140" height="90" rx="6" fill="#0f172a"/>
+          <rect class="box" x="30" y="150" width="140" height="90" rx="6"
+                fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1.5"/>
+          <text x="100" y="174" fill="white" font-size="11" font-weight="600" text-anchor="middle">事务状态</text>
+          <text id="tx-state-text" x="100" y="198" class="state-text" fill="#fbbf24" text-anchor="middle">ACTIVE</text>
+          <text x="100" y="218" fill="#94a3b8" font-size="8" text-anchor="middle">2PC 阶段</text>
+        </g>
+
+        <g class="node" id="readview-box">
+          <rect x="30" y="280" width="140" height="90" rx="6" fill="#0f172a"/>
+          <rect class="box" x="30" y="280" width="140" height="90" rx="6"
+                fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+          <text x="100" y="304" fill="white" font-size="11" font-weight="600" text-anchor="middle">并发事务 B</text>
+          <text x="100" y="322" fill="#94a3b8" font-size="9" text-anchor="middle">Read View</text>
+          <text id="readview-state-text" x="100" y="346" class="state-text" fill="#67e8f9" text-anchor="middle">看到 A</text>
+        </g>
+
+        <g class="node" id="recovery-box">
+          <rect x="30" y="410" width="140" height="100" rx="6" fill="#0f172a"/>
+          <rect class="box" x="30" y="410" width="140" height="100" rx="6"
+                fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5"/>
+          <text x="100" y="434" fill="white" font-size="11" font-weight="600" text-anchor="middle">崩溃恢复</text>
+          <text x="100" y="454" fill="#94a3b8" font-size="8" text-anchor="middle">redo + binlog 判断</text>
+          <text x="100" y="472" fill="#94a3b8" font-size="8" text-anchor="middle">undo 回滚 / 重做</text>
+          <text id="recovery-state-text" x="100" y="494" class="badge-text" fill="#fda4af" text-anchor="middle">等待崩溃场景</text>
+        </g>
+
+        <!-- ============================================================
+             SERVER LAYER
+             ============================================================ -->
+        <g class="node" id="executor">
+          <rect x="230" y="85" width="150" height="60" rx="6" fill="#0f172a"/>
+          <rect class="box" x="230" y="85" width="150" height="60" rx="6"
+                fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+          <text x="305" y="109" fill="white" font-size="11" font-weight="600" text-anchor="middle">SQL 执行器</text>
+          <text x="305" y="127" fill="#94a3b8" font-size="9" text-anchor="middle">UPDATE id=1</text>
+        </g>
+
+        <g class="node" id="binlog-buffer">
+          <rect x="430" y="85" width="160" height="60" rx="6" fill="#0f172a"/>
+          <rect class="box" x="430" y="85" width="160" height="60" rx="6"
+                fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1.5"/>
+          <text x="510" y="109" fill="white" font-size="11" font-weight="600" text-anchor="middle">binlog buffer</text>
+          <text x="510" y="127" fill="#94a3b8" font-size="9" text-anchor="middle">ROW 前/后镜像</text>
+        </g>
+
+        <g class="node" id="tpc-coordinator">
+          <rect x="430" y="170" width="160" height="55" rx="6" fill="#0f172a"/>
+          <rect class="box" x="430" y="170" width="160" height="55" rx="6"
+                fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1.5"/>
+          <text x="510" y="192" fill="white" font-size="11" font-weight="600" text-anchor="middle">2PC 协调</text>
+          <text x="510" y="210" fill="#94a3b8" font-size="8" text-anchor="middle">prepare → binlog → commit</text>
+        </g>
+
+        <!-- ============================================================
+             INNODB LAYER
+             ============================================================ -->
+        <g class="node" id="buffer-pool">
+          <rect x="230" y="330" width="170" height="90" rx="6" fill="#0f172a"/>
+          <rect class="box" x="230" y="330" width="170" height="90" rx="6"
+                fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+          <text x="315" y="354" fill="white" font-size="11" font-weight="600" text-anchor="middle">Buffer Pool</text>
+          <text x="315" y="372" fill="#94a3b8" font-size="9" text-anchor="middle">page #5 · dirty</text>
+          <text id="buffer-state-text" x="315" y="394" class="state-text" fill="#c4b5fd" text-anchor="middle">id=1  A → B</text>
+        </g>
+
+        <g class="node" id="undo-buffer">
+          <rect x="430" y="330" width="160" height="75" rx="6" fill="#0f172a"/>
+          <rect class="box" x="430" y="330" width="160" height="75" rx="6"
+                fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+          <text x="510" y="354" fill="white" font-size="11" font-weight="600" text-anchor="middle">undo log</text>
+          <text id="undo-state-text" x="510" y="374" class="state-text" fill="#67e8f9" text-anchor="middle">old value A</text>
+          <text x="510" y="392" fill="#94a3b8" font-size="8" text-anchor="middle">回滚 + MVCC</text>
+        </g>
+
+        <g class="node" id="redo-buffer">
+          <rect x="430" y="430" width="160" height="75" rx="6" fill="#0f172a"/>
+          <rect class="box" x="430" y="430" width="160" height="75" rx="6"
+                fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+          <text x="510" y="454" fill="white" font-size="11" font-weight="600" text-anchor="middle">redo log buffer</text>
+          <text id="redo-state-text" x="510" y="474" class="state-text" fill="#fcd34d" text-anchor="middle">in memory</text>
+          <text x="510" y="492" fill="#94a3b8" font-size="8" text-anchor="middle">WAL · 页级修改</text>
+        </g>
+
+        <!-- ============================================================
+             DISK LAYER
+             ============================================================ -->
+        <g class="node" id="data-file">
+          <rect x="740" y="90" width="180" height="80" rx="6" fill="#0f172a"/>
+          <rect class="box" x="740" y="90" width="180" height="80" rx="6"
+                fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1.5"/>
+          <text x="830" y="114" fill="white" font-size="11" font-weight="600" text-anchor="middle">数据页文件</text>
+          <text x="830" y="132" fill="#94a3b8" font-size="9" text-anchor="middle">page #5</text>
+          <text id="data-state-text" x="830" y="154" class="state-text" fill="#c4b5fd" text-anchor="middle">id=1 val='A'</text>
+        </g>
+
+        <g class="node" id="undo-file">
+          <rect x="960" y="90" width="170" height="80" rx="6" fill="#0f172a"/>
+          <rect class="box" x="960" y="90" width="170" height="80" rx="6"
+                fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+          <text x="1045" y="114" fill="white" font-size="11" font-weight="600" text-anchor="middle">undo tablespace</text>
+          <text x="1045" y="132" fill="#94a3b8" font-size="9" text-anchor="middle">undo_001 / undo_002</text>
+          <text id="undo-disk-state-text" x="1045" y="154" class="state-text" fill="#67e8f9" text-anchor="middle">old value A</text>
+        </g>
+        <text id="purge-state-text" x="1045" y="205" class="badge-text" fill="#64748b" text-anchor="middle">purge: waiting</text>
+
+        <g class="node" id="redo-file">
+          <rect x="740" y="230" width="180" height="90" rx="6" fill="#0f172a"/>
+          <rect class="box" x="740" y="230" width="180" height="90" rx="6"
+                fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+          <text x="830" y="254" fill="white" font-size="11" font-weight="600" text-anchor="middle">redo files</text>
+          <text x="830" y="272" fill="#94a3b8" font-size="9" text-anchor="middle">#innodb_redo · LSN</text>
+          <text id="redo-disk-state-text" x="830" y="296" class="state-text" fill="#fcd34d" text-anchor="middle">LSN 246379632</text>
+        </g>
+        <text id="checkpoint-state-text" x="830" y="342" class="badge-text" fill="#64748b" text-anchor="middle">checkpoint: 未推进</text>
+
+        <g class="node" id="binlog-file">
+          <rect x="960" y="230" width="170" height="90" rx="6" fill="#0f172a"/>
+          <rect class="box" x="960" y="230" width="170" height="90" rx="6"
+                fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1.5"/>
+          <text x="1045" y="254" fill="white" font-size="11" font-weight="600" text-anchor="middle">binlog.000003</text>
+          <text x="1045" y="272" fill="#94a3b8" font-size="9" text-anchor="middle">ROW 格式</text>
+          <text id="binlog-state-text" x="1045" y="296" class="state-text" fill="#fdba74" text-anchor="middle">空</text>
+        </g>
+
+        <g class="node" id="replica-box">
+          <rect x="740" y="420" width="390" height="120" rx="8" fill="#0f172a"/>
+          <rect class="box" x="740" y="420" width="390" height="120" rx="8"
+                fill="rgba(30,41,59,0.55)" stroke="#94a3b8" stroke-width="1.5"/>
+          <text x="935" y="446" fill="white" font-size="11" font-weight="600" text-anchor="middle">从库 / PITR</text>
+          <text x="935" y="466" fill="#94a3b8" font-size="9" text-anchor="middle">IO thread → relay log → SQL thread</text>
+          <text x="935" y="486" fill="#94a3b8" font-size="9" text-anchor="middle">mysqlbinlog 按位点/时间重放</text>
+          <text id="replica-state-text" x="935" y="512" class="state-text" fill="#cbd5e1" text-anchor="middle">idle</text>
+        </g>
+
+        <!-- ============================================================
+             FLOW LABELS (on top)
+             ============================================================ -->
+        <text x="198" y="99" class="flow-label" text-anchor="middle">SQL</text>
+        <text x="312" y="240" class="flow-label" fill="#c4b5fd">修改页</text>
+        <text x="414" y="358" class="flow-label" fill="#67e8f9" text-anchor="middle">旧值 A</text>
+        <text x="418" y="438" class="flow-label" fill="#fcd34d">页修改</text>
+        <text x="250" y="318" class="flow-label" fill="#67e8f9">MVCC 读旧版本</text>
+        <text x="405" y="108" class="flow-label" fill="#fdba74" text-anchor="middle">binlog</text>
+        <text x="760" y="64" class="flow-label" fill="#fdba74">fsync</text>
+        <text x="690" y="260" class="flow-label" fill="#fcd34d">prepare / commit</text>
+        <text x="690" y="194" class="flow-label" fill="#67e8f9">undo 落盘</text>
+        <text x="560" y="262" class="flow-label" fill="#c4b5fd">checkpoint 刷脏页</text>
+        <text x="1055" y="376" class="flow-label" fill="#fdba74">复制 / PITR</text>
+
+        <!-- ============================================================
+             LEGEND
+             ============================================================ -->
+        <text x="30" y="650" fill="white" font-size="10" font-weight="600">Legend</text>
+
+        <rect x="30" y="664" width="16" height="10" rx="2"
+              fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1"/>
+        <text x="52" y="672" class="legend-text">redo log（物理 · WAL · 崩溃恢复）</text>
+
+        <rect x="280" y="664" width="16" height="10" rx="2"
+              fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1"/>
+        <text x="302" y="672" class="legend-text">undo log（逻辑 · 回滚 · MVCC）</text>
+
+        <rect x="530" y="664" width="16" height="10" rx="2"
+              fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1"/>
+        <text x="552" y="672" class="legend-text">binlog（Server 层 · 复制 · PITR）</text>
+
+        <line x1="790" y1="669" x2="820" y2="669" stroke="#f8fafc" stroke-width="2" stroke-dasharray="8,4"/>
+        <text x="828" y="672" class="legend-text">当前步骤的流向</text>
+
+        <rect x="1000" y="664" width="16" height="10" rx="2" fill="transparent"
+              stroke="#fbbf24" stroke-width="1" stroke-dasharray="3,3"/>
+        <text x="1022" y="672" class="legend-text">磁盘边界</text>
+
+        <text x="30" y="700" class="legend-text" fill="#64748b">
+          提示：点击下方步骤条，或使用键盘 ← / → 切换；高亮表示该阶段正在发生的数据流。
+        </text>
+      </svg>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <button id="prev-btn">← 上一步</button>
+      <button id="next-btn">下一步 →</button>
+      <button id="play-btn">▶ 自动播放</button>
+      <button id="reset-btn">↺ 重置</button>
+      <span class="counter" id="counter">01 / 10</span>
+    </div>
+
+    <!-- Timeline -->
+    <div class="timeline" id="timeline" role="tablist" aria-label="步骤时间线"></div>
+
+    <!-- Step Panel -->
+    <div class="step-panel">
+      <div class="step-head">
+        <span class="step-index" id="step-index">01</span>
+        <h2 class="step-title" id="step-title">执行 UPDATE</h2>
+      </div>
+      <p class="step-desc" id="step-desc"></p>
+      <div class="state-chips" id="state-chips"></div>
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot amber"></div>
+          <h3>redo log · 物理日志</h3>
+        </div>
+        <ul>
+          <li>• 记录页号 + 偏移 + 修改，WAL</li>
+          <li>• 事务执行中持续写 redo buffer</li>
+          <li>• 提交时刷盘（flush_log_at_trx_commit）</li>
+          <li>• 崩溃恢复从 checkpoint 重放</li>
+          <li>• 2PC：prepare → commit 标记</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>undo log · 逻辑日志</h3>
+        </div>
+        <ul>
+          <li>• 记录旧值/反向操作</li>
+          <li>• 未提交事务回滚</li>
+          <li>• MVCC 版本链 + Read View</li>
+          <li>• purge 线程清理旧版本</li>
+          <li>• 长事务会阻塞 purge</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot orange"></div>
+          <h3>binlog · Server 层逻辑日志</h3>
+        </div>
+        <ul>
+          <li>• ROW 格式记录前/后镜像</li>
+          <li>• 2PC 第二阶段写入并 fsync</li>
+          <li>• 复制：从库 IO 线程 → relay log</li>
+          <li>• PITR：mysqlbinlog 重放</li>
+          <li>• 与 redo 靠 2PC 保持一致</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>2PC 崩溃判断</h3>
+        </div>
+        <ul>
+          <li>• redo prepare + binlog 不完整 → 回滚</li>
+          <li>• redo prepare + binlog 完整 → 提交</li>
+          <li>• redo commit → 直接提交</li>
+          <li>• 双 1：sync_binlog=1 + flush=1</li>
+          <li>• group commit 合并 fsync 开销</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">
+      MySQL 8.0 · redo / undo / binlog · 2PC · 可交互步骤图 · 配套 doc/database/logs/
+    </p>
+  </div>
+
+  <script>
+    /* ------------------------------------------------------------------
+       Step definitions
+       ------------------------------------------------------------------ */
+    const steps = [
+      {
+        short: '改页',
+        title: '① 执行 UPDATE：改内存页，写 undo / redo',
+        desc: 'SQL 进入 Server 层，执行器调用 InnoDB。InnoDB 在 Buffer Pool 中定位 page #5，把 val 从 A 改成 B；同时写 undo（旧值 A）和 redo（页修改）。此时 undo 和 redo 都还在内存里，数据页是脏页。',
+        nodes: ['client', 'tx-box', 'executor', 'buffer-pool', 'undo-buffer', 'redo-buffer'],
+        flows: ['flow-sql-exec', 'flow-exec-bp', 'flow-bp-undo', 'flow-bp-redo'],
+        texts: {
+          'tx-state-text': 'ACTIVE',
+          'redo-state-text': 'in memory',
+          'undo-state-text': 'old value A',
+          'binlog-state-text': '空',
+          'data-state-text': "id=1 val='A'",
+          'readview-state-text': '-',
+          'replica-state-text': 'idle',
+          'undo-disk-state-text': 'old value A',
+          'redo-disk-state-text': 'LSN 246379632',
+          'checkpoint-state-text': 'checkpoint: 未推进',
+          'purge-state-text': 'purge: waiting',
+          'recovery-state-text': '等待崩溃场景'
+        },
+        chips: [
+          ['事务', 'ACTIVE', 'amber'],
+          ['redo', '内存中', 'amber'],
+          ['undo', '旧值 A', 'cyan'],
+          ['binlog', '空', 'orange'],
+          ['数据页', '脏页 A→B', 'violet']
+        ]
+      },
+      {
+        short: 'MVCC',
+        title: '② 并发读：undo 版本链 + Read View 看到旧值 A',
+        desc: '另一个事务 B 在事务 A 未提交时读取同一行。InnoDB 不会让 B 读到未提交的 B 值，而是沿 undo 版本链找到旧版本 A，再根据 Read View 判断可见性。这就是 undo 支撑的 MVCC。',
+        nodes: ['readview-box', 'tx-box', 'buffer-pool', 'undo-buffer'],
+        flows: ['flow-readview-undo'],
+        texts: {
+          'tx-state-text': 'ACTIVE',
+          'redo-state-text': 'in memory',
+          'undo-state-text': 'old value A (被读)',
+          'binlog-state-text': '空',
+          'data-state-text': "id=1 val='A'",
+          'readview-state-text': '看到 A',
+          'replica-state-text': 'idle',
+          'undo-disk-state-text': 'old value A',
+          'redo-disk-state-text': 'LSN 246379632',
+          'checkpoint-state-text': 'checkpoint: 未推进',
+          'purge-state-text': 'purge: waiting',
+          'recovery-state-text': '等待崩溃场景'
+        },
+        chips: [
+          ['并发事务 B', '读到 A', 'cyan'],
+          ['undo', '版本链', 'cyan'],
+          ['事务 A', '未提交', 'amber'],
+          ['Read View', '可见性判断', 'emerald']
+        ]
+      },
+      {
+        short: 'redo prepare',
+        title: '③ redo prepare：日志先落盘',
+        desc: '进入 2PC 第一阶段。InnoDB 把 redo 刷到磁盘，并把事务标记为 prepare。此时数据页仍未刷盘；如果此刻崩溃，因为 binlog 还没写，恢复时会用 undo 回滚这个事务。',
+        nodes: ['tx-box', 'tpc-coordinator', 'redo-buffer', 'redo-file'],
+        flows: ['flow-bp-redo', 'flow-redo-disk'],
+        texts: {
+          'tx-state-text': 'PREPARE',
+          'redo-state-text': 'prepare 已刷盘',
+          'undo-state-text': 'old value A',
+          'binlog-state-text': '空',
+          'data-state-text': "id=1 val='A'",
+          'readview-state-text': '-',
+          'replica-state-text': 'idle',
+          'undo-disk-state-text': 'old value A',
+          'redo-disk-state-text': 'prepare · flushed',
+          'checkpoint-state-text': 'checkpoint: 未推进',
+          'purge-state-text': 'purge: waiting',
+          'recovery-state-text': '崩溃点 A 风险'
+        },
+        chips: [
+          ['redo', 'prepare 已刷盘', 'amber'],
+          ['binlog', '未写', 'orange'],
+          ['崩溃点 A', '会回滚', 'rose'],
+          ['数据页', '仍为脏页', 'violet']
+        ]
+      },
+      {
+        short: 'binlog',
+        title: '④ 写 binlog：Server 层记录行镜像并 fsync',
+        desc: 'Server 把 ROW 格式的前/后镜像写入 binlog，并按照 sync_binlog 配置 fsync。只有 binlog 完整落盘，2PC 才能进入 commit 阶段。',
+        nodes: ['tx-box', 'tpc-coordinator', 'executor', 'binlog-buffer', 'binlog-file'],
+        flows: ['flow-exec-binlog', 'flow-binlog-disk'],
+        texts: {
+          'tx-state-text': 'PREPARE',
+          'redo-state-text': 'prepare 已刷盘',
+          'undo-state-text': 'old value A',
+          'binlog-state-text': '完整 · 含 Xid',
+          'data-state-text': "id=1 val='A'",
+          'readview-state-text': '-',
+          'replica-state-text': 'idle',
+          'undo-disk-state-text': 'old value A',
+          'redo-disk-state-text': 'prepare · flushed',
+          'checkpoint-state-text': 'checkpoint: 未推进',
+          'purge-state-text': 'purge: waiting',
+          'recovery-state-text': 'binlog 已完整'
+        },
+        chips: [
+          ['binlog', '完整（Xid）', 'orange'],
+          ['2PC', '第二阶段', 'emerald'],
+          ['redo', 'prepare', 'amber'],
+          ['从库', '可开始复制', 'slate']
+        ]
+      },
+      {
+        short: 'commit',
+        title: '⑤ redo commit：事务提交完成',
+        desc: 'binlog 落盘后，InnoDB 在 redo 中写 commit 标记，事务返回成功。此时 redo 和 binlog 都已持久化，但数据页仍可能是脏页，由后台 checkpoint 慢慢刷。',
+        nodes: ['tx-box', 'executor', 'tpc-coordinator', 'redo-file', 'binlog-file'],
+        flows: ['flow-redo-disk', 'flow-binlog-disk'],
+        texts: {
+          'tx-state-text': 'COMMITTED',
+          'redo-state-text': 'commit',
+          'undo-state-text': 'old value A',
+          'binlog-state-text': '完整 · 含 Xid',
+          'data-state-text': "id=1 val='A'",
+          'readview-state-text': '-',
+          'replica-state-text': 'idle',
+          'undo-disk-state-text': 'old value A',
+          'redo-disk-state-text': 'commit · durable',
+          'checkpoint-state-text': 'checkpoint: 未推进',
+          'purge-state-text': 'purge: waiting',
+          'recovery-state-text': '已提交'
+        },
+        chips: [
+          ['事务', 'COMMITTED', 'emerald'],
+          ['redo', 'commit', 'amber'],
+          ['binlog', '完整', 'orange'],
+          ['数据页', '仍为脏页', 'violet']
+        ]
+      },
+      {
+        short: 'checkpoint',
+        title: '⑥ 后台 checkpoint：数据页刷盘',
+        desc: '后台线程把脏页刷到数据文件，checkpoint 推进，旧 redo 空间可以复用。此时磁盘上的数据页才真正变成 B。WAL 的意义就是：提交不必等数据页刷盘。',
+        nodes: ['buffer-pool', 'data-file', 'redo-file'],
+        flows: ['flow-bp-data'],
+        texts: {
+          'tx-state-text': 'COMMITTED',
+          'redo-state-text': 'checkpoint 推进',
+          'undo-state-text': 'old value A',
+          'binlog-state-text': '完整',
+          'data-state-text': "id=1 val='B'",
+          'readview-state-text': '-',
+          'replica-state-text': 'idle',
+          'undo-disk-state-text': 'old value A',
+          'redo-disk-state-text': 'checkpoint advanced',
+          'checkpoint-state-text': 'checkpoint: 已推进',
+          'purge-state-text': 'purge: waiting',
+          'recovery-state-text': '已提交'
+        },
+        chips: [
+          ['checkpoint', '推进', 'violet'],
+          ['数据页', 'B 已落盘', 'violet'],
+          ['redo', '可复用', 'amber'],
+          ['WAL', '提交不必等刷页', 'emerald']
+        ]
+      },
+      {
+        short: 'purge',
+        title: '⑦ 后台 purge：清理旧版本',
+        desc: '当没有 Read View 再需要旧版本时，purge 线程清理 undo。长事务会长期持有 Read View，阻止 purge，导致 undo 膨胀、History list length 升高。',
+        nodes: ['undo-buffer', 'undo-file'],
+        flows: ['flow-undo-disk'],
+        texts: {
+          'tx-state-text': 'COMMITTED',
+          'redo-state-text': 'checkpoint 推进',
+          'undo-state-text': '旧版本可清理',
+          'binlog-state-text': '完整',
+          'data-state-text': "id=1 val='B'",
+          'readview-state-text': '无活跃 Read View',
+          'replica-state-text': 'idle',
+          'undo-disk-state-text': 'purged',
+          'redo-disk-state-text': 'checkpoint advanced',
+          'checkpoint-state-text': 'checkpoint: 已推进',
+          'purge-state-text': 'purge: 已清理',
+          'recovery-state-text': '已提交'
+        },
+        chips: [
+          ['purge', '清理旧版本', 'cyan'],
+          ['History list', '下降', 'cyan'],
+          ['长事务', '阻塞 purge', 'rose'],
+          ['undo', '空间可复用', 'cyan']
+        ]
+      },
+      {
+        short: '崩溃 A',
+        title: '⑧ 崩溃场景 A：binlog 未写 → 回滚',
+        desc: '如果在 redo prepare 后、binlog 完整前崩溃，恢复时发现 redo 是 prepare 且 binlog 不完整，于是用 undo 回滚。主库不会出现这个事务，从库也不会收到它。',
+        nodes: ['recovery-box', 'tx-box', 'redo-file', 'undo-file', 'data-file'],
+        flows: ['flow-redo-disk', 'flow-undo-disk'],
+        texts: {
+          'tx-state-text': 'ROLLED BACK',
+          'redo-state-text': 'prepare · 无 commit',
+          'undo-state-text': '执行回滚',
+          'binlog-state-text': '不完整 / 空',
+          'data-state-text': "id=1 val='A'",
+          'readview-state-text': '无活跃 Read View',
+          'replica-state-text': '无此事务',
+          'undo-disk-state-text': '用于回滚',
+          'redo-disk-state-text': 'prepare · rollback',
+          'checkpoint-state-text': 'checkpoint: 未推进',
+          'purge-state-text': 'purge: 回滚后清理',
+          'recovery-state-text': '崩溃点 A：回滚'
+        },
+        chips: [
+          ['崩溃点 A', 'binlog 不完整', 'rose'],
+          ['redo', 'prepare', 'amber'],
+          ['undo', '回滚', 'cyan'],
+          ['结果', '事务不存在', 'slate']
+        ]
+      },
+      {
+        short: '崩溃 B',
+        title: '⑨ 崩溃场景 B：binlog 完整 → 恢复时提交',
+        desc: '如果 binlog 已经完整落盘，但 redo 还没写 commit 就崩溃，恢复时根据 binlog 中的 Xid 判断事务完整，于是重做并补上 commit。这样主库和从库都不会丢这个事务。',
+        nodes: ['recovery-box', 'tx-box', 'binlog-file', 'redo-file', 'data-file'],
+        flows: ['flow-binlog-disk', 'flow-redo-disk'],
+        texts: {
+          'tx-state-text': 'COMMITTED (恢复)',
+          'redo-state-text': '按 binlog 补 commit',
+          'undo-state-text': '无需回滚',
+          'binlog-state-text': '完整 · 含 Xid',
+          'data-state-text': "id=1 val='B' (恢复后)",
+          'readview-state-text': '-',
+          'replica-state-text': '可复制',
+          'undo-disk-state-text': '无需回滚',
+          'redo-disk-state-text': 'recovery → commit',
+          'checkpoint-state-text': 'checkpoint: 恢复后推进',
+          'purge-state-text': 'purge: waiting',
+          'recovery-state-text': '崩溃点 B：提交'
+        },
+        chips: [
+          ['崩溃点 B', 'binlog 完整', 'rose'],
+          ['恢复', '补 commit', 'emerald'],
+          ['redo', 'prepare → commit', 'amber'],
+          ['结果', '事务保留', 'emerald']
+        ]
+      },
+      {
+        short: '复制 / PITR',
+        title: '⑩ 已提交：binlog 流向从库与 PITR',
+        desc: '事务已提交后，binlog 还可以被从库 IO 线程拉取，写成 relay log 再由 SQL 线程重放；也可以在全量备份基础上用 mysqlbinlog 按位点/时间重放，做 PITR。',
+        nodes: ['tx-box', 'binlog-file', 'replica-box', 'redo-file'],
+        flows: ['flow-binlog-relay'],
+        texts: {
+          'tx-state-text': 'COMMITTED',
+          'redo-state-text': 'commit',
+          'undo-state-text': 'purge 后',
+          'binlog-state-text': '完整 · 含 Xid',
+          'data-state-text': "id=1 val='B'",
+          'readview-state-text': '-',
+          'replica-state-text': 'relay log → SQL thread',
+          'undo-disk-state-text': 'purged',
+          'redo-disk-state-text': 'commit · durable',
+          'checkpoint-state-text': 'checkpoint: 已推进',
+          'purge-state-text': 'purge: 已清理',
+          'recovery-state-text': '已提交'
+        },
+        chips: [
+          ['复制', 'binlog → relay log', 'orange'],
+          ['从库', 'SQL thread 重放', 'emerald'],
+          ['PITR', 'mysqlbinlog 重放', 'amber'],
+          ['事务', 'COMMITTED', 'emerald']
+        ]
+      }
+    ];
+
+    const timeline = document.getElementById('timeline');
+    const stepIndex = document.getElementById('step-index');
+    const stepTitle = document.getElementById('step-title');
+    const stepDesc = document.getElementById('step-desc');
+    const stateChips = document.getElementById('state-chips');
+    const counter = document.getElementById('counter');
+    const prevBtn = document.getElementById('prev-btn');
+    const nextBtn = document.getElementById('next-btn');
+    const playBtn = document.getElementById('play-btn');
+    const resetBtn = document.getElementById('reset-btn');
+
+    let current = 0;
+    let timer = null;
+
+    /* Build timeline */
+    steps.forEach((s, i) => {
+      if (i > 0) {
+        const line = document.createElement('div');
+        line.className = 'tl-line';
+        timeline.appendChild(line);
+      }
+      const btn = document.createElement('button');
+      btn.className = 'tl-step';
+      btn.type = 'button';
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('aria-label', s.title);
+      btn.innerHTML = '<span class="tl-dot"></span><span class="tl-label">' + s.short + '</span>';
+      btn.addEventListener('click', () => { stopPlay(); setStep(i); });
+      timeline.appendChild(btn);
+    });
+
+    function setStep(i) {
+      current = i;
+      const s = steps[i];
+
+      document.querySelectorAll('.node').forEach(n => n.classList.remove('active'));
+      document.querySelectorAll('.flow').forEach(f => f.classList.remove('active'));
+
+      s.nodes.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('active');
+      });
+      s.flows.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.add('active');
+      });
+
+      Object.entries(s.texts).forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value;
+      });
+
+      stepIndex.textContent = String(i + 1).padStart(2, '0');
+      stepTitle.textContent = s.title;
+      stepDesc.textContent = s.desc;
+      counter.textContent = String(i + 1).padStart(2, '0') + ' / ' + String(steps.length).padStart(2, '0');
+
+      stateChips.innerHTML = s.chips.map(([label, value, color]) =>
+        '<span class="chip chip-' + color + '"><span class="dot"></span>' + label + ' · ' + value + '</span>'
+      ).join('');
+
+      document.querySelectorAll('.tl-step').forEach((el, idx) => {
+        el.classList.toggle('active', idx === i);
+        el.setAttribute('aria-selected', idx === i ? 'true' : 'false');
+      });
+
+      prevBtn.disabled = i === 0;
+      nextBtn.disabled = i === steps.length - 1;
+    }
+
+    function next() { stopPlay(); if (current < steps.length - 1) setStep(current + 1); }
+    function prev() { stopPlay(); if (current > 0) setStep(current - 1); }
+
+    function stopPlay() {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+        playBtn.textContent = '▶ 自动播放';
+      }
+    }
+
+    function togglePlay() {
+      if (timer) { stopPlay(); return; }
+      playBtn.textContent = '⏸ 暂停';
+      timer = setInterval(() => {
+        if (current >= steps.length - 1) {
+          setStep(0);
+        } else {
+          setStep(current + 1);
+        }
+      }, 2800);
+    }
+
+    prevBtn.addEventListener('click', prev);
+    nextBtn.addEventListener('click', next);
+    playBtn.addEventListener('click', togglePlay);
+    resetBtn.addEventListener('click', () => { stopPlay(); setStep(0); });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight') { e.preventDefault(); next(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
+    });
+
+    setStep(0);
+  </script>
+
+  <script>
+    async function copyAsImage(btn) {
+      const orig = btn.textContent;
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = '✓ Copied!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPNG(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const link = document.createElement('a');
+        link.download = 'mysql-logs-workflow.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPDF(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save('mysql-logs-workflow.pdf');
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+  </script>
+</body>
+</html>
