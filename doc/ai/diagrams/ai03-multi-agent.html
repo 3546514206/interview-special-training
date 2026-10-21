@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Multi-Agent 协作架构 · 4 种协作模式 · 2025-2026 面试高频 #5</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; min-height: 100vh; }
+  .container { width: 1240px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #fb923c; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(251,146,60,.6); } 70% { box-shadow: 0 0 0 10px rgba(251,146,60,0); } 100% { box-shadow: 0 0 0 0 rgba(251,146,60,0); } }
+  .header h1 { font-size: 21px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 13px; color: #7d8db0; margin-top: 5px; }
+  .toolbar { position: relative; }
+  .toolbar-toggle { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 16px; font-family: inherit; }
+  .toolbar-toggle:hover { color: #e2e8f0; border-color: #475569; }
+  .toolbar-actions { display: none; position: absolute; right: 0; top: 38px; gap: 6px; z-index: 10; }
+  .toolbar.open .toolbar-actions { display: flex; }
+  .toolbar-actions button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; }
+  .toolbar-actions button:hover { color: #f1f5f9; border-color: #64748b; }
+  @media print { .toolbar { display: none !important; } }
+
+  /* ── 模式切换 ── */
+  .mode-bar { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
+  .mode-btn { background: #0f172a; border: 1.5px solid #334155; color: #e2e8f0; border-radius: 7px; padding: 10px 16px; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600; transition: all 0.15s ease; }
+  .mode-btn:hover { border-color: #fb923c; }
+  .mode-btn.active { background: rgba(251,146,60,0.18); border-color: #fb923c; color: #fdba74; box-shadow: 0 0 0 3px rgba(251,146,60,0.10); }
+
+  /* ── 主图 ── */
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  .diagram-card-body { padding: 18px 22px 22px; }
+  .main-svg { display: block; width: 100%; height: auto; }
+  .main-svg text { font-family: 'JetBrains Mono', monospace; }
+
+  /* ── 详情面板 ── */
+  .detail-panel { border: 1px solid #1e293b; border-radius: 10px; background: rgba(15,23,42,0.5); overflow: hidden; margin-bottom: 14px; }
+  .detail-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 18px; border-bottom: 1px solid #1e293b; background: rgba(15,23,42,0.6); }
+  .detail-head h3 { font-size: 14px; color: #f1f5f9; font-weight: 600; }
+  .detail-head .tag { font-size: 10px; color: #94a3b8; background: #0f172a; padding: 2px 8px; border-radius: 3px; border: 1px solid #334155; }
+  .detail-body { padding: 14px 18px; font-size: 13px; line-height: 1.75; color: #cbd5e1; }
+  .detail-body b { color: #f1f5f9; }
+  .detail-body code { background: #0f172a; color: #c4b5fd; padding: 2px 7px; border-radius: 3px; font-size: 12px; border: 1px solid #1e293b; }
+
+  /* ── 决策表 ── */
+  .decision-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 8px; }
+  .decision-table thead th { background: #0f172a; color: #cbd5e1; font-weight: 600; padding: 8px 10px; text-align: left; border-bottom: 1.5px solid #334155; }
+  .decision-table tbody td { padding: 8px 10px; border-bottom: 1px solid #1e293b; color: #e2e8f0; font-family: inherit; }
+  .decision-table tbody tr:hover { background: rgba(251,146,60,0.08); }
+  .decision-table .check { color: #34d399; font-weight: 700; }
+  .decision-table .cross { color: #fb7185; font-weight: 700; }
+
+  /* ── 4 张总结卡片 ── */
+  .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 18px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 14px 16px; }
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+  .card-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card h3 { font-size: 13px; color: #f1f5f9; font-weight: 600; }
+  .card ul { list-style: none; }
+  .card li { font-size: 12px; color: #a5b4cc; line-height: 1.7; padding-left: 12px; position: relative; }
+  .card li::before { content: '▸'; position: absolute; left: 0; color: #fb923c; }
+  .card li b { color: #e2e8f0; font-weight: 600; }
+  .card li code { background: #0f172a; color: #c4b5fd; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>Multi-Agent 协作架构 · 4 种协作模式 · 单 vs 多 Agent 决策</h1>
+        <div class="subtitle">Supervisor / Hierarchical / Peer-to-Peer / Debate · 上下文隔离 vs 共享 · 冲突解决</div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbar').classList.toggle('open')">⋯</button>
+      <div class="toolbar-actions">
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 模式切换 ── -->
+  <div class="mode-bar">
+    <button class="mode-btn active" data-mode="0">① 单 Agent（基线）</button>
+    <button class="mode-btn" data-mode="1">② Supervisor 中央调度</button>
+    <button class="mode-btn" data-mode="2">③ Hierarchical 树形分层</button>
+    <button class="mode-btn" data-mode="3">④ Peer-to-Peer 对等 / Debate</button>
+  </div>
+
+  <!-- ── 主图 ── -->
+  <div class="diagram-card">
+    <div class="diagram-card-body">
+      <svg class="main-svg" id="main-svg" viewBox="0 0 1200 480"></svg>
+    </div>
+  </div>
+
+  <!-- ── 详情 ── -->
+  <div class="detail-panel">
+    <div class="detail-head">
+      <h3 id="detail-title">模式详情</h3>
+      <span class="tag" id="detail-tag">Mode 0</span>
+    </div>
+    <div class="detail-body" id="detail-body"></div>
+  </div>
+
+  <!-- ── 决策表 ── -->
+  <div class="detail-panel">
+    <div class="detail-head">
+      <h3>📋 单 Agent vs 多 Agent：何时用哪个？</h3>
+      <span class="tag">决策表</span>
+    </div>
+    <div class="detail-body">
+      <table class="decision-table">
+        <thead>
+          <tr><th>场景特征</th><th>单 Agent</th><th>多 Agent</th><th>理由</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>任务简单、可线性完成</td><td class="check">✓</td><td class="cross">✗</td><td>多 Agent 增加延迟和成本</td></tr>
+          <tr><td>任务需要<b>多视角/多角色</b></td><td class="cross">✗</td><td class="check">✓</td><td>辩论/审查天然需要多视角</td></tr>
+          <tr><td>工具太多 prompt 撑爆</td><td class="cross">✗</td><td class="check">✓</td><td>每个 Agent 持有自己的工具集</td></tr>
+          <tr><td>需要<b>细粒度权限隔离</b></td><td class="cross">✗</td><td class="check">✓</td><td>Agent A 看不到 Agent B 的敏感工具</td></tr>
+          <tr><td>需要<b>人类可审计</b>每一步</td><td class="cross">✗</td><td class="check">✓</td><td>每 Agent 单独 trace，便于排查</td></tr>
+          <tr><td>对<b>延迟敏感</b>（&lt;1s）</td><td class="check">✓</td><td class="cross">✗</td><td>多 Agent 串行延迟叠加</td></tr>
+          <tr><td>需要<b>长期演化</b>、沉淀经验</td><td class="cross">✗</td><td class="check">✓</td><td>不同 Agent 独立微调/记忆</td></tr>
+        </tbody>
+      </table>
+      <div style="margin-top:12px; padding:10px 12px; background:rgba(251,191,36,0.10); border-left:3px solid #fbbf24; border-radius:4px; font-size:12px; color:#fde68a;">
+        💡 <b>通用经验</b>：从单 Agent 起步，工具数 &gt; 10 / prompt &gt; 4K / 需要 guardrail 时再考虑多 Agent。
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 4 张总结卡片 ── -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#fb7185"></div>
+        <h3>上下文隔离 vs 共享</h3>
+      </div>
+      <ul>
+        <li><b>共享</b>：所有 Agent 同一上下文（Blackboard 模式），易冲突、token 暴涨</li>
+        <li><b>隔离</b>：每 Agent 私有上下文，通过<b>消息总线</b>传递摘要</li>
+        <li><b>混合</b>：私有 + 共享黑板（推荐），关键信息广播、敏感信息隔离</li>
+        <li>隔离代价：需设计<b>序列化协议</b>，否则信息丢失</li>
+        <li>LangGraph 用 <code>StateGraph</code>、CrewAI 用共享 <code>memory</code>、AutoGen 用 <code>GroupChat</code></li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#a78bfa"></div>
+        <h3>冲突解决方案</h3>
+      </div>
+      <ul>
+        <li><b>Voting</b>：多 Agent 投票，多数决（适合分类/选择）</li>
+        <li><b>Critic-Reviewer</b>：一个 Agent 写，一个 Agent 审</li>
+        <li><b>Debate 辩论</b>：双方各持观点，最后裁决（适合决策类）</li>
+        <li><b>Priority 优先级</b>：Supervisor 优先级裁决</li>
+        <li><b>Confidence 加权</b>：用 self-confidence 分数加权</li>
+        <li>无收敛 → 引入<b>人类</b>或<b>硬阈值</b>兜底</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#34d399"></div>
+        <h3>通信协议</h3>
+      </div>
+      <ul>
+        <li><b>消息总线</b>：Kafka / Redis Streams，事件驱动</li>
+        <li><b>共享内存</b>：in-memory dict（性能高，难持久化）</li>
+        <li><b>Blackboard</b>：结构化状态空间，Agent 读写</li>
+        <li><b>Pub/Sub</b>：发布订阅，Agent 订阅感兴趣的事件</li>
+        <li><b>Frameworks</b>：LangGraph、CrewAI、AutoGen、MetaGPT、Swarm</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#fb923c"></div>
+        <h3>评估指标</h3>
+      </div>
+      <ul>
+        <li><b>任务完成率</b>：最终目标达成率（最重要）</li>
+        <li><b>单 Agent 失败率</b>：每个 Agent 独立看</li>
+        <li><b>通信轮次</b>：越少越高效，过多 → 协调失败</li>
+        <li><b>Token 成本</b>：多 Agent 通常 <b>3-10×</b> 单 Agent</li>
+        <li><b>延迟</b>：串行 vs 并行 Agent 分布</li>
+        <li><b>收敛速度</b>：辩论多久达成一致</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>Multi-Agent 协作架构 · 2025-2026 面试高频 #5/#17/#27</span>
+    <span>doc/ai/diagrams/ai03-multi-agent.html</span>
+  </div>
+</div>
+
+<script>
+const MODES = [
+  // Mode 0: 单 Agent
+  {
+    title: "① 单 Agent（基线）",
+    tag: "Mode 0",
+    body: `
+      <div style="font-size:13px; color:#cbd5e1; line-height:1.75;">
+        <b style="color:#fbbf24;">定义</b>：一个 LLM 大脑 + 一组工具 + 一份记忆，独立完成所有步骤。
+      </div>
+      <div style="margin-top:10px; padding:10px 12px; background:#0b1220; border:1px solid #1e293b; border-radius:6px; font-size:12px; line-height:1.7;">
+        <b style="color:#a78bfa;">架构</b><br>
+        User Query → Agent (LLM + Tools + Memory) → Answer<br><br>
+        <b style="color:#a78bfa;">适用</b>：任务线性、工具 &lt; 5 个、prompt &lt; 4K token<br>
+        <b style="color:#a78bfa;">优势</b>：延迟低、调试简单、成本低<br>
+        <b style="color:#a78bfa;">劣势</b>：上下文爆炸、工具多时选错率高、无 guardrail
+      </div>
+      <div style="margin-top:10px; padding:8px 10px; background:rgba(94,234,212,0.10); border-left:3px solid #5eead4; border-radius:4px; font-size:12px; color:#5eead4;">
+        💡 <b>Real-world</b>：LangChain ReAct Agent、OpenAI Assistants、Claude tool use 都是单 Agent
+      </div>
+    `,
+    draw: function(svg, el, text) {
+      // 用户
+      const userG = el("g");
+      userG.appendChild(el("rect", { x: 100, y: 200, width: 140, height: 80, rx: 8, fill: "rgba(30,41,59,0.5)", stroke: "#94a3b8", "stroke-width": 1.5 }));
+      userG.appendChild(text("👤 User", { x: 170, y: 230, fill: "white", "font-size": 13, "font-weight": 700, "text-anchor": "middle" }));
+      userG.appendChild(text("Query", { x: 170, y: 254, fill: "#94a3b8", "font-size": 10, "text-anchor": "middle" }));
+      svg.appendChild(userG);
+
+      // Agent 大盒子
+      const agentG = el("g");
+      agentG.appendChild(el("rect", { x: 400, y: 120, width: 400, height: 240, rx: 12, fill: "rgba(167,139,250,0.10)", stroke: "#a78bfa", "stroke-width": 2 }));
+      agentG.appendChild(text("🧠 Single Agent", { x: 600, y: 144, fill: "#c4b5fd", "font-size": 16, "font-weight": 700, "text-anchor": "middle" }));
+
+      // 内部组件
+      const items = [
+        { y: 170, label: "🧮 LLM Brain", sub: "GPT-4 / Claude" },
+        { y: 210, label: "🔧 Tools", sub: "search / sql / code" },
+        { y: 250, label: "🗂 Memory", sub: "短期 + 长期" },
+        { y: 290, label: "📋 Plan", sub: "todo list" }
+      ];
+      items.forEach(it => {
+        agentG.appendChild(el("rect", { x: 440, y: it.y, width: 320, height: 30, rx: 4, fill: "#0b1220", stroke: "#334155", "stroke-width": 1 }));
+        agentG.appendChild(text(it.label, { x: 460, y: it.y + 20, fill: "white", "font-size": 11, "font-weight": 600 }));
+        agentG.appendChild(text(it.sub, { x: 745, y: it.y + 20, fill: "#94a3b8", "font-size": 10, "text-anchor": "end" }));
+      });
+      svg.appendChild(agentG);
+
+      // 答案
+      const ansG = el("g");
+      ansG.appendChild(el("rect", { x: 960, y: 200, width: 140, height: 80, rx: 8, fill: "rgba(52,211,153,0.18)", stroke: "#34d399", "stroke-width": 1.5 }));
+      ansG.appendChild(text("✨ Answer", { x: 1030, y: 230, fill: "white", "font-size": 13, "font-weight": 700, "text-anchor": "middle" }));
+      ansG.appendChild(text("Direct", { x: 1030, y: 254, fill: "#94a3b8", "font-size": 10, "text-anchor": "middle" }));
+      svg.appendChild(ansG);
+
+      // 连接
+      svg.appendChild(el("line", { x1: 240, y1: 240, x2: 398, y2: 240, stroke: "#94a3b8", "stroke-width": 1.5, "marker-end": "url(#arrowhead)" }));
+      svg.appendChild(el("line", { x1: 800, y1: 240, x2: 958, y2: 240, stroke: "#fbbf24", "stroke-width": 1.5, "marker-end": "url(#arrowhead)" }));
+
+      // 底部说明
+      svg.appendChild(text("单线流程：Query → 唯一 Agent → Answer", { x: 600, y: 420, fill: "#94a3b8", "font-size": 12, "text-anchor": "middle", "font-style": "italic" }));
+    }
+  },
+  // Mode 1: Supervisor
+  {
+    title: "② Supervisor 中央调度",
+    tag: "Mode 1",
+    body: `
+      <div style="font-size:13px; color:#cbd5e1; line-height:1.75;">
+        <b style="color:#fbbf24;">定义</b>：1 个 Supervisor（中央调度）+ N 个 Worker Agent，Supervisor 负责任务拆解、分配、汇总。
+      </div>
+      <div style="margin-top:10px; padding:10px 12px; background:#0b1220; border:1px solid #1e293b; border-radius:6px; font-size:12px; line-height:1.7;">
+        <b style="color:#fb923c;">架构</b><br>
+        User → Supervisor → Worker A / B / C → Supervisor → Answer<br><br>
+        <b style="color:#fb923c;">适用</b>：任务可清晰分解、需要中央决策（如客服工单、研发流水线）<br>
+        <b style="color:#fb923c;">优势</b>：调度清晰、易审计、易加 guardrail<br>
+        <b style="color:#fb923c;">劣势</b>：Supervisor 是<b>单点瓶颈</b>、可能成为最大延迟
+      </div>
+      <div style="margin-top:10px; padding:8px 10px; background:rgba(94,234,212,0.10); border-left:3px solid #5eead4; border-radius:4px; font-size:12px; color:#5eead4;">
+        💡 <b>Real-world</b>：LangGraph Supervisor、CrewAI 流程模式、OpenAI Swarm、AutoGen GroupChatManager
+      </div>
+    `,
+    draw: function(svg, el, text) {
+      // 用户
+      const userG = el("g");
+      userG.appendChild(el("rect", { x: 100, y: 210, width: 110, height: 60, rx: 8, fill: "rgba(30,41,59,0.5)", stroke: "#94a3b8", "stroke-width": 1.5 }));
+      userG.appendChild(text("👤 User", { x: 155, y: 240, fill: "white", "font-size": 12, "font-weight": 700, "text-anchor": "middle" }));
+      userG.appendChild(text("Query", { x: 155, y: 258, fill: "#94a3b8", "font-size": 9, "text-anchor": "middle" }));
+      svg.appendChild(userG);
+
+      // Supervisor
+      const supG = el("g");
+      supG.appendChild(el("rect", { x: 480, y: 100, width: 240, height: 80, rx: 10, fill: "rgba(251,146,60,0.25)", stroke: "#fb923c", "stroke-width": 2 }));
+      supG.appendChild(text("🎯 Supervisor", { x: 600, y: 128, fill: "#fdba74", "font-size": 14, "font-weight": 700, "text-anchor": "middle" }));
+      supG.appendChild(text("拆任务 / 分派 / 汇总", { x: 600, y: 150, fill: "#fed7aa", "font-size": 10, "text-anchor": "middle" }));
+      supG.appendChild(text("(LLM Brain)", { x: 600, y: 168, fill: "#94a3b8", "font-size": 9, "text-anchor": "middle", "font-style": "italic" }));
+      svg.appendChild(supG);
+
+      // 3 Workers
+      const workers = [
+        { name: "🔍 Researcher", x: 320, color: "#a78bfa" },
+        { name: "💻 Coder", x: 550, color: "#22d3ee" },
+        { name: "📝 Writer", x: 780, color: "#34d399" }
+      ];
+      workers.forEach(w => {
+        const wG = el("g");
+        wG.appendChild(el("rect", { x: w.x, y: 290, width: 160, height: 70, rx: 8, fill: "rgba(15,23,42,0.85)", stroke: w.color, "stroke-width": 1.5 }));
+        wG.appendChild(text(w.name, { x: w.x + 80, y: 320, fill: "white", "font-size": 12, "font-weight": 700, "text-anchor": "middle" }));
+        wG.appendChild(text("Worker Agent", { x: w.x + 80, y: 340, fill: "#94a3b8", "font-size": 9, "text-anchor": "middle" }));
+        svg.appendChild(wG);
+        // Supervisor → Worker
+        svg.appendChild(el("line", { x1: 600, y1: 180, x2: w.x + 80, y2: 288, stroke: w.color, "stroke-width": 1.2, "marker-end": "url(#arrowhead)" }));
+        // Worker → Supervisor (虚线)
+        svg.appendChild(el("line", { x1: w.x + 80, y1: 288, x2: 600, y2: 180, stroke: w.color, "stroke-width": 1, "marker-end": "url(#arrowhead)", "stroke-dasharray": "4,3", opacity: 0.6 }));
+      });
+
+      // User → Supervisor
+      svg.appendChild(el("line", { x1: 210, y1: 240, x2: 478, y2: 140, stroke: "#94a3b8", "stroke-width": 1.5, "marker-end": "url(#arrowhead)" }));
+
+      // 答案
+      const ansG = el("g");
+      ansG.appendChild(el("rect", { x: 990, y: 210, width: 110, height: 60, rx: 8, fill: "rgba(52,211,153,0.18)", stroke: "#34d399", "stroke-width": 1.5 }));
+      ansG.appendChild(text("✨ Answer", { x: 1045, y: 240, fill: "white", "font-size": 12, "font-weight": 700, "text-anchor": "middle" }));
+      ansG.appendChild(text("汇总", { x: 1045, y: 258, fill: "#94a3b8", "font-size": 9, "text-anchor": "middle" }));
+      svg.appendChild(ansG);
+      svg.appendChild(el("line", { x1: 720, y1: 140, x2: 988, y2: 240, stroke: "#fbbf24", "stroke-width": 1.5, "marker-end": "url(#arrowhead)" }));
+
+      svg.appendChild(text("中央调度：清晰可审计，但 Supervisor 是瓶颈", { x: 600, y: 430, fill: "#94a3b8", "font-size": 12, "text-anchor": "middle", "font-style": "italic" }));
+    }
+  },
+  // Mode 2: Hierarchical
+  {
+    title: "③ Hierarchical 树形分层",
+    tag: "Mode 2",
+    body: `
+      <div style="font-size:13px; color:#cbd5e1; line-height:1.75;">
+        <b style="color:#fbbf24;">定义</b>：Supervisor 之上还有 Supervisor，树形结构，复杂任务逐层分解。
+      </div>
+      <div style="margin-top:10px; padding:10px 12px; background:#0b1220; border:1px solid #1e293b; border-radius:6px; font-size:12px; line-height:1.7;">
+        <b style="color:#fb923c;">架构</b><br>
+        Top Manager → Mid Manager A/B → Workers<br>
+        Top Manager ← 汇总 ←  Mid Manager ← Worker Results<br><br>
+        <b style="color:#fb923c;">适用</b>：超复杂任务、企业级流程（如自动化架构任务：研发 → 设计/开发/测试 → 子任务）<br>
+        <b style="color:#fb923c;">优势</b>：可扩展、每层独立可控、贴近组织架构<br>
+        <b style="color:#fb923c;">劣势</b>：层级深时延迟高、错误传播、调试难
+      </div>
+      <div style="margin-top:10px; padding:8px 10px; background:rgba(94,234,212,0.10); border-left:3px solid #5eead4; border-radius:4px; font-size:12px; color:#5eead4;">
+        💡 <b>Real-world</b>：MetaGPT（软件公司模拟）、ChatDev（角色分工）、AutoGen Nested Chat
+      </div>
+    `,
+    draw: function(svg, el, text) {
+      // Top
+      const topG = el("g");
+      topG.appendChild(el("rect", { x: 480, y: 60, width: 240, height: 60, rx: 10, fill: "rgba(251,146,60,0.25)", stroke: "#fb923c", "stroke-width": 2 }));
+      topG.appendChild(text("🏛 Top Manager", { x: 600, y: 86, fill: "#fdba74", "font-size": 13, "font-weight": 700, "text-anchor": "middle" }));
+      topG.appendChild(text("战略层 · 拆解到子域", { x: 600, y: 104, fill: "#fed7aa", "font-size": 9, "text-anchor": "middle" }));
+      svg.appendChild(topG);
+
+      // Mid (2)
+      const mids = [
+        { name: "📊 Mid Manager A", x: 260, sub: "数据 / 分析" },
+        { name: "🎨 Mid Manager B", x: 700, sub: "代码 / 设计" }
+      ];
+      mids.forEach(m => {
+        const mG = el("g");
+        mG.appendChild(el("rect", { x: m.x, y: 200, width: 240, height: 60, rx: 8, fill: "rgba(167,139,250,0.18)", stroke: "#a78bfa", "stroke-width": 1.5 }));
+        mG.appendChild(text(m.name, { x: m.x + 120, y: 226, fill: "#c4b5fd", "font-size": 12, "font-weight": 700, "text-anchor": "middle" }));
+        mG.appendChild(text(m.sub, { x: m.x + 120, y: 244, fill: "#94a3b8", "font-size": 9, "text-anchor": "middle" }));
+        svg.appendChild(mG);
+        // Top → Mid
+        svg.appendChild(el("line", { x1: 600, y1: 120, x2: m.x + 120, y2: 198, stroke: "#a78bfa", "stroke-width": 1.2, "marker-end": "url(#arrowhead)" }));
+      });
+
+      // Workers (4)
+      const workers = [
+        { name: "SQL Agent", x: 120, parent: 260 },
+        { name: "Stat Agent", x: 320, parent: 260 },
+        { name: "Code Agent", x: 580, parent: 700 },
+        { name: "UI Agent", x: 820, parent: 700 }
+      ];
+      workers.forEach(w => {
+        const wG = el("g");
+        wG.appendChild(el("rect", { x: w.x, y: 330, width: 160, height: 50, rx: 6, fill: "#0b1220", stroke: "#34d399", "stroke-width": 1.5 }));
+        wG.appendChild(text(w.name, { x: w.x + 80, y: 358, fill: "#6ee7b7", "font-size": 11, "font-weight": 700, "text-anchor": "middle" }));
+        svg.appendChild(wG);
+        // Mid → Worker
+        svg.appendChild(el("line", { x1: w.parent + 120, y1: 260, x2: w.x + 80, y2: 328, stroke: "#34d399", "stroke-width": 1, "marker-end": "url(#arrowhead)" }));
+      });
+
+      svg.appendChild(text("树形：每层独立可控，层级深时延迟高、错误传播", { x: 600, y: 430, fill: "#94a3b8", "font-size": 12, "text-anchor": "middle", "font-style": "italic" }));
+    }
+  },
+  // Mode 3: Peer-to-Peer
+  {
+    title: "④ Peer-to-Peer 对等 / Debate 辩论",
+    tag: "Mode 3",
+    body: `
+      <div style="font-size:13px; color:#cbd5e1; line-height:1.75;">
+        <b style="color:#fbbf24;">定义</b>：所有 Agent 地位对等，无中心调度，通过<b>消息总线</b>或<b>黑板</b>互相通信，可形成辩论/投票。
+      </div>
+      <div style="margin-top:10px; padding:10px 12px; background:#0b1220; border:1px solid #1e293b; border-radius:6px; font-size:12px; line-height:1.7;">
+        <b style="color:#fb923c;">架构</b><br>
+        所有 Agent ↔ <b>Blackboard / Bus</b> ↔ 所有 Agent<br><br>
+        <b style="color:#fb923c;">适用</b>：需要<b>多视角</b>决策（投资分析、安全审计、代码评审）<br>
+        <b style="color:#fb923c;">优势</b>：天然去中心、容错强、能产出<b>对抗性</b>结论<br>
+        <b style="color:#fb923c;">劣势</b>：难收敛、token 暴涨、需要<b>裁决机制</b>
+      </div>
+      <div style="margin-top:10px; padding:8px 10px; background:rgba(94,234,212,0.10); border-left:3px solid #5eead4; border-radius:4px; font-size:12px; color:#5eead4;">
+        💡 <b>Real-world</b>：AutoGen GroupChat、ChatDev Reviewer Loop、ReConcile（多 Agent 辩论）
+      </div>
+    `,
+    draw: function(svg, el, text) {
+      // Blackboard 中心
+      const bbG = el("g");
+      bbG.appendChild(el("rect", { x: 460, y: 200, width: 280, height: 80, rx: 10, fill: "rgba(251,191,36,0.20)", stroke: "#fbbf24", "stroke-width": 2 }));
+      bbG.appendChild(text("📋 Shared Blackboard", { x: 600, y: 226, fill: "#fde68a", "font-size": 13, "font-weight": 700, "text-anchor": "middle" }));
+      bbG.appendChild(text("所有 Agent 读写", { x: 600, y: 246, fill: "#fcd34d", "font-size": 10, "text-anchor": "middle" }));
+      bbG.appendChild(text("(或 Redis Streams / Kafka 消息总线)", { x: 600, y: 264, fill: "#94a3b8", "font-size": 9, "text-anchor": "middle", "font-style": "italic" }));
+      svg.appendChild(bbG);
+
+      // 4 对等 Agent（绕黑板一周）
+      const peers = [
+        { name: "🐂 Bull Agent", role: "看多 / 风险", x: 200, y: 80, color: "#34d399" },
+        { name: "🐻 Bear Agent", role: "看空 / 机会", x: 880, y: 80, color: "#fb7185" },
+        { name: "⚖ Judge Agent", role: "裁决 / 加权", x: 200, y: 380, color: "#a78bfa" },
+        { name: "📊 Analyst Agent", role: "数据 / 客观", x: 880, y: 380, color: "#22d3ee" }
+      ];
+      peers.forEach(p => {
+        const pG = el("g");
+        pG.appendChild(el("rect", { x: p.x, y: p.y, width: 170, height: 60, rx: 8, fill: "rgba(15,23,42,0.85)", stroke: p.color, "stroke-width": 1.8 }));
+        pG.appendChild(text(p.name, { x: p.x + 85, y: p.y + 25, fill: "white", "font-size": 12, "font-weight": 700, "text-anchor": "middle" }));
+        pG.appendChild(text(p.role, { x: p.x + 85, y: p.y + 46, fill: "#94a3b8", "font-size": 9, "text-anchor": "middle" }));
+        svg.appendChild(pG);
+        // Peer ↔ Blackboard 双向线
+        svg.appendChild(el("line", { x1: p.x + 85, y1: p.y + 30, x2: 600, y2: 240, stroke: p.color, "stroke-width": 1.2, "marker-end": "url(#arrowhead)" }));
+        svg.appendChild(el("line", { x1: 600, y1: 240, x2: p.x + 85, y2: p.y + 30, stroke: p.color, "stroke-width": 1, "marker-end": "url(#arrowhead)", "stroke-dasharray": "4,3", opacity: 0.5 }));
+      });
+
+      // 中心标签
+      svg.appendChild(text("↔ 全员对等，无中心调度 ↔", { x: 600, y: 320, fill: "#fbbf24", "font-size": 11, "text-anchor": "middle", "font-weight": 700 }));
+
+      svg.appendChild(text("对等 + 黑板：天然多视角，但难收敛、需裁决机制", { x: 600, y: 460, fill: "#94a3b8", "font-size": 12, "text-anchor": "middle", "font-style": "italic" }));
+    }
+  }
+];
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const SVG = document.getElementById("main-svg");
+
+function el(tag, attrs={}) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+function txt(content, attrs={}) {
+  const t = el("text", attrs);
+  t.textContent = content;
+  return t;
+}
+
+let currentMode = 0;
+
+function renderMain() {
+  SVG.innerHTML = "";
+  const defs = el("defs");
+  defs.innerHTML = `
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+    </pattern>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+    </marker>
+  `;
+  SVG.appendChild(defs);
+  SVG.appendChild(el("rect", { width: "100%", height: "100%", fill: "url(#grid)" }));
+
+  // 标题
+  const titles = ["① 单 Agent 基线", "② Supervisor 中央调度", "③ Hierarchical 树形分层", "④ Peer-to-Peer / Debate"];
+  SVG.appendChild(txt(titles[currentMode], { x: 600, y: 36, fill: "#f1f5f9", "font-size": 16, "font-weight": 700, "text-anchor": "middle" }));
+
+  MODES[currentMode].draw(SVG, el, txt);
+}
+
+function updateDetail() {
+  document.getElementById("detail-title").textContent = MODES[currentMode].title;
+  document.getElementById("detail-tag").textContent = MODES[currentMode].tag;
+  document.getElementById("detail-body").innerHTML = MODES[currentMode].body;
+}
+
+document.querySelectorAll(".mode-btn").forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll(".mode-btn").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    currentMode = parseInt(btn.getAttribute("data-mode"));
+    renderMain();
+    updateDetail();
+  };
+});
+
+renderMain();
+updateDetail();
+
+// Export
+async function captureEl() {
+  const el = document.getElementById('report-container');
+  const r = el.getBoundingClientRect();
+  const pad = 32;
+  return await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+}
+async function copyAsImage() { try { const c = await captureEl(); const b = await new Promise(r => c.toBlob(r, 'image/png')); await navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]); } catch(e) {} }
+async function downloadPNG() { const c = await captureEl(); const a = document.createElement('a'); a.download = 'ai03-multi-agent.png'; a.href = c.toDataURL('image/png'); a.click(); }
+async function downloadPDF() { const c = await captureEl(); const { jsPDF } = window.jspdf; const o = c.width > c.height ? 'l' : 'p'; const pdf = new jsPDF({ orientation: o, unit: 'px', format: [c.width, c.height], hotfixes: ['px_scaling'] }); pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, c.width, c.height); pdf.save('ai03-multi-agent.pdf'); }
+</script>
+</body>
+</html>
