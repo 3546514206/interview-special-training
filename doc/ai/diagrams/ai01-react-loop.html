@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Agent · ReAct 循环 + Function Calling · 2025-2026 面试高频 #1</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #020617; font-family: 'JetBrains Mono', monospace; color: #e2e8f0; display: flex; justify-content: center; padding: 24px 16px; min-height: 100vh; }
+  .container { width: 1240px; max-width: 100%; }
+  .header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .header-left { display: flex; align-items: center; gap: 14px; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #a78bfa; animation: pulse 2s infinite; }
+  @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(167,139,250,.6); } 70% { box-shadow: 0 0 0 10px rgba(167,139,250,0); } 100% { box-shadow: 0 0 0 0 rgba(167,139,250,0); } }
+  .header h1 { font-size: 21px; font-weight: 700; color: #f1f5f9; }
+  .header .subtitle { font-size: 13px; color: #7d8db0; margin-top: 5px; }
+  .toolbar { position: relative; }
+  .toolbar-toggle { background: none; border: 1px solid #334155; color: #94a3b8; border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 16px; font-family: inherit; }
+  .toolbar-toggle:hover { color: #e2e8f0; border-color: #475569; }
+  .toolbar-actions { display: none; position: absolute; right: 0; top: 38px; gap: 6px; z-index: 10; }
+  .toolbar.open .toolbar-actions { display: flex; }
+  .toolbar-actions button { background: #0f172a; border: 1px solid #334155; color: #cbd5e1; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px; font-family: inherit; }
+  .toolbar-actions button:hover { color: #f1f5f9; border-color: #64748b; }
+  @media print { .toolbar { display: none !important; } }
+
+  /* ── 控制条 ── */
+  .control-bar { display: flex; gap: 8px; margin-bottom: 14px; align-items: center; flex-wrap: wrap; }
+  .ctrl-btn { background: #0f172a; border: 1.5px solid #334155; color: #e2e8f0; border-radius: 7px; padding: 9px 16px; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 600; transition: all 0.15s ease; }
+  .ctrl-btn:hover { border-color: #a78bfa; color: #f1f5f9; }
+  .ctrl-btn.primary { background: rgba(167,139,250,0.18); border-color: #a78bfa; color: #c4b5fd; }
+  .ctrl-btn.primary:hover { background: rgba(167,139,250,0.28); }
+  .ctrl-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .ctrl-info { font-size: 12px; color: #7d8db0; margin-left: auto; padding: 6px 12px; background: rgba(15,23,42,0.6); border: 1px solid #1e293b; border-radius: 6px; }
+  .ctrl-info b { color: #fbbf24; font-weight: 600; }
+
+  /* ── 主图表卡片 ── */
+  .diagram-card { border: 1px solid #1e293b; border-radius: 12px; background: #020617; overflow: hidden; margin-bottom: 14px; }
+  .diagram-card-body { padding: 18px 22px 22px; }
+  .main-svg { display: block; width: 100%; height: auto; }
+  .main-svg text { font-family: 'JetBrains Mono', monospace; }
+
+  /* ── Step 高亮 ── */
+  .stage-idle rect, .stage-idle .stage-fill { fill: rgba(15,23,42,0.85) !important; stroke: #334155 !important; stroke-width: 1.5 !important; opacity: 0.55; }
+  .stage-idle text { opacity: 0.4; }
+  .stage-active rect, .stage-active .stage-fill { fill: rgba(167,139,250,0.22) !important; stroke: #a78bfa !important; stroke-width: 2.4 !important; filter: drop-shadow(0 0 8px rgba(167,139,250,0.45)); }
+  .stage-active text { fill: #f1f5f9 !important; }
+  .stage-done rect, .stage-done .stage-fill { fill: rgba(52,211,153,0.16) !important; stroke: #34d399 !important; stroke-width: 1.8 !important; }
+
+  .conn-idle { stroke: #1e293b !important; opacity: 0.4; }
+  .conn-active { stroke: #a78bfa !important; stroke-width: 2.4 !important; filter: drop-shadow(0 0 3px rgba(167,139,250,0.6)); }
+
+  /* ── Prompt / JSON 面板 ── */
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .panel { border: 1px solid #1e293b; border-radius: 10px; background: rgba(15,23,42,0.5); overflow: hidden; }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; border-bottom: 1px solid #1e293b; background: rgba(15,23,42,0.6); }
+  .panel-head h3 { font-size: 13px; color: #f1f5f9; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  .panel-head .tag { font-size: 10px; color: #94a3b8; background: #0f172a; padding: 2px 7px; border-radius: 3px; border: 1px solid #334155; }
+  .panel-body { padding: 12px 16px; font-size: 12px; line-height: 1.7; color: #cbd5e1; max-height: 320px; overflow-y: auto; }
+  .panel-body::-webkit-scrollbar { width: 6px; }
+  .panel-body::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+
+  /* JSON 语法高亮 */
+  .json-key { color: #a78bfa; }
+  .json-str { color: #fbbf24; }
+  .json-num { color: #34d399; }
+  .json-bool { color: #f472b6; }
+  .json-punct { color: #64748b; }
+  .json-comment { color: #5b6b8c; font-style: italic; }
+
+  /* Step log */
+  .log-step { padding: 8px 10px; margin-bottom: 6px; border-radius: 5px; background: #0b1220; border-left: 3px solid #334155; font-size: 12px; }
+  .log-step.iter-1 { border-left-color: #22d3ee; }
+  .log-step.iter-2 { border-left-color: #fb923c; }
+  .log-step.iter-3 { border-left-color: #34d399; }
+  .log-step .meta { color: #7d8db0; font-size: 10px; margin-bottom: 4px; letter-spacing: 0.05em; }
+  .log-step .meta b { color: #fbbf24; }
+  .log-step .content { color: #e2e8f0; }
+  .log-step.tool-call .content { color: #c4b5fd; }
+  .log-step.tool-result .content { color: #5eead4; }
+  .log-step.final .content { color: #34d399; font-weight: 600; }
+  .empty-log { color: #5b6b8c; font-style: italic; padding: 20px; text-align: center; }
+
+  /* ── 4 张总结卡片 ── */
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
+  .card { background: rgba(15,23,42,.6); border: 1px solid #1e293b; border-radius: 10px; padding: 14px 16px; }
+  .card-header { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+  .card-dot { width: 9px; height: 9px; border-radius: 50%; }
+  .card h3 { font-size: 13px; color: #f1f5f9; font-weight: 600; }
+  .card ul { list-style: none; }
+  .card li { font-size: 12px; color: #a5b4cc; line-height: 1.7; padding-left: 12px; position: relative; }
+  .card li::before { content: '▸'; position: absolute; left: 0; color: #a78bfa; }
+  .card li b { color: #e2e8f0; font-weight: 600; }
+  .card li code { background: #0f172a; color: #c4b5fd; padding: 1px 5px; border-radius: 3px; font-size: 11px; }
+
+  .footer { font-size: 12px; color: #5b6b8c; display: flex; justify-content: space-between; padding-top: 4px; }
+</style>
+</head>
+<body>
+<div class="container" id="report-container">
+
+  <div class="header">
+    <div class="header-left">
+      <div class="dot"></div>
+      <div>
+        <h1>AI Agent · ReAct 循环 + Function Calling · 2025-2026 面试 #1 高频</h1>
+        <div class="subtitle">Thought → Action → Observation 迭代闭环 · 工具调用底层 JSON Schema · 为什么能控幻觉 · Step-through 演示</div>
+      </div>
+    </div>
+    <div class="toolbar" id="toolbar">
+      <button class="toolbar-toggle" onclick="document.getElementById('toolbar').classList.toggle('open')">⋯</button>
+      <div class="toolbar-actions">
+        <button onclick="copyAsImage()">📋 Copy</button>
+        <button onclick="downloadPNG()">🖼️ PNG</button>
+        <button onclick="downloadPDF()">📄 PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 控制条 ── -->
+  <div class="control-bar">
+    <button class="ctrl-btn primary" id="btn-play">▶ 播放完整循环</button>
+    <button class="ctrl-btn" id="btn-step">⏭ 下一步</button>
+    <button class="ctrl-btn" id="btn-reset">↺ 重置</button>
+    <div class="ctrl-info">当前阶段：<b id="stage-label">未启动</b> · 迭代：<b id="iter-label">0/3</b></div>
+  </div>
+
+  <!-- ── 主图 ── -->
+  <div class="diagram-card">
+    <div class="diagram-card-body">
+      <svg class="main-svg" id="main-svg" viewBox="0 0 1200 580"></svg>
+    </div>
+  </div>
+
+  <!-- ── Prompt 与 Tool Schema 面板 ── -->
+  <div class="panels">
+    <div class="panel">
+      <div class="panel-head">
+        <h3>📜 当前 LLM 上下文（System + History）</h3>
+        <span class="tag" id="prompt-tag">idle</span>
+      </div>
+      <div class="panel-body" id="prompt-body"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head">
+        <h3>🔧 工具注册表（Function Calling JSON Schema）</h3>
+        <span class="tag">OpenAI / Anthropic 通用</span>
+      </div>
+      <div class="panel-body" id="tool-body"></div>
+    </div>
+  </div>
+
+  <!-- ── 4 张总结卡片 ── -->
+  <div class="cards">
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#a78bfa"></div>
+        <h3>Thought（思考）</h3>
+      </div>
+      <ul>
+        <li>LLM <b>内部推理</b>，不下发给外部</li>
+        <li>拆解任务：现在该用什么工具、参数是什么</li>
+        <li>ReAct 区别于 CoT 的关键：<code>Thought → Action</code> 显式配对</li>
+        <li>无 Thought → 工具调用乱跳、有幻觉</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#22d3ee"></div>
+        <h3>Action（行动）</h3>
+      </div>
+      <ul>
+        <li>输出 <b>结构化 JSON</b>（不是自然语言！）</li>
+        <li>受 JSON Schema 约束，参数类型/必填校验</li>
+        <li>可执行：调工具 / 查 RAG / 调子 Agent</li>
+        <li>Action 不存在 → LLM 自由对话 → 易幻觉</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#34d399"></div>
+        <h3>Observation（观察）</h3>
+      </div>
+      <ul>
+        <li>工具执行的<b>真实返回</b>，注入回 Prompt</li>
+        <li>下一轮 Thought 必须基于 Observation，不能跳步</li>
+        <li>超时空值 / 报错 → 触发<b>重试</b>或<b>用户反馈</b></li>
+        <li>Observation 是「<b>控幻觉</b>」的关键</li>
+      </ul>
+    </div>
+    <div class="card">
+      <div class="card-header">
+        <div class="card-dot" style="background:#fb923c"></div>
+        <h3>为什么 ReAct 控幻觉？</h3>
+      </div>
+      <ul>
+        <li>答案必须由 <b>Observation 拼装</b>，不能凭空</li>
+        <li>Thought 强制外显化，可被 prompt 拦截</li>
+        <li>工具失败 → 必须重新思考，不能编</li>
+        <li>Plan-and-Execute 缺 Observation → 早期版本易幻觉</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>AI Agent · ReAct 循环 · 2025-2026 面试高频</span>
+    <span>doc/ai/diagrams/ai01-react-loop.html</span>
+  </div>
+</div>
+
+<script>
+// ============================================================
+//  数据：3 轮 ReAct 迭代演示（订机票场景）
+// ============================================================
+const USER_QUERY = "帮我订下周三从北京到上海的最便宜机票，只带一个随身行李";
+
+const TOOLS = [
+  {
+    name: "search_flight",
+    description: "查询某日期某城市之间的航班，按价格升序返回前 N 条",
+    parameters: {
+      type: "object",
+      properties: {
+        origin: { type: "string", description: "出发地 IATA 三字码" },
+        dest: { type: "string", description: "目的地 IATA 三字码" },
+        date: { type: "string", description: "出行日期 YYYY-MM-DD" },
+        sort: { type: "string", enum: ["price", "duration"], default: "price" }
+      },
+      required: ["origin", "dest", "date"]
+    }
+  },
+  {
+    name: "book_flight",
+    description: "下单购买指定航班，必须确认 search_flight 拿到 flight_id 后才允许调用",
+    parameters: {
+      type: "object",
+      properties: {
+        flight_id: { type: "string", description: "从 search_flight 返回的航班 ID" },
+        cabin: { type: "string", enum: ["economy", "business"], default: "economy" }
+      },
+      required: ["flight_id"]
+    }
+  }
+];
+
+const ITERATIONS = [
+  {
+    iter: 1,
+    thought: "用户没说日期具体值，我先确认。下周三 = 2026-10-22。出发地北京 PEK，目的地上海 SHA。先调 search_flight。",
+    action: {
+      name: "search_flight",
+      args: { origin: "PEK", dest: "SHA", date: "2026-10-22", sort: "price" }
+    },
+    observation: [
+      { flight_id: "MU5101", price: 480, duration: "2h10m", baggage: "1pc" },
+      { flight_id: "CA1505", price: 520, duration: "1h55m", baggage: "1pc" },
+      { flight_id: "CZ3108", price: 610, duration: "2h25m", baggage: "2pc" }
+    ]
+  },
+  {
+    iter: 2,
+    thought: "用户只要 1 件行李。MU5101 (¥480) 已满足『最便宜 + 1pc』。但价格第二的 CA1505 比 MU5101 仅贵 ¥40，duration 短 15 分钟，性价比更高。但用户字面要求是『最便宜』。严格按用户意图 → 选 MU5101。",
+    action: {
+      name: "book_flight",
+      args: { flight_id: "MU5101", cabin: "economy" }
+    },
+    observation: { order_id: "ORD20261022001", status: "confirmed", total: 480, baggage_allowance: "1pc" }
+  },
+  {
+    iter: 3,
+    thought: "订单已确认。Observation 里 baggage_allowance 是 1pc，跟用户要求一致。可以输出最终答案。",
+    action: null,  // 无 action = 直接回答
+    final_answer: "已为您预订：MU5101 · 2026-10-22 PEK→SHA · 经济舱 ¥480 · 行李 1pc · 订单号 ORD20261022001。下一步建议：值机前 24h 在线选座。"
+  }
+];
+
+// ============================================================
+//  渲染：主 SVG
+// ============================================================
+const SVG_NS = "http://www.w3.org/2000/svg";
+const SVG = document.getElementById("main-svg");
+
+function el(tag, attrs={}, children=[]) {
+  const e = document.createElementNS(SVG_NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  for (const c of children) e.appendChild(c);
+  return e;
+}
+
+function text(content, attrs={}) {
+  const t = el("text", attrs);
+  t.textContent = content;
+  return t;
+}
+
+function renderMain() {
+  SVG.innerHTML = "";
+
+  // 背景网格
+  const defs = el("defs");
+  defs.innerHTML = `
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+    </pattern>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
+    </marker>
+    <marker id="arrowhead-active" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#a78bfa"/>
+    </marker>
+  `;
+  SVG.appendChild(defs);
+  SVG.appendChild(el("rect", { width: "100%", height: "100%", fill: "url(#grid)" }));
+
+  // ====== 用户输入（顶左） ======
+  const userG = el("g", { id: "users" });
+  userG.appendChild(el("rect", { x: 30, y: 30, width: 200, height: 70, rx: 8, class: "stage-fill", fill: "rgba(30,41,59,0.5)", stroke: "#94a3b8", "stroke-width": 1.5 }));
+  userG.appendChild(text("👤 用户输入", { x: 130, y: 52, fill: "white", "font-size": 12, "font-weight": 700, "text-anchor": "middle" }));
+  userG.appendChild(text("『帮我订下周三北京→上海", { x: 130, y: 72, fill: "#cbd5e1", "font-size": 10, "text-anchor": "middle" }));
+  userG.appendChild(text("的最便宜机票，只带 1 件行李』", { x: 130, y: 86, fill: "#cbd5e1", "font-size": 10, "text-anchor": "middle" }));
+  SVG.appendChild(userG);
+
+  // ====== LLM 大脑（中心） ======
+  const llmG = el("g", { id: "llm" });
+  llmG.appendChild(el("rect", { x: 430, y: 30, width: 280, height: 130, rx: 10, class: "stage-fill", fill: "rgba(167,139,250,0.18)", stroke: "#a78bfa", "stroke-width": 2 }));
+  llmG.appendChild(text("🧠 LLM 大脑", { x: 570, y: 56, fill: "#f1f5f9", "font-size": 14, "font-weight": 700, "text-anchor": "middle" }));
+  llmG.appendChild(text("Prompt = System + History + Tools", { x: 570, y: 76, fill: "#c4b5fd", "font-size": 10, "text-anchor": "middle" }));
+  llmG.appendChild(text("→ 输出 Thought + Action(JSON)", { x: 570, y: 94, fill: "#94a3b8", "font-size": 10, "text-anchor": "middle" }));
+  llmG.appendChild(text("→ 或直接 Final Answer", { x: 570, y: 110, fill: "#94a3b8", "font-size": 10, "text-anchor": "middle" }));
+  llmG.appendChild(text("(GPT-4 / Claude / Qwen / DeepSeek)", { x: 570, y: 138, fill: "#5b6b8c", "font-size": 9, "text-anchor": "middle", "font-style": "italic" }));
+  SVG.appendChild(llmG);
+
+  // ====== Thought / Action / Observation 三阶段（中下） ======
+  const stages = [
+    { id: "thought", x: 100, y: 220, w: 200, h: 80, color: "#a78bfa", label: "💭 Thought", sub: "内部推理（不下发）" },
+    { id: "action", x: 380, y: 220, w: 200, h: 80, color: "#22d3ee", label: "⚙️ Action", sub: "结构化 JSON 工具调用" },
+    { id: "observation", x: 660, y: 220, w: 200, h: 80, color: "#34d399", label: "👁 Observation", sub: "工具真实返回" },
+    { id: "done", x: 940, y: 220, w: 200, h: 80, color: "#fbbf24", label: "✅ Final Answer", sub: "或循环回 Thought" }
+  ];
+  stages.forEach(s => {
+    const g = el("g", { id: "stage-" + s.id, class: "stage-idle" });
+    g.appendChild(el("rect", { x: s.x, y: s.y, width: s.w, height: s.h, rx: 8, class: "stage-fill", fill: "rgba(15,23,42,0.85)", stroke: s.color, "stroke-width": 1.5 }));
+    g.appendChild(text(s.label, { x: s.x + s.w/2, y: s.y + 28, fill: "white", "font-size": 13, "font-weight": 700, "text-anchor": "middle" }));
+    g.appendChild(text(s.sub, { x: s.x + s.w/2, y: s.y + 50, fill: "#94a3b8", "font-size": 10, "text-anchor": "middle" }));
+    g.appendChild(text(s.id === "done" ? "（终止条件）" : "（ReAct Step）", { x: s.x + s.w/2, y: s.y + 68, fill: "#5b6b8c", "font-size": 9, "text-anchor": "middle", "font-style": "italic" }));
+    SVG.appendChild(g);
+  });
+
+  // 阶段之间的连接箭头
+  const conns = [
+    { from: "thought", to: "action", label: "Thought → Action" },
+    { from: "action", to: "observation", label: "执行工具" },
+    { from: "observation", to: "thought", label: "Obs 注入回 Prompt", reverse: true },
+    { from: "observation", to: "done", label: "信息充足" }
+  ];
+  conns.forEach(c => {
+    const a = stages.find(s => s.id === c.from);
+    const b = stages.find(s => s.id === c.to);
+    let x1 = a.x + a.w, y1 = a.y + a.h/2;
+    let x2 = b.x, y2 = b.y + b.h/2;
+    if (c.reverse) { x1 = a.x; x2 = b.x + b.w; }
+    const line = el("line", { x1, y1, x2, y2, stroke: "#64748b", "stroke-width": 1.5, "marker-end": "url(#arrowhead)", class: "conn-line conn-idle", id: "conn-" + c.from + "-" + c.to });
+    SVG.appendChild(line);
+    const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2 - 6;
+    SVG.appendChild(text(c.label, { x: midX, y: midY, fill: "#94a3b8", "font-size": 9, "text-anchor": "middle" }));
+  });
+
+  // ====== 工具注册表（底） ======
+  const toolG = el("g", { id: "toolbox" });
+  toolG.appendChild(el("rect", { x: 380, y: 380, width: 480, height: 170, rx: 10, fill: "rgba(251,146,60,0.10)", stroke: "#fb923c", "stroke-width": 1.5, "stroke-dasharray": "5,3" }));
+  toolG.appendChild(text("🔧 Tool Registry（外部世界接口）", { x: 620, y: 402, fill: "#fb923c", "font-size": 13, "font-weight": 700, "text-anchor": "middle" }));
+  TOOLS.forEach((t, i) => {
+    const x = 400, y = 418 + i * 60;
+    toolG.appendChild(el("rect", { x, y, width: 440, height: 50, rx: 6, fill: "#0b1220", stroke: "#334155", "stroke-width": 1 }));
+    toolG.appendChild(text(t.name + "()", { x: x + 12, y: y + 20, fill: "#fbbf24", "font-size": 11, "font-weight": 600 }));
+    toolG.appendChild(text(t.description, { x: x + 12, y: y + 38, fill: "#94a3b8", "font-size": 9 }));
+  });
+  SVG.appendChild(toolG);
+
+  // ====== Action → Tool 调用连接线 ======
+  SVG.appendChild(el("line", { x1: 480, y1: 300, x2: 480, y2: 378, stroke: "#22d3ee", "stroke-width": 1.5, "marker-end": "url(#arrowhead)", "stroke-dasharray": "4,3", class: "conn-line conn-idle", id: "act-to-tool" }));
+  SVG.appendChild(text("JSON-RPC", { x: 495, y: 345, fill: "#22d3ee", "font-size": 9 }));
+
+  // ====== Tool → Observation 连接线 ======
+  SVG.appendChild(el("line", { x1: 680, y1: 378, x2: 760, y2: 300, stroke: "#34d399", "stroke-width": 1.5, "marker-end": "url(#arrowhead)", "stroke-dasharray": "4,3", class: "conn-line conn-idle", id: "tool-to-obs" }));
+  SVG.appendChild(text("return", { x: 740, y: 345, fill: "#34d399", "font-size": 9 }));
+
+  // ====== User → LLM ======
+  SVG.appendChild(el("line", { x1: 230, y1: 65, x2: 428, y2: 65, stroke: "#94a3b8", "stroke-width": 1.5, "marker-end": "url(#arrowhead)" }));
+  SVG.appendChild(text("Query", { x: 330, y: 58, fill: "#94a3b8", "font-size": 9, "text-anchor": "middle" }));
+
+  // ====== LLM → User Final Answer ======
+  SVG.appendChild(el("line", { x1: 712, y1: 65, x2: 910, y2: 65, stroke: "#fbbf24", "stroke-width": 1.5, "marker-end": "url(#arrowhead)" }));
+  SVG.appendChild(text("Answer", { x: 811, y: 58, fill: "#fbbf24", "font-size": 9, "text-anchor": "middle" }));
+
+  // ====== 当前阶段徽章（顶右） ======
+  const stageBadge = el("g", { id: "iter-badge" });
+  stageBadge.appendChild(el("rect", { x: 980, y: 30, width: 180, height: 50, rx: 8, fill: "rgba(15,23,42,0.85)", stroke: "#a78bfa", "stroke-width": 1.5 }));
+  stageBadge.appendChild(text("迭代", { x: 1000, y: 50, fill: "#94a3b8", "font-size": 10 }));
+  stageBadge.appendChild(text("0", { x: 1015, y: 70, fill: "#fbbf24", "font-size": 20, "font-weight": 700 }));
+  stageBadge.appendChild(text("/ 3", { x: 1040, y: 70, fill: "#94a3b8", "font-size": 12 }));
+  SVG.appendChild(stageBadge);
+}
+
+renderMain();
+
+// ============================================================
+//  渲染：左面板（Prompt + History）
+// ============================================================
+function renderPrompt(stage) {
+  const body = document.getElementById("prompt-body");
+  const tag = document.getElementById("prompt-tag");
+  if (stage === 0) {
+    tag.textContent = "idle";
+    body.innerHTML = `<div class="empty-log">点击「播放完整循环」或「下一步」观察 Prompt 演化</div>`;
+    return;
+  }
+  tag.textContent = `iter ${stage}`;
+
+  let html = `<div style="margin-bottom:10px; padding:8px 10px; background:rgba(34,211,238,0.10); border-left:3px solid #22d3ee; border-radius:4px;">`;
+  html += `<div class="meta">SYSTEM</div>`;
+  html += `<div class="content">你是订机票助手。回答须基于工具返回，<b>禁止编造</b>航班号或价格。</div>`;
+  html += `</div>`;
+
+  html += `<div style="margin-bottom:10px; padding:8px 10px; background:rgba(251,191,36,0.10); border-left:3px solid #fbbf24; border-radius:4px;">`;
+  html += `<div class="meta">USER</div>`;
+  html += `<div class="content">${USER_QUERY}</div>`;
+  html += `</div>`;
+
+  for (let i = 0; i < stage && i < ITERATIONS.length; i++) {
+    const it = ITERATIONS[i];
+    html += `<div class="log-step iter-${i+1}">`;
+    html += `<div class="meta">ITER ${i+1} · THOUGHT</div>`;
+    html += `<div class="content">${it.thought}</div>`;
+    html += `</div>`;
+    if (it.action) {
+      html += `<div class="log-step iter-${i+1} tool-call">`;
+      html += `<div class="meta">ITER ${i+1} · ACTION → ${it.action.name}</div>`;
+      html += `<div class="content"><code style="color:#c4b5fd;">${JSON.stringify(it.action.args)}</code></div>`;
+      html += `</div>`;
+      html += `<div class="log-step iter-${i+1} tool-result">`;
+      html += `<div class="meta">ITER ${i+1} · OBSERVATION（真实返回）</div>`;
+      const obs = Array.isArray(it.observation) ? `${it.observation.length} 个航班，` + it.observation.map(f=>`${f.flight_id} ¥${f.price}`).join(", ") : `<code>${JSON.stringify(it.observation)}</code>`;
+      html += `<div class="content">${obs}</div>`;
+      html += `</div>`;
+    } else if (it.final_answer) {
+      html += `<div class="log-step iter-${i+1} final">`;
+      html += `<div class="meta">ITER ${i+1} · FINAL ANSWER</div>`;
+      html += `<div class="content">${it.final_answer}</div>`;
+      html += `</div>`;
+    }
+  }
+  body.innerHTML = html;
+}
+
+// ============================================================
+//  渲染：右面板（工具注册表）
+// ============================================================
+function renderTools() {
+  const body = document.getElementById("tool-body");
+  let html = `<div class="json-comment">// LLM 启动时被告知：你可以调以下工具 ↓</div><br>`;
+  html += `<span class="json-punct">{</span><br>`;
+  html += `&nbsp;&nbsp;<span class="json-key">"tools"</span><span class="json-punct">: [</span><br>`;
+  TOOLS.forEach((t, idx) => {
+    html += `&nbsp;&nbsp;&nbsp;&nbsp;<span class="json-punct">{</span><br>`;
+    html += `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="json-key">"type"</span><span class="json-punct">:</span> <span class="json-str">"function"</span>,<br>`;
+    html += `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="json-key">"function"</span><span class="json-punct">: {</span><br>`;
+    html += `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="json-key">"name"</span><span class="json-punct">:</span> <span class="json-str">"${t.name}"</span>,<br>`;
+    html += `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="json-key">"description"</span><span class="json-punct">:</span> <span class="json-str">"${t.description}"</span>,<br>`;
+    html += `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="json-key">"parameters"</span><span class="json-punct">: {</span><br>`;
+    html += `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="json-key">"type"</span><span class="json-punct">:</span> <span class="json-str">"object"</span>,<br>`;
+    html += `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="json-key">"required"</span><span class="json-punct">: [</span><span class="json-str">"${t.parameters.required.join('"</span><span class="json-punct">,</span> <span class="json-str">"')}"</span><span class="json-punct">]</span><br>`;
+    html += `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="json-punct">}</span><br>`;
+    html += `&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<span class="json-punct">}</span><br>`;
+    html += `&nbsp;&nbsp;&nbsp;&nbsp;<span class="json-punct">}${idx < TOOLS.length - 1 ? "," : ""}</span><br>`;
+  });
+  html += `&nbsp;&nbsp;<span class="json-punct">]</span><br>`;
+  html += `<span class="json-punct">}</span><br>`;
+  html += `<div style="margin-top:14px; padding:8px 10px; background:rgba(251,146,60,0.10); border-left:3px solid #fb923c; border-radius:4px;">`;
+  html += `<div class="meta">⚡ 关键点</div>`;
+  html += `<div class="content">description 写「<b>什么时候用</b>」比「能做什么」更重要。LLM 仅凭 description 选工具。</div>`;
+  html += `</div>`;
+  body.innerHTML = html;
+}
+renderTools();
+renderPrompt(0);
+
+// ============================================================
+//  状态机：stage 0..7
+//   0=idle, 1=thought-1, 2=action-1, 3=observation-1, 4=thought-2, 5=action-2, 6=observation-2, 7=thought-3 → done
+// ============================================================
+const TOTAL_STAGES = 7;
+let stage = 0;
+const STAGE_LABELS = {
+  0: "未启动",
+  1: "Thought₁ · 拆解任务",
+  2: "Action₁ · 调 search_flight",
+  3: "Observation₁ · 拿到 3 个航班",
+  4: "Thought₂ · 比价决策",
+  5: "Action₂ · 调 book_flight",
+  6: "Observation₂ · 订单已确认",
+  7: "Thought₃ · 输出 Final Answer"
+};
+
+function updateStage(s) {
+  stage = Math.max(0, Math.min(TOTAL_STAGES, s));
+  const iter = stage === 0 ? 0 : (stage <= 3 ? 1 : stage <= 6 ? 2 : 3);
+
+  document.getElementById("stage-label").textContent = STAGE_LABELS[stage] || "完成";
+  document.getElementById("iter-label").textContent = `${iter}/3`;
+  document.querySelector("#iter-badge text[fill='#fbbf24']").textContent = String(iter);
+
+  // 清空所有 stage 类
+  ["thought", "action", "observation", "done"].forEach(id => {
+    document.getElementById("stage-" + id).setAttribute("class", "stage-idle");
+  });
+  // 清空所有连接
+  document.querySelectorAll(".conn-line").forEach(c => c.setAttribute("class", "conn-line conn-idle"));
+
+  // 当前激活
+  if (stage === 1 || stage === 4) {
+    document.getElementById("stage-thought").setAttribute("class", "stage-active");
+  } else if (stage === 2 || stage === 5) {
+    document.getElementById("stage-thought").setAttribute("class", "stage-done");
+    document.getElementById("stage-action").setAttribute("class", "stage-active");
+    document.getElementById("conn-thought-action").setAttribute("class", "conn-line conn-active");
+    document.getElementById("act-to-tool").setAttribute("class", "conn-line conn-active");
+  } else if (stage === 3 || stage === 6) {
+    document.getElementById("stage-thought").setAttribute("class", "stage-done");
+    document.getElementById("stage-action").setAttribute("class", "stage-done");
+    document.getElementById("stage-observation").setAttribute("class", "stage-active");
+    document.getElementById("conn-thought-action").setAttribute("class", "conn-line conn-active");
+    document.getElementById("conn-action-observation").setAttribute("class", "conn-line conn-active");
+    document.getElementById("act-to-tool").setAttribute("class", "conn-line conn-active");
+    document.getElementById("tool-to-obs").setAttribute("class", "conn-line conn-active");
+  } else if (stage === 7) {
+    document.getElementById("stage-thought").setAttribute("class", "stage-done");
+    document.getElementById("stage-action").setAttribute("class", "stage-done");
+    document.getElementById("stage-observation").setAttribute("class", "stage-done");
+    document.getElementById("stage-done").setAttribute("class", "stage-active");
+    document.getElementById("conn-observation-done").setAttribute("class", "conn-line conn-active");
+  } else {
+    // 回环高亮
+    if (stage >= 4) {
+      document.getElementById("stage-thought").setAttribute("class", "stage-done");
+      document.getElementById("stage-action").setAttribute("class", "stage-done");
+      document.getElementById("stage-observation").setAttribute("class", "stage-done");
+    }
+  }
+
+  // 回环线（stage >= 4 时高亮 observation → thought）
+  if (stage >= 4) {
+    document.getElementById("conn-observation-thought").setAttribute("class", "conn-line conn-active");
+  }
+
+  // 渲染 Prompt 面板
+  renderPrompt(stage === 0 ? 0 : (stage <= 3 ? 1 : stage <= 6 ? 2 : 3));
+}
+
+// ============================================================
+//  控件
+// ============================================================
+let playTimer = null;
+
+document.getElementById("btn-step").onclick = () => {
+  if (playTimer) clearInterval(playTimer);
+  playTimer = null;
+  document.getElementById("btn-play").textContent = "▶ 播放完整循环";
+  if (stage >= TOTAL_STAGES) stage = 0;
+  updateStage(stage + 1);
+};
+
+document.getElementById("btn-reset").onclick = () => {
+  if (playTimer) clearInterval(playTimer);
+  playTimer = null;
+  document.getElementById("btn-play").textContent = "▶ 播放完整循环";
+  updateStage(0);
+};
+
+document.getElementById("btn-play").onclick = () => {
+  if (playTimer) {
+    clearInterval(playTimer);
+    playTimer = null;
+    document.getElementById("btn-play").textContent = "▶ 播放完整循环";
+    return;
+  }
+  if (stage >= TOTAL_STAGES) updateStage(0);
+  document.getElementById("btn-play").textContent = "⏸ 暂停";
+  playTimer = setInterval(() => {
+    if (stage >= TOTAL_STAGES) {
+      clearInterval(playTimer);
+      playTimer = null;
+      document.getElementById("btn-play").textContent = "▶ 播放完整循环";
+      return;
+    }
+    updateStage(stage + 1);
+  }, 1100);
+};
+
+// ============================================================
+//  Export
+// ============================================================
+async function captureEl() {
+  const el = document.getElementById('report-container');
+  const r = el.getBoundingClientRect();
+  const pad = 32;
+  return await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+}
+async function copyAsImage() { try { const c = await captureEl(); const b = await new Promise(r => c.toBlob(r, 'image/png')); await navigator.clipboard.write([new ClipboardItem({ 'image/png': b })]); } catch(e) {} }
+async function downloadPNG() { const c = await captureEl(); const a = document.createElement('a'); a.download = 'ai01-react-loop.png'; a.href = c.toDataURL('image/png'); a.click(); }
+async function downloadPDF() { const c = await captureEl(); const { jsPDF } = window.jspdf; const o = c.width > c.height ? 'l' : 'p'; const pdf = new jsPDF({ orientation: o, unit: 'px', format: [c.width, c.height], hotfixes: ['px_scaling'] }); pdf.addImage(c.toDataURL('image/png'), 'PNG', 0, 0, c.width, c.height); pdf.save('ai01-react-loop.pdf'); }
+
+// 初始化：停在 idle
+updateStage(0);
+</script>
+</body>
+</html>
