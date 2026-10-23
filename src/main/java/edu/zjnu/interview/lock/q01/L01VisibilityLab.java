@@ -8,9 +8,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * 锁专题 Lab 1：可见性、有序性、volatile 的语义边界，以及 happens-before 规则。
  *
- * <p>运行命令（默认 java 是 JDK 8，必须显式指定 JDK 17）：
+ * <p>运行命令（JDK 8）：
  * <pre>
- * export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
  * mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q01.L01VisibilityLab
  * </pre>
  *
@@ -58,7 +57,7 @@ public class L01VisibilityLab {
             long n = 0;
             while (!data.ready) {          // volatile 读：读到 true 即与写线程的 volatile 写 synchronizes-with
                 n++;
-                Thread.onSpinWait();
+                Thread.yield();
             }
             spins[0] = n;
             observed[0] = data.payload;    // volatile 读之后的普通字段读
@@ -112,7 +111,7 @@ public class L01VisibilityLab {
         Thread reader = new Thread(() -> {
             long n = 0;
             boolean sawInLoop = false;
-            // 固定的循环预算。循环体内只有 Thread.onSpinWait()（intrinsic，无内存屏障），
+            // 固定的循环预算。循环体内只有 Thread.yield()（让出 CPU，不建立内存屏障），
             // JIT 因此允许把这个普通字段的读提升（hoist）到循环外，
             // 此时读线程即使一直在自旋，也可能永远看不到写线程的写入——这正是 JMM 允许的行为。
             while (n < SPIN_BUDGET) {
@@ -121,7 +120,7 @@ public class L01VisibilityLab {
                     break;
                 }
                 n++;
-                Thread.onSpinWait();
+                Thread.yield();
             }
             spins[0] = n;
             observed[0] = sawInLoop ? 1L : 0L;
@@ -208,7 +207,7 @@ public class L01VisibilityLab {
         System.out.println("   边界：约束的是「本线程内相对于该 volatile 访问的程序顺序」，硬件层的重排由 CPU 内存屏障（StoreStore/LoadLoad/StoreLoad）阻断，"
                 + "而不是靠 volatile 关键字本身「禁止 CPU 重排」。");
         System.out.println("3) 不保证原子性：i++、x = y + 1 这类读-改-写复合操作在 volatile 字段上依然会丢数（见实验 3）。");
-        System.out.println("   边界：单个 volatile 字段的单次读或单次写是原子的；把多个变量组合成一次不变式更新时必须换手段（锁 / Atomic 类 / VarHandle CAS）。");
+        System.out.println("   边界：单个 volatile 字段的单次读或单次写是原子的；把多个变量组合成一次不变式更新时必须换手段（锁 / Atomic 类 / AtomicIntegerFieldUpdater）。");
         System.out.println("补充：final 字段还有「初始化安全保证」（构造器结束前的写入对通过该引用读到的线程可见），"
                 + "这是 final 字段的额外语义，不是 volatile 的语义。");
 
@@ -326,7 +325,7 @@ public class L01VisibilityLab {
         System.out.println("5) 线程终止规则：线程中的所有操作 happens-before 另一个线程对该线程 join() 成功返回；");
         System.out.println("6) 线程中断规则：对线程 interrupt() happens-before 该线程检测到中断事件（Thread.interrupted() 返回 true）；");
         System.out.println("7) 终结器规则：对象构造器（及之前所有写入）的完成 happens-before 终结器线程的启动；");
-        System.out.println("   （JDK 17 中 Object.finalize() 已被废弃，本实验只陈述规则，不实机演示。）");
+        System.out.println("   （Object.finalize() 不应依赖，本实验只陈述规则，不实机演示。）");
         System.out.println("8) 传递性规则：若 A happens-before B，且 B happens-before C，则 A happens-before C；"
                 + "happens-before 关系是可传递的。");
 
@@ -340,7 +339,7 @@ public class L01VisibilityLab {
         }, "volatile-writer");
         Thread volatileReader = new Thread(() -> {
             while (!sig.ready) {             // volatile 读，读到 true 即与上面的 volatile 写建立 happens-before
-                Thread.onSpinWait();
+                Thread.yield();
             }
             rule2[0] = sig.payload;          // 因此这个普通字段的读必然看到 7
         }, "volatile-reader");
@@ -401,7 +400,7 @@ public class L01VisibilityLab {
         AtomicBoolean interrupted = new AtomicBoolean(false);
         Thread t6 = new Thread(() -> {
             while (!Thread.interrupted()) {
-                Thread.onSpinWait();
+                Thread.yield();
             }
             interrupted.set(true);
         }, "interrupt-waiter");
@@ -422,13 +421,13 @@ public class L01VisibilityLab {
         }, "hb-chain-a");
         Thread t8b = new Thread(() -> {
             while (!chain.v1) {            // volatile 读
-                Thread.onSpinWait();
+                Thread.yield();
             }
             chain.v2 = true;               // volatile 写
         }, "hb-chain-b");
         Thread t8c = new Thread(() -> {
             while (!chain.v2) {            // volatile 读
-                Thread.onSpinWait();
+                Thread.yield();
             }
             rule8[0] = chain.payload;      // 普通读，靠传递性保证可见
         }, "hb-chain-c");

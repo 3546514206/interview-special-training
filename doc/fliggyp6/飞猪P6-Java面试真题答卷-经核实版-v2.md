@@ -296,7 +296,7 @@
 **【一句话答】** `core / max / alive / unit / queue / factory / handler` 七参数，按 `核心→入队→扩非核心→拒绝` 流程跑；4 策略 Abort/CallerRuns/Discard/DiscardOldest。
 
 **【标准答】**
-- **七大参数**（`ThreadPoolExecutor` 构造器，JDK 17 javadoc）：
+- **七大参数**（`ThreadPoolExecutor` 构造器，JDK 8 javadoc）：
   - `int corePoolSize`：核心线程数
   - `int maximumPoolSize`：最大线程数
   - `long keepAliveTime`：空闲线程存活时间
@@ -429,7 +429,7 @@
 **【易错点】**
 - ❌ "G1 没有碎片" → ✅ G1 整体无碎片（Region 间复制），**但 Region 内部可能有碎片**
 - ❌ "ZGC 比 G1 永远快" → ✅ ZGC 优势在大堆超低延迟，**小堆吞吐可能比 G1 略低**（染色指针有开销）
-- ❌ "JDK 9 默认 G1，CMS 就死了" → ✅ JDK 9 仍可启用 CMS（JEP 291），**JDK 14 起 deprecated**，**JDK 17 起移除**（JEP 363）
+- ❌ "JDK 9 默认 G1，CMS 就死了" → ✅ JDK 9 仍可启用 CMS（JEP 291），**JDK 14 起 deprecated**，**后续 JDK 版本移除**（JEP 363）
 
 **【追问怎么接】**
 - "G1 怎么决定回收哪些 Region？" → 启发式算法：根据回收收益（可回收空间 - RSet 扫描成本）排序，优先回收收益高的
@@ -1388,7 +1388,7 @@ CMS：4 阶段（初始+并发+重新+并发清除），并发标记清除，有
 G1：Region 化（2048 个 1-32MB），Mixed GC，可预测停顿 MaxGCPauseMillis=200ms
 ZGC：染色指针 + 读屏障，TB 级堆 <10ms，不分代（JDK 21+ 分代 ZGC）
 选型：<4G Parallel，4-8G CMS（JDK 8 主流），8G+ G1（JDK 9+ 默认），100G+ ZGC
-JDK 14+ CMS deprecated，JDK 17 移除
+JDK 14+ CMS deprecated，后续 JDK 版本移除
 ```
 
 ### 卡 9 · MySQL 三大日志

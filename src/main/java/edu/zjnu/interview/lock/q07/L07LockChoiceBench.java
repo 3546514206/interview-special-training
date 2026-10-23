@@ -2,6 +2,7 @@ package edu.zjnu.interview.lock.q07;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.lang.management.ManagementFactory;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -125,7 +126,7 @@ public class L07LockChoiceBench {
 
         System.out.println();
         System.out.println("=== 实验3b: synchronized 的三个优势 ===");
-        System.out.println("  1) JVM 内建优化: 偏向锁(历史: JDK 15 起默认禁用并废弃 JEP 374, JDK 18 移除实现 JDK-8256425, JDK 19+ 相关 VM 参数已不可用) -> 轻量级锁(CAS 自旋) -> 重量级锁; 现代 JDK 的实际路径没有偏向阶段");
+        System.out.println("  1) JVM 内建优化: 偏向锁(JDK 8 默认开启, 启动后约 4s 生效) -> 轻量级锁(CAS 自旋) -> 重量级锁; 后续 JDK 15+ 才废弃并移除偏向锁");
         System.out.println("  2) 语法自动释放: 退出 synchronized 代码块(含抛异常)自动释放, 不会像 Lock 那样忘记 finally");
         System.out.println("  3) jstack 可读性: 下面用 jcmd Thread.print 对比两种锁的等待线程描述");
         printStackDifference();
@@ -206,9 +207,16 @@ public class L07LockChoiceBench {
         }
     }
 
+    /** Java 8 没有 ProcessHandle, 从 RuntimeMXBean 的 "pid@host" 里取 pid */
+    static long currentPid() {
+        String name = ManagementFactory.getRuntimeMXBean().getName();
+        int at = name.indexOf('@');
+        return Long.parseLong(at > 0 ? name.substring(0, at) : name);
+    }
+
     /** 调用 jcmd <pid> Thread.print, 失败回退 jstack, 都不可用返回 null */
     static String runDumpTool() {
-        long pid = ProcessHandle.current().pid();
+        long pid = currentPid();
         String javaHome = System.getProperty("java.home");
         String[] candidates = {javaHome + "/bin/jcmd", javaHome + "/bin/jstack"};
         for (String tool : candidates) {

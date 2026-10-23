@@ -4,9 +4,9 @@
 >
 > **标记说明**：⭐ 出现频率；**【一句话答】** 先给结论；**【展开】** 答题细节；**【追问】** 面试官可能继续问；**【易错】** 常见误区。
 >
-> **配套实验**：`src/main/java/edu/zjnu/interview/lock/` 下 Lab1 可见性 / Lab2 CAS 与原子类 / Lab3 AQS / Lab4 死锁 / Lab5 读写锁 / Lab6 StampedLock / Lab7 选型基准。
+> **配套实验**：`src/main/java/edu/zjnu/interview/lock/` 下 Lab1 可见性 / Lab2 CAS 与原子类 / Lab3 AQS / Lab4 死锁 / Lab5 读写锁 / Lab6 StampedLock / Lab7 选型基准 / Lab8 线程通信。
 >
-> **版本口径**：本文以 **JDK 17** 为基线（配套实验在 JDK 17 上实跑）；字节码层面的结论以可复核的 `javap` 输出为准并标注；JDK 8 与 JDK 17 的差异单独成段标注（如偏向锁、轻量级锁相关）；JDK 15/18/21 的行为变更写明对应 JEP / Bug 号。
+> **版本口径**：本文以 **JDK 8** 为基线（配套实验在 JDK 8 上实跑）；字节码层面的结论以可复核的 `javap` 输出为准并标注；后续 JDK 版本的行为变更（如偏向锁废弃、AQS 字段改名）单独标注版本与 JEP / Bug 号，不与本基线混用。
 
 ## 一、内存模型与可见性
 
@@ -245,11 +245,11 @@ end:
 **【一句话答】** 可重入指同一线程可重复获取同一把锁。`synchronized` 靠 HotSpot 在对象头/monitor 中维护重入计数，`ReentrantLock` 靠 AQS 的 `state` 充当重入计数。
 
 **【展开】**
-- `ReentrantLock`（**JDK 17 javap 字节码已复核**）：
-  - 获取：JDK 17 把「首次获取 + 重入」都放在 `NonfairSync#initialTryLock()` 里——`state == 0` 时 CAS 到 1 并记录 owner；owner 是当前线程则 `state + 1`，超过上限抛 `Error("Maximum lock count exceeded")`。`NonfairSync#tryAcquire(int)` 只负责「非重入」的那条路径（`state == 0` 时 CAS），供 AQS 的 `acquire()` 调用。
-  - 释放：`tryRelease` —— 校验 owner 是自己（否则抛 `IllegalMonitorStateException`），`state - 1`，减到 0 时清空 owner 并唤醒后继。
+- `ReentrantLock`（**JDK 8 源码已复核**）：
+  - 获取：非公平模式下 `NonfairSync#tryAcquire` 调用 `Sync#nonfairTryAcquire`，一个方法同时处理「首次获取 + 重入」——`state == 0` 时 CAS 到 1 并记录 owner；owner 是当前线程则 `state + 1`，超过上限抛 `Error("Maximum lock count exceeded")`。
+  - 公平模式下 `FairSync#tryAcquire` 在 `state == 0` 时先检查 `!hasQueuedPredecessors()`，再 CAS；重入路径与非公平一致。
+  - 释放：`tryRelease` —— 校验 owner 是自己（否则抛 `IllegalMonitorStateException`），`state - 1`，减到 0 时清空 owner 并返回 true，由 AQS 的 `release()` 负责唤醒后继。
 - `synchronized`：HotSpot 在轻量级锁状态下，mark word 指向栈上的 Lock Record，重入时追加新的 Lock Record 形成链；重量级锁（`ObjectMonitor`）侧有重入计数字段。字段归属与命名随 HotSpot 版本变化，具体实现需核实。
-- **JDK 8 与 JDK 17 的差异**：JDK 8 的 `ReentrantLock$Sync#nonfairTryAcquire` 一个方法同时处理首次获取与重入；JDK 17 拆成 `Sync#initialTryLock()`（首次 + 重入预筛）与 `FairSync/NonfairSync#tryAcquire()`（AQS 队列里的重试路径）两步，语义不变、结构不同。
 - 可重入的价值：避免「自己再拿自己需要的锁」导致的自锁死；也让 `synchronized` 方法之间可以安全互相调用，锁对象可以作为参数传递。
 - 不可重入锁的失败模式：同一线程二次加锁会把自己挂起，等自己释放 → 永久自死锁。
 
@@ -267,13 +267,13 @@ end:
 
 ### LK09 · 锁升级是怎么回事？偏向锁现在还有效吗？⭐⭐⭐⭐⭐
 
-**【一句话答】** HotSpot 历史上锁有四种状态：无锁 → 偏向 → 轻量级 → 重量级，按需单向升级（不降级）。**偏向阶段在 JDK 15 默认禁用并废弃（JEP 374）、JDK 18 实现被移除（Obsolete Biased Locking），现代 JDK 的实际路径是「无锁 → 轻量级 → 重量级」，没有偏向阶段。**
+**【一句话答】** HotSpot 在 JDK 8 有四种锁状态：无锁 → 偏向 → 轻量级 → 重量级，按需单向升级（不降级）。**JDK 8 默认开启偏向锁**（启动后延迟约 4 秒生效），单线程反复进入同一对象时走偏向；后续 JDK 才逐步废弃并移除偏向锁。
 
 **【展开】**
 
 | 状态 | mark word 存什么 | 适用场景 | 竞争后走向 |
 |---|---|---|---|
-| 无锁 | 对象哈希、GC 年龄、偏向标志位 | 刚创建、无人访问 | 首个线程进入 → 偏向（JDK 15 前） |
+| 无锁 | 对象哈希、GC 年龄、偏向标志位 | 刚创建、无人访问 | 首个线程进入 → 偏向（JDK 8 默认开启） |
 | 偏向 | 偏向线程 ID + 时间戳 | 单线程反复进入同一对象 | 他线程进入 → 撤销偏向 → 轻量级 |
 | 轻量级 | 指向栈中 Lock Record 的指针 | 线程交替进入、临界区短 | 同刻多线程竞争 → 重量级 |
 | 重量级 | 指向 `ObjectMonitor` | 竞争激烈、临界区长 | 阻塞 + park/unpark |
@@ -281,12 +281,9 @@ end:
 - 升级路径单向：`偏向 → 轻量级 → 重量级`，不会降级。
 - 触发条件：撤销偏向——其他线程访问被偏向的对象，撤销需在 safepoint 完成；轻量 → 重量——CAS 失败且对象头已被改成其他形态，或同刻多线程竞争 → 对象膨胀为 `ObjectMonitor`。
 - **版本差异（已核实）**：
-  - **JDK 15（JEP 374）**：偏向锁默认禁用，相关参数全部废弃；仍可用 `-XX:+UseBiasedLocking` 打开，但会打印 warning。
-  - **JDK 17（本基线，已实测）**：`UseBiasedLocking` 默认 `false`；显式 `-XX:+UseBiasedLocking` 仍被接受，但打印 `Option UseBiasedLocking was deprecated in version 15.0 and will likely be removed in a future release.`；`BiasedLockingStartupDelay`(0)、`BiasedLockingBulkRebiasThreshold`(20)、`BiasedLockingBulkRevokeThreshold`(40)、`BiasedLockingDecayTime`(25000) 仍是产品级 flag 存在；`PrintBiasedLockingStatistics` 同样带 15.0 废弃警告。
-  - **JDK 18（JDK-8256425，Obsolete Biased Locking）**：偏向锁实现被移除，相关 VM 参数标记为 obsolete。
-  - **JDK 19+**：`UseBiasedLocking` 等参数直接报 `Unrecognized VM option`，JVM 起不来。
-  - **现代 JDK 的当前路径**：无锁 → 轻量级 → 重量级，**无偏向阶段**。
-- **JDK 15 废弃的偏向锁相关参数**：`UseBiasedLocking`、`BiasedLockingStartupDelay`、`BiasedLockingBulkRebiasThreshold`、`BiasedLockingBulkRevokeThreshold`、`BiasedLockingDecayTime`、`UseOptoBiasInlining`、`PrintBiasedLockingStatistics`、`PrintPreciseBiasedLockingStatistics`。
+  - **JDK 8（本基线，已实测）**：`UseBiasedLocking` 默认 `true`（product）；`BiasedLockingStartupDelay` 默认 `4000`ms；`BiasedLockingBulkRebiasThreshold`(20)、`BiasedLockingBulkRevokeThreshold`(40)、`BiasedLockingDecayTime`(25000) 均为产品级 flag。可用 `-XX:-UseBiasedLocking` 关闭偏向锁。
+  - **后续版本的变化（仅作版本史，不是本基线行为）**：JDK 15（JEP 374）默认禁用并废弃偏向锁；JDK 18（JDK-8256425）移除实现；JDK 19+ 相关 VM 参数直接报 `Unrecognized VM option`。后续 JDK 的路径是「无锁 → 轻量级 → 重量级」，没有偏向阶段。
+- **后续版本废弃的偏向锁相关参数（JDK 15+，非本基线）**：`UseBiasedLocking`、`BiasedLockingStartupDelay`、`BiasedLockingBulkRebiasThreshold`、`BiasedLockingBulkRevokeThreshold`、`BiasedLockingDecayTime`、`UseOptoBiasInlining`、`PrintBiasedLockingStatistics`、`PrintPreciseBiasedLockingStatistics`。
 
 **【追问】**
 - 重量级锁为什么慢？
@@ -296,7 +293,7 @@ end:
 
 **【易错】**
 - 认为每次进入 `synchronized` 都要走一遍升级流程——只有首次与竞争点才升级。
-- 认为偏向锁在当前 JDK 仍然默认开启——JDK 15 起默认禁用，JDK 19 起连参数都不认了。
+- 在 JDK 8 上以为偏向锁要手动开启——它默认开启（启动后延迟约 4s）；后续 JDK 才默认禁用并移除。
 
 ---
 
@@ -335,15 +332,15 @@ end:
 - 自适应策略：
   - 上一次在某个锁上自旋**成功**过 → 本次允许更长的自旋（受最大自旋次数上限约束）；
   - 上一次自旋**失败**（发生了真正竞争）→ 本次几乎不自旋，直接阻塞。
-- 相关参数（**已在产品版 JDK 17 实测**）：自适应自旋没有用户可见开关，`-XX:+UseAdaptiveSpinning`、`-XX:PreSpinSpin` 只存在于 develop/debug 构建，产品版直接报 `Unrecognized VM option`（JDK 8 上结论相同）；产品版可见的相近旋钮是 `-XX:PreInflateSpin`（默认 10）与 `-XX:SafepointSpinBeforeYield`（默认 2000）。自旋循环中会使用 `pause` 类指令降低功耗与流水线冲刷。
+- 相关参数（**已在产品版 JDK 8 实测**）：自适应自旋没有用户可见开关，`-XX:+UseAdaptiveSpinning`、`-XX:PreSpinSpin` 在产品版直接报 `Unrecognized VM option`；产品版可见的相近旋钮是 `-XX:PreInflateSpin`（默认 10，pd product）与 `-XX:SafepointSpinBeforeYield`（默认 2000，product）。自旋循环中会使用 `pause` 类指令降低功耗与流水线冲刷。
 - 与「CAS 失败重试」不同：后者是无锁算法的语义重试，自旋是锁竞争时的等待手段。
-- 现代 JDK 中竞争激烈时 AQS 直接 `park`，自旋只是优化。
+- JDK 8 中竞争激烈时 AQS 直接 `park`，自旋只是优化。
 
 **【追问】**
 - 自旋很烧 CPU，为什么还值得？
   - 只在「持锁时间短、竞争线程少」时划算；自适应机制就是为了在不值得时快速放弃。
 - 虚拟线程场景下还需要自旋吗？
-  - 虚拟线程（JDK 21，JEP 444）阻塞时不占用载体线程，不需要靠自旋「占住」CPU；HotSpot 在虚拟线程下的具体实现需核实。
+  - 后续 JDK（21+，JEP 444）的虚拟线程阻塞时不占用载体线程，不需要靠自旋「占住」CPU；本专题基线 JDK 8 不涉及虚拟线程。
 
 **【易错】**
 - 认为自适应自旋是 JDK 6 之前就有的——JDK 6 才引入。
@@ -365,7 +362,7 @@ end:
   - `synchronized(a){x++} synchronized(a){y++}` → `synchronized(a){x++; y++;}`。
   - 目的：减少「加锁-解锁-加锁」的抖动与线程切换。
   - 代价：临界区变大、持锁时间变长，高竞争下可能更差。
-- 两者都是 HotSpot C2 的编译期优化（**已在产品版 JDK 17 实测**）：`-XX:-EliminateLocks` 是产品版可用开关（`{C2 product}`，默认 true）；`-XX:-LockCoarsening` 在产品版不可用（报 `Unrecognized VM option`），锁粗化在产品构建中是默认行为，只有 develop/debug 构建才留了开关。
+- 两者都是 HotSpot C2 的编译期优化（**已在产品版 JDK 8 实测**）：`-XX:-EliminateLocks` 是产品版可用开关（`{C2 product}`，默认 true），`EliminateNestedLocks` 默认 true；`-XX:-LockCoarsening` 在 JDK 8 产品版不可用（报 `Unrecognized VM option`），锁粗化在产品构建中是默认行为。
 - 关键区别：**消除 = 锁消失；粗化 = 锁变大**。
 
 **【追问】**
@@ -646,30 +643,30 @@ public class Counter {
 
 ### LK22 · AQS 的等待队列为什么叫「CLH 变体」？它和原始 CLH 差在哪？⭐⭐
 
-**【一句话答】** 经典 CLH 是单向链表 + tail 指针；AQS 改成**双向**队列（节点同时持有 `prev` 和 `next`），并引入 head 哑元节点与状态位字段，所以叫 CLH 变体。JDK 17 的 AQS 源码注释里也明确自称 "a variant of a CLH lock queue"。
+**【一句话答】** 经典 CLH 是单向链表 + tail 指针；AQS 改成**双向**队列（节点同时持有 `prev` 和 `next`），并引入 head 哑元节点与 `waitStatus` 字段，所以叫 CLH 变体。JDK 8 的 AQS 源码注释里也明确自称 "a variant of a CLH lock queue"。
 
 **【展开】**
-- JDK 17 `AbstractQueuedSynchronizer$Node` 的字段（**JDK 17 javap 已复核**）：`volatile Node prev`、`volatile Node next`、`Thread waiter`（被唤醒的线程）、`volatile int status`（状态位）；配套 `casPrev`/`casNext`/`getAndUnsetStatus`/`setPrevRelaxed`/`setStatusRelaxed`/`clearStatus` 等原子操作方法。
+- JDK 8 `AbstractQueuedSynchronizer$Node` 的字段（**JDK 8 javap 已复核**）：`volatile Node prev`、`volatile Node next`、`volatile Thread thread`（等待的线程）、`volatile int waitStatus`（四值枚举），另有 `Node nextWaiter`（条件队列/共享模式标记）；配套 `compareAndSetWaitStatus`、`compareAndSetTail`、`compareAndSetNext` 等 CAS 方法。
 - 为什么改成双向：
   - 节点取消（超时/中断）时需要知道前驱是谁，并把前驱指向自己的后继 → 需要 `prev`；
   - 入队时要在尾部接上新节点 → 需要 `next`。
 - head 是哑元节点（dummy），代表「上一个已完成的持有者」；tail 指向最后一个节点。队列空时 head == tail。
 - 批量唤醒：同模式连续节点被一次唤醒（`setHeadAndPropagate`），减少唤醒次数。
-- **JDK 8 与 JDK 17 的差异**：
-  - 字段名：JDK 8 是 `thread` + `volatile int waitStatus`；JDK 17 改为 `waiter`（普通内存模式）+ `volatile int status`（**`waitStatus` 这个名字在 JDK 17 已不存在**）。
-  - 哨兵节点：JDK 8 的 `Node.SHARED` / `Node.EXCLUSIVE` 两个哨兵在 JDK 17 已删除。
-  - 条件队列：JDK 8 把 `nextWaiter` 放在 `Node` 上；JDK 17 拆出独立的 `AbstractQueuedSynchronizer$ConditionNode extends Node`，`nextWaiter` 移到该子类上。
+- JDK 8 的结构要点：
+  - 节点用 `thread` 字段记录等待线程，用 `volatile int waitStatus` 记录 `SIGNAL`/`CONDITION`/`PROPAGATE`/`CANCELLED`；
+  - `Node.SHARED` / `Node.EXCLUSIVE` 是两个哨兵，用来区分共享/独占模式；
+  - 条件队列复用 `Node`，靠 `nextWaiter` 串成单向链。
 
 **【追问】**
 - head 和 tail 是同一个节点吗？
   - 不一定：队列非空时 head 是哑元、tail 是最后一个等待节点。
 - 条件队列是这条队列吗？
-  - 不是。条件队列是每个 `Condition` 各自的一条独立单向链（JDK 17 里由 `ConditionObject` 的 `firstWaiter`/`lastWaiter` 串起 `ConditionNode`）。
+  - 不是。条件队列是每个 `Condition` 各自的一条独立单向链（JDK 8 里由 `ConditionObject` 的 `firstWaiter`/`lastWaiter` 串起 `Node.nextWaiter`）。
 
 **【易错】**
 - 说 AQS 队列是「单向链表」——JDK 5 之后的 AQS 是双向。
 - 把条件队列混进同步队列统计。
-- 在 JDK 17 上照搬 JDK 8 的字段名——`waitStatus`、`thread`、`Node.SHARED` 都已经不存在了。
+- 把 JDK 8 的字段记成后续版本的 `waiter` / `status`——JDK 8 是 `thread` / `waitStatus`，`Node.SHARED` / `EXCLUSIVE` 也仍然存在。
 
 ---
 
@@ -678,7 +675,7 @@ public class Counter {
 **【一句话答】** `acquire` 先试 `tryAcquire`，失败则包装成节点入队，自旋若干次后再 `park` 阻塞，被唤醒后重新竞争；`release` 先 `tryRelease`，彻底释放后 `unparkSuccessor` 唤醒后继。流程由 AQS 固定，变化点交给子类。
 
 **【展开】**
-- `acquire(int)`（JDK 17 `AbstractQueuedSynchronizer#acquire`，已用 `javap -p` 确认该方法存在）：
+- `acquire(int)`（JDK 8 `AbstractQueuedSynchronizer#acquire`，已用 `javap -p` 确认该方法存在）：
   1. `tryAcquire(arg)` 成功 → 直接返回；
   2. 失败 → `addWaiter` 包装成 `Node` 入队，然后 `acquireQueued(node, arg)`：
      3. 先在队头自旋若干次尝试 `tryAcquire`；
@@ -691,7 +688,7 @@ public class Counter {
 - `acquireQueued` 返回后，若调用的是不可中断的 `lock()`，AQS 会 `selfInterrupt()` 恢复被 park 期间吞掉的中断标志。
 - 底层阻塞原语是 `LockSupport.park/unpark`（许可式，可精确唤醒指定线程），而不是 `Object.wait/notify`（`notify` 只能唤醒等待集中的任意一个，顺序不保证）。
 - 共享模式的 `acquireShared`/`releaseShared` 流程结构相同，差别在传播唤醒。
-- **JDK 8 与 JDK 17 的差异**：JDK 17 的 AQS 额外提供了 `acquire(Node, int, boolean, boolean, boolean, long)` 重载（`javap -p` 可见），把可中断/共享/超时等组合收敛到同一套队列操作；`acquire(int)`/`release(int)`/`acquireShared`/`releaseShared` 的主干流程与 JDK 8 一致。
+- JDK 8 的主干就是这四步：`acquire` → `tryAcquire` 失败 → `addWaiter` 入队 → `acquireQueued` 自旋/park；`release` → `tryRelease` 成功 → `unparkSuccessor(head)`。可中断、超时、共享模式各自走独立的 `acquireInterruptibly` / `tryAcquireNanos` / `acquireShared` 分支。
 
 **【追问】**
 - `lock()` 被中断会抛异常吗？
@@ -706,7 +703,7 @@ public class Counter {
 
 ### LK24 · 节点的 `waitStatus` 有哪些取值？流转是怎样的？⭐⭐⭐⭐
 
-**【一句话答】** 节点的状态字段决定「谁能被唤醒、是否需要传播」。**JDK 8** 叫 `waitStatus`，取值 `SIGNAL = -1`、`CONDITION = -2`、`PROPAGATE = -3`、`CANCELLED = 1`、`0`；**JDK 17** 改名为 `status`，常量整体换了一套：`WAITING = 1`、`COND = 2`、`CANCELLED = 0x80000000`，语义从「枚举状态值」变成「状态位」。
+**【一句话答】** 节点的状态字段决定「谁能被唤醒、是否需要传播」。JDK 8 用 `Node.waitStatus`，取值 `SIGNAL = -1`、`CONDITION = -2`、`PROPAGATE = -3`、`CANCELLED = 1`、`0`。
 
 **【展开】**
 - **JDK 8**（`AbstractQueuedSynchronizer$Node`，已用 `javap -constants` 复核）：
@@ -719,30 +716,18 @@ public class Counter {
 | `PROPAGATE` | -3 | 共享模式传播标记 |
 | （初始值） | 0 | 无特殊含义 |
 
-  - 典型流转：**入队**新节点 `waitStatus = 0`，前驱 CAS 自己的 `waitStatus` 为 `SIGNAL`（「我睡下后要叫醒后继」）；**被唤醒**后归 0 再次竞争，成功则成为新 head；**取消**置 `CANCELLED` 并由 `unlinkCancelled` 摘除，且必须向前驱传播唤醒；**条件队列**上 `waitStatus = CONDITION`，`signal` 时经 `transferAfterCancelledWait` 移回同步队列。
-
-- **JDK 17**（`AbstractQueuedSynchronizer` 顶层常量 + `Node.status`，已用 `javap -constants` 与 src.zip 源码复核）：
-
-| 常量 | 值 | 含义 |
-|---|---|---|
-| `WAITING` | 1 | 必须为 1；节点在等待 |
-| `COND` | 2 | 节点在条件队列上等待 |
-| `CANCELLED` | 0x80000000 | `Integer.MIN_VALUE`，必须为负数；节点已取消 |
-
-  - 语义从「枚举」变成「状态位」：`status < 0` 表示该节点需要被 `LockSupport.unpark` 唤醒（或已取消）；`status == 0` 在 `cleanQueue` 中表示待清理的链接状态。
-  - 原子操作换成位运算：`getAndUnsetStatus(int)`、`setStatusRelaxed(int)`、`clearStatus()`，配套 `casPrev`/`casNext`（用 `jdk.internal.misc.Unsafe` 的弱 CAS）。
-  - JDK 17 **没有** `SIGNAL` / `CONDITION` / `PROPAGATE` 这三个常量，别照搬 JDK 8 的记忆。
+  - 典型流转：**入队**新节点 `waitStatus = 0`；后继要 park 前，前驱 CAS 自己的 `waitStatus` 为 `SIGNAL`（「我睡下后要叫醒后继」）；**释放锁**时 `unparkSuccessor` 把队首的 `waitStatus` 从负值 CAS 回 0 并 `unpark` 后继；**取消**时节点自身置 `CANCELLED`，由前驱在 `shouldParkAfterFailedAcquire` 里摘链；**条件队列**上 `waitStatus = CONDITION`，`signal` 时经 `transferForSignal` 移回同步队列并 CAS 回 0；**共享模式**释放后置 `PROPAGATE`，保证唤醒向后传播。
 
 **【追问】**
-- 取消节点为什么要向前驱传播唤醒？
-  - 若被取消的节点恰好负责唤醒后继（JDK 8 的 `SIGNAL`、JDK 17 的 `status < 0`），它不唤醒就会让后继永久阻塞。
-- JDK 17 为什么把枚举换成状态位？
-  - 位运算可以原子地「置位/清位/测试」，合并了 JDK 8 需要靠多个枚举值表达的多重语义，也省掉了对 `PROPAGATE` 这类传播标记的单独处理。
+- 取消节点为什么还要唤醒后继？
+  - 若被取消的节点恰好是后继的前驱（前驱的 `waitStatus = SIGNAL`），它不继续传播唤醒就会让后继永久阻塞；`cancelAcquire` 在必要时会调用 `unparkSuccessor`。
+- 为什么用一个 `int` 而不是多个布尔字段？
+  - 一个 `volatile int` 才能用 CAS 原子地完成「读-判断-改」，多个布尔字段无法一次性原子更新。
 
 **【易错】**
-- 记不住数值就乱写——上表两组数值分别来自 JDK 8 与 JDK 17 的 `javap -constants` 复核。
-- 在 JDK 17 上说「`Node.waitStatus`」——该字段已改名为 `status`，`waitStatus` 这个名字不存在了。
-- 把 `waitStatus` / `status` 当普通字段——都是 `volatile int`。
+- 记不住数值就乱写——上表数值来自 JDK 8 的 `javap -constants` 复核。
+- 把 `waitStatus` 当成普通字段——它是 `volatile int`，所有状态变更都要走 CAS。
+- 认为 `SIGNAL` 标记的是节点自己——`SIGNAL` 标记的是「前驱承诺唤醒后继」，通常写在**前驱**节点上。
 
 ---
 
@@ -756,21 +741,21 @@ public class Counter {
 |---|---|---|
 | 结构 | CLH 变体，双向（`prev`/`next`） | 单向链（`nextWaiter`） |
 | 数量 | 每个 AQS 一条 | 每个 `Condition` 一条 |
-| 节点类型 | JDK 17 是 `Node`；JDK 8 另有 `SHARED`/`EXCLUSIVE` 哨兵 | JDK 17 是 `ConditionNode`；JDK 8 直接用 `Node` |
-| 节点状态 | JDK 8：`SIGNAL`/`PROPAGATE`/`CANCELLED`；JDK 17：`status` 位（`WAITING`/`CANCELLED`） | JDK 8：`CONDITION`；JDK 17：`COND` |
+| 节点类型 | JDK 8 的 `Node`（`SHARED`/`EXCLUSIVE` 两个哨兵） | JDK 8 直接复用 `Node`，用 `nextWaiter` 串链 |
+| 节点状态 | `SIGNAL`/`PROPAGATE`/`CANCELLED` | `CONDITION` |
 | 作用 | 竞争锁 | 等待条件成立 |
 | 移动方向 | — | 同步队列 →（await）条件队列 →（signal）同步队列 |
 
 - `await()` 流程：
   1. 检查是否持有锁，未持有抛 `IllegalMonitorStateException`；
-  2. 加入条件队列尾部，状态置为「条件等待」（JDK 8 是 `waitStatus = CONDITION`，JDK 17 是 `status = COND`）；
+  2. 加入条件队列尾部，状态置为 `waitStatus = CONDITION`；
   3. **完全释放锁**（`fullyRelease`，含重入次数）；
   4. `LockSupport.park` 阻塞等待；
   5. 被 `signal` 唤醒后**重新竞争锁**，拿到锁才返回。
 - `signal()` 流程：从条件队列头部取一个节点，状态复位，移回同步队列并 `unpark`——**只是唤醒，不保证它立刻拿到锁**。
 - `await` 必须写在 `while (条件不成立)` 循环里：要处理虚假唤醒，也要处理「条件被别的线程抢先满足」。
 - `synchronized` 只有一个 waitSet，无法按条件精确唤醒；`Condition` 提供了多个条件队列，可以「按条件 signal」。
-- **JDK 8 与 JDK 17 的差异**：JDK 8 的条件队列节点就是 `Node`（自带 `nextWaiter` 字段）；JDK 17 拆出独立的 `AbstractQueuedSynchronizer$ConditionNode extends Node`（自带 `nextWaiter`），由 `ConditionObject` 的 `firstWaiter`/`lastWaiter` 两个字段串成链，条件队列与同步队列的节点类型从此分开。
+- JDK 8 的条件队列节点就是 `Node`（自带 `nextWaiter` 字段），由 `ConditionObject` 的 `firstWaiter`/`lastWaiter` 串成单向链；`signal` 用 `transferForSignal` 把节点 `waitStatus` 从 `CONDITION` CAS 回 0 并追加到同步队列，然后 `unpark` 该线程。
 
 **【追问】**
 - `await` 和 `Object.wait/notify` 的区别？
@@ -791,14 +776,13 @@ public class Counter {
 **【一句话答】** 用 AQS 的 `state` 当重入计数：获取时若 `state == 0` 则 CAS 到 1 并记录 owner，若 owner 是自己则 `state + 1`；释放时 `state - 1`，减到 0 才真正释放并清空 owner。
 
 **【展开】**
-- 获取（**JDK 17 javap 字节码已复核**）：
-  - JDK 17 把「首次获取 + 重入」合并在 `NonfairSync#initialTryLock()`：CAS `0 → 1` 成功后 `setExclusiveOwnerThread(current)`；owner 是当前线程则 `state + 1`，计数溢出（`c < 0`）抛 `Error("Maximum lock count exceeded")`。
-  - `NonfairSync#tryAcquire(int)` 只走「非重入」路径：`getState() == 0 && compareAndSetState(0, acquires)`，供 AQS `acquire()` 在队列中重试时调用。
-- 释放（`ReentrantLock$Sync#tryRelease`，**JDK 17 javap 字节码已复核**）：
+- 获取（**JDK 8 源码已复核**）：
+  - 非公平模式：`NonfairSync#tryAcquire` 调用 `Sync#nonfairTryAcquire`，一个方法同时处理「首次获取 + 重入」——`state == 0` 时 CAS `0 → 1` 成功后 `setExclusiveOwnerThread(current)`；owner 是当前线程则 `state + 1`，计数溢出（`c < 0`）抛 `Error("Maximum lock count exceeded")`。
+  - 公平模式：`FairSync#tryAcquire` 在 `state == 0` 时先检查 `!hasQueuedPredecessors()`，再 CAS；重入路径与非公平一致。
+- 释放（`ReentrantLock$Sync#tryRelease`，**JDK 8 源码已复核**）：
   - owner 不是自己 → 抛 `IllegalMonitorStateException`；
-  - `state - 1`；结果为 0 时清空 owner 并置 `signal` 状态，随后 `unparkSuccessor`。
-- 公平模式（`FairSync#tryAcquire`，**JDK 17 javap 字节码已复核**）额外先调 `hasQueuedPredecessors()`，保证按队列顺序获取。
-- **JDK 8 与 JDK 17 的差异**：JDK 8 是 `ReentrantLock$Sync#nonfairTryAcquire` 一个方法同时干「首次获取」和「重入」两件事；JDK 17 拆成 `Sync#initialTryLock()`（入口预筛，含重入）与 `FairSync/NonfairSync#tryAcquire()`（AQS 队列里的重试）两步，语义等价、结构不同，面试时按 JDK 17 说。
+  - `state - 1`；结果为 0 时清空 owner 并返回 true，由 AQS 的 `release()` 调用 `unparkSuccessor(head)` 唤醒后继。
+- JDK 8 里非公平锁的「首次获取 + 重入」都在 `Sync#nonfairTryAcquire` 一个方法里；公平锁只在首次获取时多一次队列检查，重入路径相同。
 - `synchronized` 侧的重入计数保存在 HotSpot 的对象头/monitor 中，具体字段归属随版本变化，需核实；工程上的行为语义与 `ReentrantLock` 一致。
 
 **【追问】**
@@ -825,7 +809,7 @@ public class Counter {
 | 吞吐 | 高 | 低 |
 | 上下文切换 | 少 | 多 |
 | 饥饿风险 | 有 | 无（插队型） |
-| 实现 | `NonfairSync#tryAcquire`（JDK 17） | `FairSync#tryAcquire`（含 `hasQueuedPredecessors()`） |
+| 实现 | `NonfairSync#tryAcquire`（JDK 8，内部调用 `nonfairTryAcquire`） | `FairSync#tryAcquire`（含 `hasQueuedPredecessors()`） |
 | 构造 | `new ReentrantLock()` | `new ReentrantLock(true)` |
 
 - 非公平为什么更快：锁释放后，下一个线程被 `unpark` 但还要重新 CAS 竞争；非公平允许这个「已经在 CPU 上、cache 热」的线程直接 CAS 成功，省掉一次唤醒 + 上下文切换。
@@ -849,12 +833,19 @@ public class Counter {
 **【一句话答】** 它判断「当前线程前面是否还有别的线程在等锁」：有则返回 true。公平锁在获取锁前必须检查它；非公平锁**不检查**，这正是插队的来源。
 
 **【展开】**
-- 判定逻辑（`AbstractQueuedSynchronizer#hasQueuedPredecessors`，**JDK 17 javap 已复核方法存在**；实现为取 `head.next`，若存在、不等于当前线程、且其等待线程非 null，则返回 true）：
-  - 队列为空 → false；
-  - 队首等待者就是当前线程 → false；
-  - 否则 → true。
-- 公平锁（`FairSync#tryAcquire`，**JDK 17 javap 字节码已复核**）：`state == 0` 时必须 `!hasQueuedPredecessors()` 且 CAS 成功才获取。
-- 非公平锁（`NonfairSync#tryAcquire`，**JDK 17 javap 字节码已复核**）：**不调用** `hasQueuedPredecessors()`，直接 CAS 抢锁。
+- 判定逻辑（`AbstractQueuedSynchronizer#hasQueuedPredecessors`，**JDK 8 源码已复核**）：
+  ```java
+  Node t = tail;
+  Node h = head;
+  Node s;
+  return h != t &&
+      ((s = h.next) == null || s.thread != Thread.currentThread());
+  ```
+  - 队列为空（`h == t`）→ false；
+  - `head.next` 就是当前线程 → false；
+  - 否则 → true（保守地认为前面还有人，必须排队）。
+- 公平锁（`FairSync#tryAcquire`，**JDK 8 源码已复核**）：`state == 0` 时必须 `!hasQueuedPredecessors()` 且 CAS 成功才获取。
+- 非公平锁（`NonfairSync#tryAcquire` → `nonfairTryAcquire`，**JDK 8 源码已复核**）：**不调用** `hasQueuedPredecessors()`，直接 CAS 抢锁。
 - 为什么排除「当前线程自己」：已排队等待的线程再次尝试获取时，若自己就是队首应当被允许，否则会自阻塞。
 - 观测队列状态的 API：`hasQueuedThread(thread)`、`getQueueLength()`、`getFirstQueuedThread()`、`getQueuedThreads()`。
 
@@ -866,7 +857,7 @@ public class Counter {
 
 **【易错】**
 - 认为非公平锁也调用 `hasQueuedPredecessors`——JDK 8 的 `nonfairTryAcquire` 并不调用（字节码可验证）。
-- 忽略 `head.next.thread == null` 的哑元/已取消节点情况。
+- 忽略 `head.next == null` 的瞬时状态——JDK 8 此时返回 true（保守地认为前面有人），避免误插队。
 
 ---
 
@@ -1209,7 +1200,7 @@ try {
 - 命令行排查：
 ```bash
 jstack -l <pid>                  # 线程栈 + 锁信息；死锁会明确报告
-jcmd <pid> Thread.print -l       # 等价能力，JDK 9+ 更常用
+jcmd <pid> Thread.print -l       # 等价能力，JDK 8 自带，无需额外工具
 jcmd <pid> Thread.print -l > thread.txt
 ```
   - 输出关键段落：`Found one Java-level deadlock:`，随后是各线程的 `waiting to lock` / `locked <0x...> (a java.util.concurrent.locks.ReentrantLock$NonfairSync)`，以及 `Java stack information for the threads listed above`。
@@ -1301,7 +1292,7 @@ long[] mIds = tmx.findMonitorDeadlockedThreads(); // 只覆盖 synchronized
 | volatile 保证什么 | 可见性 + 有序性 + 单次读写原子性；**不保证复合操作原子性** |
 | DCL 必须 volatile | 否则引用赋值可能重排到构造之前 |
 | synchronized 字节码 | 同步块是 `monitorenter/monitorexit`；同步方法是 `ACC_SYNCHRONIZED` |
-| 锁升级路径 | 历史四态：无锁 → 偏向 → 轻量 → 重量；JDK 15 废弃（JEP 374）、JDK 18 移除、JDK 19+ 参数不识别；现代路径无锁 → 轻量 → 重量 |
+| 锁升级路径 | JDK 8：无锁 → 偏向 → 轻量 → 重量；后续 JDK 15 废弃（JEP 374）、JDK 18 移除、JDK 19+ 参数不识别，之后才是无锁 → 轻量 → 重量 |
 | 轻量级锁 | mark word 指向栈上 Lock Record；靠 CAS 保证互斥 |
 | CAS 的缺点 | 单变量、ABA、高竞争重试浪费 |
 | ABA 解法 | `AtomicStampedReference`（引用 + 版本戳） |

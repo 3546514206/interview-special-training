@@ -1,5 +1,6 @@
 package edu.zjnu.interview.lock.q03;
 
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -16,9 +17,8 @@ import java.util.concurrent.locks.ReentrantLock;
 /**
  * 锁专题 Lab 3：AQS 同步器框架、可重入锁、公平与非公平、Condition 条件队列。
  *
- * <p>运行命令（默认 java 是 JDK 8，必须显式指定 JDK 17）：
+ * <p>运行命令（JDK 8）：
  * <pre>
- * export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
  * mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q03.L03AqsQueueLab
  * </pre>
  *
@@ -26,11 +26,11 @@ import java.util.concurrent.locks.ReentrantLock;
  * <ol>
  *   <li>继承 AQS 手写一个可重入互斥锁（tryAcquire / tryRelease 完整实现）；</li>
  *   <li>反射读出 ReentrantLock / Semaphore / CountDownLatch 内部 AQS 的 state，并说明各自语义；</li>
- *   <li>JDK 17 源码中 acquire / release 的关键路径（原文引用）；</li>
+ *   <li>JDK 8 源码中 acquire / release / unparkSuccessor 的关键路径（原文引用）；</li>
  *   <li>公平锁与非公平锁：hasQueuedPredecessors 的作用与获取顺序；</li>
  *   <li>Condition 条件队列：await / signal / signalAll，等待期间被中断的响应；</li>
- *   <li>AQS 队列节点的状态流转（JDK 17 的 Node.status 方案，以及 JDK 8 特有的 waitStatus 方案）；</li>
- *   <li>JDK 17 没有偏向锁阶段，锁升级路径是「无锁 → 轻量级 → 重量级」。</li>
+ *   <li>AQS 队列节点的 waitStatus 四值流转与实机观察；</li>
+ *   <li>JDK 8 的锁升级路径：无锁 → 偏向 → 轻量级 → 重量级。</li>
  * </ol>
  */
 public class L03AqsQueueLab {
@@ -38,7 +38,7 @@ public class L03AqsQueueLab {
     public static void main(String[] args) throws Exception {
         step1_customAqsLock();
         step2_reflectAqsState();
-        step3_jdk17SourceTrace();
+        step3_jdk8SourceTrace();
         step4_fairVsUnfair();
         step5_condition();
         step6_nodeStatus();
@@ -51,8 +51,7 @@ public class L03AqsQueueLab {
     /**
      * 基于 AQS 手写的可重入互斥锁。
      * <p>state 的语义：对齐 JDK 的 ReentrantLock —— state == 0 表示未加锁，state == n 表示被持有 n 次。
-     * <p>持有者线程记录在 AbstractOwnableSynchronizer 的 exclusiveOwnerThread 字段里
-     * （JDK 16 起 AQS 的父类改为 AbstractOwnableSynchronizer；JDK 8/11 中该字段直接在 AQS 里）。
+     * <p>持有者线程记录在父类 AbstractOwnableSynchronizer 的 exclusiveOwnerThread 字段里。
      */
     static final class MyReentrantLock extends AbstractQueuedSynchronizer implements Lock {
         private static final long serialVersionUID = 1L;
@@ -89,8 +88,8 @@ public class L03AqsQueueLab {
                 setExclusiveOwnerThread(null);
             }
             setState(c);
-            // 返回 true 表示「完全释放」，此时由 AQS.release() 调用 signalNext(head) 唤醒后继线程。
-            // 注意：唤醒后继不是 tryRelease 的职责——JDK 17 里唤醒由 AQS 的 release() 统一完成。
+            // 返回 true 表示「完全释放」，此时由 AQS.release() 调用 unparkSuccessor(head) 唤醒后继线程。
+            // 注意：唤醒后继不是 tryRelease 的职责——JDK 8 里唤醒由 AQS 的 release() 统一完成。
             return free;
         }
 
@@ -263,113 +262,144 @@ public class L03AqsQueueLab {
     }
 
     // ------------------------------------------------------------------
-    // 实验 3：JDK 17 源码关键路径追踪
+    // 实验 3：JDK 8 源码关键路径追踪
     // ------------------------------------------------------------------
 
-    private static void step3_jdk17SourceTrace() {
-        System.out.println("=== 实验3: JDK 17 中 AQS.acquire / release 的源码关键路径（原文引用） ===");
-        System.out.println("源码出处：JDK 17.0.10 的 src.zip，"
-                + "java.base/java/util/concurrent/locks/AbstractQueuedSynchronizer.java");
-        System.out.println("（行号以该 src.zip 内文件为准）");
+    private static void step3_jdk8SourceTrace() {
+        System.out.println("=== 实验3: JDK 8 中 AQS.acquire / release / unparkSuccessor 的源码关键路径（原文引用） ===");
+        System.out.println("源码出处：JDK 8 的 src.zip，"
+                + "java.util.concurrent.locks.AbstractQueuedSynchronizer.java");
 
-        System.out.println("\n[1] 类声明：JDK 16 起 AQS 的父类改成了 AbstractOwnableSynchronizer（AQS.java 第 304-306 行）");
-        System.out.println("""
-                public abstract class AbstractQueuedSynchronizer
-                    extends AbstractOwnableSynchronizer
-                    implements java.io.Serializable {""");
+        System.out.println("\n[1] 类声明：AQS 继承 AbstractOwnableSynchronizer，持有者记录在 exclusiveOwnerThread");
+        System.out.println("public abstract class AbstractQueuedSynchronizer\n"
+                + "    extends AbstractOwnableSynchronizer\n"
+                + "    implements java.io.Serializable {");
 
-        System.out.println("\n[2] acquire(int)：先试一次，失败才进队列（AQS.java 第 936-939 行）");
-        System.out.println("""
-                    public final void acquire(int arg) {
-                        if (!tryAcquire(arg))
-                            acquire(null, arg, false, false, false, 0L);
-                    }""");
+        System.out.println("\n[2] acquire(int)：先试一次，失败才入队（acquireQueued / addWaiter）");
+        System.out.println("public final void acquire(int arg) {\n"
+                + "    if (!tryAcquire(arg) &&\n"
+                + "        acquireQueued(addWaiter(Node.EXCLUSIVE), arg))\n"
+                + "        selfInterrupt();\n"
+                + "}");
 
-        System.out.println("\n[3] release(int)：tryRelease 返回 true 后，由 AQS 负责唤醒后继（AQS.java 第 1006-1014 行）");
-        System.out.println("""
-                    public final boolean release(int arg) {
-                        if (tryRelease(arg)) {
-                            signalNext(head);
-                            return true;
-                        }
-                        return false;
-                    }""");
+        System.out.println("\n[3] release(int)：tryRelease 返回 true 后，由 AQS 负责唤醒后继");
+        System.out.println("public final boolean release(int arg) {\n"
+                + "    if (tryRelease(arg)) {\n"
+                + "        Node h = head;\n"
+                + "        if (h != null && h.waitStatus != 0)\n"
+                + "            unparkSuccessor(h);\n"
+                + "        return true;\n"
+                + "    }\n"
+                + "    return false;\n"
+                + "}");
 
-        System.out.println("\n[4] signalNext(Node)：JDK 17 的唤醒实现——清 WAITING 位 + unpark（AQS.java 第 607-613 行）");
-        System.out.println("""
-                    private static void signalNext(Node h) {
-                        Node s;
-                        if (h != null && (s = h.next) != null && s.status != 0) {
-                            s.getAndUnsetStatus(WAITING);
-                            LockSupport.unpark(s.waiter);
-                        }
-                    }""");
+        System.out.println("\n[4] unparkSuccessor(Node)：JDK 8 的唤醒入口——清 SIGNAL 位后 unpark 后继");
+        System.out.println("private void unparkSuccessor(Node node) {\n"
+                + "    int ws = node.waitStatus;\n"
+                + "    if (ws < 0)\n"
+                + "        compareAndSetWaitStatus(node, ws, 0);\n"
+                + "    Node s = node.next;\n"
+                + "    if (s == null || s.waitStatus > 0) {\n"
+                + "        s = null;\n"
+                + "        for (Node t = tail; t != null && t != node; t = t.prev)\n"
+                + "            if (t.waitStatus <= 0)\n"
+                + "                s = t;\n"
+                + "    }\n"
+                + "    if (s != null)\n"
+                + "        LockSupport.unpark(s.thread);\n"
+                + "}");
 
-        System.out.println("\n[5] acquire 内部主循环的阻塞点：先置 WAITING 位再 park（AQS.java 第 709-718 行）");
-        System.out.println("""
-                        } else if (node.status == 0) {
-                            node.status = WAITING;          // enable signal and recheck
-                        } else {
-                            long nanos;
-                            spins = postSpins = (byte)((postSpins << 1) | 1);
-                            if (!timed)
-                                LockSupport.park(this);""");
+        System.out.println("\n[5] 入队后自旋：前驱把 waitStatus 置为 SIGNAL，然后 park 自己");
+        System.out.println("private static boolean shouldParkAfterFailedAcquire(Node pred, Node node) {\n"
+                + "    int ws = pred.waitStatus;\n"
+                + "    if (ws == Node.SIGNAL)\n"
+                + "        return true;\n"
+                + "    if (ws > 0) {\n"
+                + "        do {\n"
+                + "            node.prev = pred = pred.prev;\n"
+                + "        } while (pred.waitStatus > 0);\n"
+                + "        pred.next = node;\n"
+                + "    } else {\n"
+                + "        compareAndSetWaitStatus(pred, ws, Node.SIGNAL);\n"
+                + "    }\n"
+                + "    return false;\n"
+                + "}");
+        System.out.println("private final boolean parkAndCheckInterrupt() {\n"
+                + "    LockSupport.park(this);\n"
+                + "    return Thread.interrupted();\n"
+                + "}");
 
-        System.out.println("\n[6] 取消获取：节点置为 CANCELLED（AQS.java 第 770-778 行）");
-        System.out.println("""
-                    private int cancelAcquire(Node node, boolean interrupted,
-                                              boolean interruptible) {
-                        if (node != null) {
-                            node.waiter = null;
-                            node.status = CANCELLED;
-                            if (node.prev != null)
-                                cleanQueue();
-                        }""");
+        System.out.println("\n[6] 取消获取：节点自身置为 CANCELLED（节选）");
+        System.out.println("private void cancelAcquire(Node node) {\n"
+                + "    if (node == null)\n"
+                + "        return;\n"
+                + "    node.thread = null;\n"
+                + "    ...\n"
+                + "    node.waitStatus = Node.CANCELLED;\n"
+                + "    ...\n"
+                + "}");
 
-        System.out.println("\n[7] Condition 进入等待：入条件队列 + 完全释放锁（AQS.java 第 1501-1516 行）");
-        System.out.println("""
-                    private int enableWait(ConditionNode node) {
-                        if (isHeldExclusively()) {
-                            node.waiter = Thread.currentThread();
-                            node.setStatusRelaxed(COND | WAITING);
-                            ConditionNode last = lastWaiter;
-                            if (last == null)
-                                firstWaiter = node;
-                            else
-                                last.nextWaiter = node;
-                            lastWaiter = node;
-                            int savedState = getState();
-                            if (release(savedState))
-                                return savedState;
-                        }
-                        node.status = CANCELLED; // lock not held or inconsistent
-                        throw new IllegalMonitorStateException();
-                    }""");
+        System.out.println("\n[7] Condition.await()：入条件队列 + fullyRelease 完全释放锁");
+        System.out.println("public final void await() throws InterruptedException {\n"
+                + "    if (Thread.interrupted())\n"
+                + "        throw new InterruptedException();\n"
+                + "    Node node = addConditionWaiter();\n"
+                + "    int savedState = fullyRelease(node);\n"
+                + "    int interruptMode = 0;\n"
+                + "    while (!isOnSyncQueue(node)) {\n"
+                + "        LockSupport.park(this);\n"
+                + "        if ((interruptMode = checkInterruptWhileWaiting(node)) != 0)\n"
+                + "            break;\n"
+                + "    }\n"
+                + "    if (acquireQueued(node, savedState) && interruptMode != THROW_IE)\n"
+                + "        interruptMode = REINTERRUPT;\n"
+                + "    if (node.nextWaiter != null) // clean up if cancelled\n"
+                + "        unlinkCancelledWaiters();\n"
+                + "    if (interruptMode != 0)\n"
+                + "        reportInterruptAfterWait(interruptMode);\n"
+                + "}");
 
-        System.out.println("\n[8] Condition.await() 的中断处理（AQS.java 第 1607-1617 行）：");
-        System.out.println("""
-                    public final void await() throws InterruptedException {
-                        if (Thread.interrupted())
-                            throw new InterruptedException();
-                        ConditionNode node = new ConditionNode();
-                        int savedState = enableWait(node);
-                        LockSupport.setCurrentBlocker(this); // for back-compatibility
-                        boolean interrupted = false, cancelled = false, rejected = false;
-                        while (!canReacquire(node)) {
-                            if (interrupted |= Thread.interrupted()) {
-                                if (cancelled = (node.getAndUnsetStatus(COND) & COND) != 0)
-                                    break;              // else interrupted after signal
-                            } else if ((node.status & COND) != 0) {""");
-        System.out.println("读法：cancelled = true 表示「中断发生时该节点还没被 signal 搬走」→ 跳出循环并抛 InterruptedException；"
-                + "cancelled = false 表示「已被 signal 之后才来的中断」→ 不抛异常，改为重新设置中断标志。");
+        System.out.println("\n[8] addConditionWaiter / fullyRelease（原文节选）：");
+        System.out.println("private Node addConditionWaiter() {\n"
+                + "    Node t = lastWaiter;\n"
+                + "    if (t != null && t.waitStatus != Node.CONDITION) {\n"
+                + "        unlinkCancelledWaiters();\n"
+                + "        t = lastWaiter;\n"
+                + "    }\n"
+                + "    Node node = new Node(Thread.currentThread(), Node.CONDITION);\n"
+                + "    if (t == null)\n"
+                + "        firstWaiter = node;\n"
+                + "    else\n"
+                + "        t.nextWaiter = node;\n"
+                + "    lastWaiter = node;\n"
+                + "    return node;\n"
+                + "}");
+        System.out.println("private int fullyRelease(Node node) {\n"
+                + "    boolean failed = true;\n"
+                + "    try {\n"
+                + "        int savedState = getState();\n"
+                + "        if (release(savedState)) {\n"
+                + "            failed = false;\n"
+                + "            return savedState;\n"
+                + "        } else {\n"
+                + "            throw new IllegalMonitorStateException();\n"
+                + "        }\n"
+                + "    } finally {\n"
+                + "        if (failed)\n"
+                + "            node.waitStatus = Node.CANCELLED;\n"
+                + "    }\n"
+                + "}");
+        System.out.println("读法：interruptMode = THROW_IE 表示「中断发生时节点还在条件队列、尚未被 signal」"
+                + "→ 最终抛 InterruptedException；interruptMode = REINTERRUPT 表示「已经被 signal 之后才来的中断」"
+                + "→ 不抛异常，改为重新设置中断标志。");
 
-        System.out.println("\n[9] JDK 17 中已经没有 unparkSuccessor 这个方法了："
-                + "它是 JDK 8 特有（JDK 11 同）的 AQS 私有方法（不可被子类调用），JDK 17 改成了私有的静态 signalNext(Node)，"
-                + "由 release() 在 tryRelease 成功后调用。");
+        System.out.println("\n[9] 唤醒入口：JDK 8 的 unparkSuccessor(Node) 是 AQS 的 private 方法，子类无法调用；"
+                + "release() 在 tryRelease 成功后统一调用它。"
+                + "网上流传的「在 tryRelease 里调用 unparkSuccessor」的手写模板编译不过。");
 
         System.out.println(">> 面试点: AQS 的骨架是固定的——tryAcquire 成功就拿锁，失败就入队；"
                 + "release 时 tryRelease 改状态，返回 true 才唤醒后继；"
-                + "面试时把这几行源码背下来，比背概念更能压住追问。");
+                + "面试时把 acquire / release / unparkSuccessor 这几段源码背下来，比背概念更能压住追问。");
     }
 
     // ------------------------------------------------------------------
@@ -379,36 +409,54 @@ public class L03AqsQueueLab {
     private static void step4_fairVsUnfair() throws InterruptedException {
         System.out.println("=== 实验4: 公平锁按 FIFO 排队，非公平锁允许新线程插队（barging） ===");
 
-        System.out.println("JDK 17 ReentrantLock 的两段 tryAcquire（源码原文）：");
-        System.out.println("NonfairSync（第 241-246 行）——不查前驱，可以插队：");
-        System.out.println("""
-                    protected final boolean tryAcquire(int acquires) {
-                        if (getState() == 0 && compareAndSetState(0, acquires)) {
-                            setExclusiveOwnerThread(Thread.currentThread());
-                            return true;
-                        }
-                        return false;
-                    }""");
-        System.out.println("FairSync（第 279-285 行）——用 hasQueuedPredecessors() 挡住插队：");
-        System.out.println("""
-                    protected final boolean tryAcquire(int acquires) {
-                        if (getState() == 0 && !hasQueuedPredecessors() &&
-                            compareAndSetState(0, acquires)) {
-                            setExclusiveOwnerThread(Thread.currentThread());
-                            return true;
-                        }
-                        return false;
-                    }""");
-        System.out.println("hasQueuedPredecessors()（AQS.java 第 1232-1238 行）：");
-        System.out.println("""
-                    public final boolean hasQueuedPredecessors() {
-                        Thread first = null; Node h, s;
-                        if ((h = head) != null && ((s = h.next) == null ||
-                                                   (first = s.waiter) == null ||
-                                                   s.prev == null))
-                            first = getFirstQueuedThread(); // retry via getFirstQueuedThread
-                        return first != null && first != Thread.currentThread();
-                    }""");
+        System.out.println("JDK 8 ReentrantLock 的公平 / 非公平 tryAcquire（源码原文）：");
+        System.out.println("Sync.nonfairTryAcquire —— 不查前驱，可以插队：");
+        System.out.println("final boolean nonfairTryAcquire(int acquires) {\n"
+                + "    final Thread current = Thread.currentThread();\n"
+                + "    int c = getState();\n"
+                + "    if (c == 0) {\n"
+                + "        if (compareAndSetState(0, acquires)) {\n"
+                + "            setExclusiveOwnerThread(current);\n"
+                + "            return true;\n"
+                + "        }\n"
+                + "    }\n"
+                + "    else if (current == getExclusiveOwnerThread()) {\n"
+                + "        int nextc = c + acquires;\n"
+                + "        if (nextc < 0) // overflow\n"
+                + "            throw new Error(\"Maximum lock count exceeded\");\n"
+                + "        setState(nextc);\n"
+                + "        return true;\n"
+                + "    }\n"
+                + "    return false;\n"
+                + "}");
+        System.out.println("FairSync.tryAcquire —— 用 hasQueuedPredecessors() 挡住插队：");
+        System.out.println("protected final boolean tryAcquire(int acquires) {\n"
+                + "    final Thread current = Thread.currentThread();\n"
+                + "    int c = getState();\n"
+                + "    if (c == 0) {\n"
+                + "        if (!hasQueuedPredecessors() &&\n"
+                + "            compareAndSetState(0, acquires)) {\n"
+                + "            setExclusiveOwnerThread(current);\n"
+                + "            return true;\n"
+                + "        }\n"
+                + "    }\n"
+                + "    else if (current == getExclusiveOwnerThread()) {\n"
+                + "        int nextc = c + acquires;\n"
+                + "        if (nextc < 0)\n"
+                + "            throw new Error(\"Maximum lock count exceeded\");\n"
+                + "        setState(nextc);\n"
+                + "        return true;\n"
+                + "    }\n"
+                + "    return false;\n"
+                + "}");
+        System.out.println("hasQueuedPredecessors()（AQS.java）：");
+        System.out.println("public final boolean hasQueuedPredecessors() {\n"
+                + "    Node t = tail;\n"
+                + "    Node h = head;\n"
+                + "    Node s;\n"
+                + "    return h != t &&\n"
+                + "        ((s = h.next) == null || s.thread != Thread.currentThread());\n"
+                + "}");
         System.out.println("含义：队列中排在我前面、并且自己又不是队首的线程存在吗？存在的话我必须排队，不能插队。");
 
         // 4.1 插队实验：主线程持锁，A 线程排队，主线程释放后立刻重抢
@@ -469,7 +517,7 @@ public class L03AqsQueueLab {
         // 等 A 真正进入等待队列
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
         while (!lock.hasQueuedThreads() && System.nanoTime() < deadline) {
-            Thread.onSpinWait();
+            Thread.yield();
         }
 
         lock.unlock();      // 释放锁，A 被唤醒
@@ -639,8 +687,8 @@ public class L03AqsQueueLab {
         System.out.println(">> 面试点: Condition 的 await 会「原子地」释放锁并进入条件队列，"
                 + "signal 把一个等待者搬回同步队列；等待条件必须用 while 循环判断（防止虚假唤醒）；"
                 + "await 期间被中断会抛 InterruptedException；"
-                + "若中断发生在该线程已被 signal 之后，JDK 17 走的是另一个分支——"
-                + "重新设置中断标志而不是抛异常（见上文 [8] await() 的中断处理分支）。");
+                + "若中断发生在该线程已被 signal 之后，JDK 8 走的是 REINTERRUPT 分支——"
+                + "重新设置中断标志而不是抛异常（见上文 [7] await() 的中断处理）。");
     }
 
     // ------------------------------------------------------------------
@@ -648,38 +696,29 @@ public class L03AqsQueueLab {
     // ------------------------------------------------------------------
 
     private static void step6_nodeStatus() throws Exception {
-        System.out.println("=== 实验6: AQS 队列节点的状态流转——JDK 17 用 Node.status 位图，JDK 8 特有（JDK 11 同）用 waitStatus 枚举 ===");
+        System.out.println("=== 实验6: AQS 队列节点的状态流转——JDK 8 用 Node.waitStatus 四值枚举 ===");
 
-        System.out.println("【JDK 17】节点状态位（AQS.java 第 448-451 行，原文）：");
-        System.out.println("""
-                    // Node status bits, also used as argument and return values
-                    static final int WAITING   = 1;          // must be 1
-                    static final int CANCELLED = 0x80000000; // must be negative
-                    static final int COND      = 2;          // in a condition wait""");
-        System.out.println("JDK 17 的 Node 只有一个 volatile int status 字段（AQS.java 第 458 行），用位表示状态：");
-        System.out.println("  status & 1（WAITING）  → 该节点正在 park，等待被唤醒；被唤醒时 signalNext 用 getAndUnsetStatus(WAITING) 清掉这一位；");
-        System.out.println("  status & 2（COND）     → 该节点在条件队列里等待（enableWait 里置 COND | WAITING）；");
-        System.out.println("  status < 0（CANCELLED）→ 节点已取消（cancelAcquire 里置位），随后由 cleanQueue 把它从链上摘掉。");
-        System.out.println("JDK 17 没有 PROPAGATE 状态：共享模式的传播改由 signalNextIfShared(Node) 显式完成，"
-                + "在共享获取成功且成为队首时调用。");
+        System.out.println("【JDK 8】Node 的状态常量（AQS.java，原文）：");
+        System.out.println("static final int CANCELLED =  1;\n"
+                + "static final int SIGNAL    = -1;\n"
+                + "static final int CONDITION = -2;\n"
+                + "static final int PROPAGATE = -3;");
+        System.out.println("Node 用一个 volatile int waitStatus 字段记录状态：");
+        System.out.println("  CANCELLED = 1   → 节点已取消（超时 / 中断后放弃获取）；");
+        System.out.println("  SIGNAL    = -1  → 前驱承诺：后继 park 后需要被 unpark；");
+        System.out.println("  CONDITION = -2  → 节点在条件队列上等待（await）；");
+        System.out.println("  PROPAGATE = -3  → 共享模式下释放需要向后传播。");
+        System.out.println("  流转：入队时 waitStatus = 0；后继要 park 前，前驱把自己置为 SIGNAL；"
+                + "释放锁时 unparkSuccessor 把队首从负值 CAS 回 0 并 unpark 后继；"
+                + "取消时节点自身置 CANCELLED；条件队列上的节点为 CONDITION，signal 后转回同步队列并 CAS 回 0。");
+        System.out.println("注意：unparkSuccessor(Node) 是 AQS 的 private 方法，子类无法调用，"
+                + "唤醒统一由 AQS.release() 完成。");
 
-        System.out.println("\n【JDK 8 特有（JDK 17 已移除）】waitStatus 是四值枚举，"
-                + "仅作历史对照，不是 JDK 17 的实现：");
-        System.out.println("  CANCELLED = 1   → 节点已取消；");
-        System.out.println("  SIGNAL    = -1  → 后继节点需要被 unpark；");
-        System.out.println("  CONDITION = -2  → 节点在条件队列上等待；");
-        System.out.println("  PROPAGATE = -3  → 共享获取成功，需要向后传播唤醒。");
-        System.out.println("  流转：入队时 waitStatus = 0；前驱释放锁后置为 SIGNAL；被唤醒后由前驱（或后继）改成 0；"
-                + "取消时置为 CANCELLED；共享模式成功后置为 PROPAGATE。");
-        System.out.println("注意：JDK 8 特有（JDK 11 同）里 unparkSuccessor(Node) 是 AQS 的 private 方法，子类无法调用，"
-                + "唤醒统一由 AQS.release() 里的 signalNext(head) 完成——网上流传的「在 tryRelease 里调用 unparkSuccessor」"
-                + "的手写模板在 JDK 8 之后是编译不过的。");
-
-        // 实机观察：让一个线程在同步队列里 park，读出它的节点状态
+        // 实机观察：让一个线程在同步队列里 park，读出 head / tail 节点的 waitStatus
         if (!InternalField.available()) {
-            System.out.println("\n反射观察队列节点不可用（Unsafe 不可访问），跳过实机观察。");
+            System.out.println("\n反射观察队列节点不可用，跳过实机观察。");
         } else {
-            ReentrantLock lock = new ReentrantLock();
+            final ReentrantLock lock = new ReentrantLock();
             Object sync = InternalField.readObject(lock, ReentrantLock.class, "sync");
             Class<?> nodeClass = Class.forName("java.util.concurrent.locks.AbstractQueuedSynchronizer$Node");
 
@@ -693,40 +732,41 @@ public class L03AqsQueueLab {
             waiter.start();
             queued.await(5, TimeUnit.SECONDS);
 
-            int status = 0;
-            Object tail = null;
+            int headStatus = 0;
+            int tailStatus = 0;
             long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(3);
             do {
-                tail = InternalField.readObject(sync, AbstractQueuedSynchronizer.class, "tail");
-                if (tail != null) {
-                    status = InternalField.readInt(tail, nodeClass, "status");
-                    if (status != 0) {
-                        break;
-                    }
+                Object head = InternalField.readObject(sync, AbstractQueuedSynchronizer.class, "head");
+                Object tail = InternalField.readObject(sync, AbstractQueuedSynchronizer.class, "tail");
+                if (head != null) {
+                    headStatus = InternalField.readInt(head, nodeClass, "waitStatus");
                 }
-                Thread.onSpinWait();
+                if (tail != null) {
+                    tailStatus = InternalField.readInt(tail, nodeClass, "waitStatus");
+                }
+                if (headStatus == -1) {
+                    break;
+                }
+                Thread.yield();
             } while (System.nanoTime() < deadline);
 
-            System.out.println("\n实机观察：等待线程已进入同步队列，tail 节点的 status = " + status);
-            System.out.println("  status & 1（WAITING）  = " + ((status & 1) != 0) + "（期望 true：线程已 park 等待唤醒）");
-            System.out.println("  status & 2（COND）     = " + ((status & 2) != 0) + "（期望 false：它等的是锁，不是条件）");
-            System.out.println("  status < 0（CANCELLED）= " + (status < 0) + "（期望 false）");
-            check("排队中的节点带有 WAITING 位", Boolean.TRUE, (status & 1) != 0);
+            System.out.println("\n实机观察：等待线程已进入同步队列");
+            System.out.println("  head.waitStatus = " + headStatus + "（SIGNAL = -1：队首承诺唤醒后继）");
+            System.out.println("  tail.waitStatus = " + tailStatus + "（0：正常等待；1 表示已取消）");
+            check("队首已置 SIGNAL", -1, headStatus);
+            check("排队节点未被取消", Boolean.TRUE, tailStatus <= 0);
 
             lock.unlock();
             waiter.join(5000);
         }
 
-        System.out.println(">> 面试点: JDK 17 的 AQS 用「一个 int 状态位图」替代了 JDK 8 的 waitStatus 四值枚举，"
-                + "并把唤醒统一收敛到 signalNext(Node) + LockSupport.unpark；"
-                + "面试里如果被问到 waitStatus 的 SIGNAL/PROPAGATE 流转，要说明那是 JDK 8 特有的实现，"
-                + "JDK 17 已经换成了 status 位图。");
+        System.out.println(">> 面试点: JDK 8 的 AQS 用 waitStatus 四值枚举表达节点状态，"
+                + "唤醒入口是 release() → unparkSuccessor(Node)；"
+                + "面试时被问到 SIGNAL / PROPAGATE 的流转，要能说清「前驱置 SIGNAL，承诺唤醒后继」这条主线。");
 
-        System.out.println("\n【补充：JDK 17 没有偏向锁阶段】");
-        System.out.println("偏向锁是 JDK 6 引入、JDK 15 起废弃（JEP 374，默认禁用并废弃全部相关参数）、"
-                + "JDK 18 移除实现（JDK-8256425）的机制；JDK 19 起 UseBiasedLocking 直接是 Unrecognized VM option。");
-        System.out.println("因此现代 JDK（JDK 17 实验基线）的锁升级路径是「无锁 → 轻量级 → 重量级」，没有偏向阶段；"
-                + "「无锁 → 偏向 → 轻量级 → 重量级」四阶段说法是 JDK 8 特有的历史机制。");
+        System.out.println("\n【补充：JDK 8 的锁升级】");
+        System.out.println("偏向锁在 JDK 8 默认开启（启动后约 4s 生效，可用 -XX:-UseBiasedLocking 关闭）；");
+        System.out.println("锁升级路径是「无锁 → 偏向 → 轻量级 → 重量级」，验证见 Q04LockUpgradeLab。");
     }
 
     // ------------------------------------------------------------------
@@ -735,40 +775,27 @@ public class L03AqsQueueLab {
 
     /**
      * 读取 JDK 内部私有字段的工具。
-     * <p>JDK 9+ 的模块系统没有向未命名模块开放 java.base 的包，
-     * {@code Field.setAccessible(true)} 会抛 InaccessibleObjectException；
-     * 这里改用 jdk.unsupported 模块导出的 sun.misc.Unsafe 取字段偏移后直接读值，避开访问检查。
+     * <p>JDK 8 没有模块系统，{@code Field.setAccessible(true)} 后可以直接读取私有字段。
      */
     static final class InternalField {
-        private static final sun.misc.Unsafe UNSAFE;
-
-        static {
-            sun.misc.Unsafe u = null;
-            try {
-                java.lang.reflect.Field f = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
-                f.setAccessible(true);
-                u = (sun.misc.Unsafe) f.get(null);
-            } catch (Throwable ignored) {
-                // 取不到就保持为 null，下面的调用方会走「不可用」分支
-            }
-            UNSAFE = u;
-        }
 
         private InternalField() {
         }
 
         static boolean available() {
-            return UNSAFE != null;
+            return true;
         }
 
-        @SuppressWarnings("deprecation")
-        static int readInt(Object target, Class<?> owner, String field) throws Exception {
-            return UNSAFE.getInt(target, UNSAFE.objectFieldOffset(owner.getDeclaredField(field)));
+        static int readInt(Object target, Class<?> owner, String fieldName) throws Exception {
+            Field f = owner.getDeclaredField(fieldName);
+            f.setAccessible(true);
+            return f.getInt(target);
         }
 
-        @SuppressWarnings("deprecation")
-        static Object readObject(Object target, Class<?> owner, String field) throws Exception {
-            return UNSAFE.getObject(target, UNSAFE.objectFieldOffset(owner.getDeclaredField(field)));
+        static Object readObject(Object target, Class<?> owner, String fieldName) throws Exception {
+            Field f = owner.getDeclaredField(fieldName);
+            f.setAccessible(true);
+            return f.get(target);
         }
     }
 

@@ -3,6 +3,7 @@ package edu.zjnu.interview.kafka;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 
 /**
@@ -18,11 +19,11 @@ final class KafkaDemoEnv {
 
     static String get(String key, String defaultValue) {
         String value = System.getenv(key);
-        if (value != null && !value.isBlank()) {
+        if (value != null && !value.trim().isEmpty()) {
             return value;
         }
 
-        Path envFile = Path.of(".env");
+        Path envFile = Paths.get(".env");
         if (Files.isRegularFile(envFile)) {
             try {
                 List<String> lines = Files.readAllLines(envFile);

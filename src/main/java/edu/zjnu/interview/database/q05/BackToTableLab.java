@@ -156,7 +156,7 @@ public class BackToTableLab {
         };
 
         System.out.printf("%-40s %15s %20s%n", "SQL", "耗时 (ms)", "说明");
-        System.out.println("─".repeat(80));
+        System.out.println(repeat('─', 80));
         for (String[] s : scenarios) {
             String sql = s[0];
             String desc = s[1];
@@ -172,12 +172,21 @@ public class BackToTableLab {
             long avg = total / 3;
             System.out.printf("%-40s %15d %20s%n", truncate(sql, 40), avg, desc);
         }
-        System.out.println("─".repeat(80));
+        System.out.println(repeat('─', 80));
         System.out.println("(耗时因机器配置差异很大,本表重点看<b>相对比例</b>:");
         System.out.println(" 全表扫 vs 覆盖索引 通常是 5-50 倍差距,与 EXPLAIN 的 type 预测一致.)");
     }
 
     // ============== Helpers ==============
+    /** Java 8 没有 String.repeat, 用 StringBuilder 拼指定长度的分隔线 */
+    private static String repeat(char c, int n) {
+        StringBuilder sb = new StringBuilder(n);
+        for (int i = 0; i < n; i++) {
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
     private static void runExplainScenario(String title, String sql, String hint, String why) throws SQLException {
         System.out.println("\n========== " + title + " ==========");
         System.out.println("SQL: " + sql);
@@ -215,7 +224,7 @@ public class BackToTableLab {
         StringBuilder sep = new StringBuilder();
         for (int i = 0; i < n; i++) {
             System.out.printf("%-" + widths[i] + "s  ", cols[i]);
-            sep.append("─".repeat(widths[i] + 2));
+            sep.append(repeat('─', widths[i] + 2));
         }
         System.out.println();
         System.out.println(sep);
