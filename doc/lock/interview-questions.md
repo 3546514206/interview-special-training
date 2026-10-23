@@ -578,6 +578,7 @@ public class Counter {
 
 - `CyclicBarrier` 不是 AQS 子类，它用 `ReentrantLock` + `Condition` 实现。
 - AQS 与 `synchronized` 是两条完全不同的路线：`synchronized` 由 JVM/C++ 的 monitor 实现，AQS 是纯 Java 的用户态队列。对应实验：Lab3 AQS。
+- **动手写一遍**：`src/main/java/edu/zjnu/interview/lock/q03/SimpleAqsStudy.java` 手写了简化版 AQS 骨架（`state` + 等待队列 + `acquire`/`release` 模板 + `park/unpark`）和一把基于它的简化版可重入锁（只多 `owner` 字段 + 持有计数）。读完源码再写一遍，答这题时讲得出「state 装什么、owner 存哪、唤醒后为什么还要重新抢锁」。
 
 **【追问】**
 - 为什么 `synchronized` 不做成 AQS？

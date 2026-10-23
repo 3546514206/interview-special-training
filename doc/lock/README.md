@@ -15,6 +15,7 @@
 | [diagrams/lock-map.html](./diagrams/lock-map.html) | 单机锁全景交互图（四象限分类 + 点选查看原理 / 源码入口 / 适用 / 坑） |
 | [diagrams/aqs-flow.html](./diagrams/aqs-flow.html) | AQS 获取释放流程交互图（独占 / 共享 / Condition 三条路径可切换高亮） |
 | `src/main/java/edu/zjnu/interview/lock/` | 实验代码，按 `q<NN>/L<NN><Name>Lab.java` 组织，7 个实验对应 7 个可运行入口 |
+| `src/main/java/edu/zjnu/interview/lock/q03/SimpleAqsStudy.java` | **附加动手篇**：简化版 AQS 骨架 + 简化版可重入锁（自己手写一遍，注释讲原理） |
 
 ## 一张图
 

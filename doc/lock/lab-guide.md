@@ -61,6 +61,7 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.qXX.L0X...Lab
 | Lab 5 | 读写锁 | **LK29**、LK30、LK31、LK32 |
 | Lab 6 | StampedLock | **LK33**、LK34、LK35、LK36 |
 | Lab 7 | 锁选型基准 | LK18、**LK40** |
+| 附加 | 简化版 AQS 与可重入锁（动手写） | LK19、LK20、LK22、LK23、LK26 |
 
 对应 [README.md 推荐学习路线](./README.md#推荐学习路线) 的阶段划分：Lab 1–2 属阶段 1/3，Lab 3/5 属阶段 4（重心），Lab 4/6/7 属阶段 5。
 
@@ -499,6 +500,79 @@ signalAll 后被唤醒的等待者数量 = 3 / 3（期望 3）
 - **Condition 队列和同步队列的区别？**（LK25）——条件队列每个 `Condition` 一条、单向链、只放 `await` 的线程；同步队列是 CLH 双向队列、竞争锁。JDK 17 把条件队列节点拆成独立的 `ConditionNode`。
 - **公平锁和非公平锁差在哪？**（LK27、LK28）——只差 `hasQueuedPredecessors()` 这一个判断。公平锁每次获取都要查队列、每次释放都要唤醒队首，吞吐更低；非公平锁允许 barging，有饥饿风险。
 - **默认用哪个？**——默认非公平；只有观察到长期饥饿才改公平。
+
+### 附加 · 自己动手写一遍简化版 AQS 与简化版可重入锁
+
+**代码**：`src/main/java/edu/zjnu/interview/lock/q03/SimpleAqsStudy.java`
+
+> Lab 3 是**读源码**——把 JDK 的实现摊开给你看。附加篇是**动手写**——把 AQS 的骨架缩到最小自己敲一遍。
+> 两者互补：只读源码，面试问到「AQS 到底做了什么」时你只能背名词；只写代码，不读源码则不知道 JDK 在哪几处做了加强。
+
+**运行命令**
+
+```bash
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
+mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q03.SimpleAqsStudy
+```
+
+**文件只有两个类**
+
+| 类 | 做了什么 | 对应面试题 |
+|---|---|---|
+| `SimpleAqs` | 手写 AQS 骨架：`volatile int state` + 等待队列 + `acquire`/`release` 模板方法 + `LockSupport.park/unpark`。子类的 `tryAcquire` / `tryRelease` 是两个填空 | LK19、LK22、LK23 |
+| `SimpleReentrantLock` | 在骨架上加 `owner` 字段 + 持有计数，得到可重入锁 | LK26 |
+
+**预期输出**（7 条 `[PASS]`，全部为**【确定值】**）
+
+```text
+=== 演示一: 互斥与可重入 ===
+同线程连续加锁 3 次后持有计数 = 3（期望 3） => [PASS] 可重入
+全部解锁后持有计数 = 0（期望 0） => [PASS] 计数正确
+非持有者解锁 => [PASS] 抛 IllegalMonitorStateException
+8 线程各加锁 1 万次，期望计数 = 80000，实际 = 80000 => [PASS] 无丢失更新
+临界区同时进入的最大线程数 = 1（期望 1） => [PASS] 互斥成立
+>> 要点: 互斥的来源只有一处——tryAcquire 里那次 CAS；
+   可重入 = owner 字段 + 持有计数，框架部分一行没改。
+
+=== 演示二: 阻塞与唤醒 ===
+A 持锁期间 B 的状态 = WAITING（期望 WAITING，即被 park 挂起） => [PASS] 阻塞挂起
+此刻队列中等待的线程数 = 1（期望 1）
+A 释放后 B 拿到锁，进入顺序计数 = 2（期望 2） => [PASS] 释放唤醒后继
+>> 要点: 被唤醒的线程必须重新 CAS 抢锁——
+   唤醒只代表「可能有机会了」，不保证锁还空着。
+```
+
+**验证点**
+
+1. 互斥的来源只有一处——`tryAcquire` 里那次 CAS。排队、阻塞、唤醒都是抢不到之后的兜底，不是互斥的前提。
+2. 可重入相对互斥只多两处（`owner` + 计数），**排队、阻塞、唤醒的逻辑一行没改**，因为那些是框架的事。这正是 AQS 把「锁的语义」和「并发控制机制」切开的设计价值。
+3. 被唤醒的线程必须**重新 CAS 抢锁**——唤醒只代表「可能有机会了」，不保证锁空着。
+
+**一个自己写才会踩的坑（已在本文件修好，值得记）**
+
+释放时**必须先清 `owner`、再放 `state`**：
+
+```java
+if (c == 0) owner = null;   // 先清持有者
+setState(c);                // 再放状态（放状态的瞬间别人才能抢）
+```
+
+若反着来（先 `setState(0)` 再 `owner = null`），别的线程可能在这两步之间抢到锁并把 `owner` 写成自己，
+随后那句 `owner = null` 就把「新主人」的持有者记录抹掉——它解锁时误判自己不是持有者，
+状态再也归不了零，**锁就此永久卡死**。JDK 的 `ReentrantLock` 用的就是这个顺序。
+
+**这份简化版刻意砍掉了什么**（与 JDK 真实实现的差异，读源码时会遇到但这里没有）
+
+| 砍掉的 | 后果 |
+|---|---|
+| 共享模式（`acquireShared` / `tryAcquireShared`） | 队列只服务独占锁；JDK 的 AQS 还要支撑读写锁、信号量、闭锁 |
+| 公平 / 非公平之分 | 简化版统一按 FIFO，相当于公平锁；JDK 用 `hasQueuedPredecessors()` 决定是否让排队者先走 |
+| 取消队列节点（CANCELLED） | 线程被中断后无法从队列中摘除；JDK 有 `cancelAcquire` 处理 |
+| 中断响应与超时获取 | 简化版不抛 `InterruptedException`，也没有 `tryLock(timeout)` |
+| 状态位图 | JDK 17 用 `Node.status` 位图（`WAITING`/`COND`/`CANCELLED`）；简化版沿用 JDK 8 语义（一个 int 装重入次数），因为可重入只需要计数 |
+
+> 简化版用 `AtomicIntegerFieldUpdater` 实现 CAS，**不用 `sun.misc.Unsafe`**（JDK 17 的模块封装也不允许直接反射 `java.util.concurrent.locks` 包的私有字段）。
+> 讲给面试官时可以直接说明：CAS 原语用哪种实现不影响锁的语义，AQS 自己也是用 `Unsafe` 做同一件事。
 
 ---
 
