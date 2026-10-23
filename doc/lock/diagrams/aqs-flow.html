@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AQS 获取 / 释放流程 · 独占与共享模式 · Condition 转移</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+                 "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+    background: #020617;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 2rem;
+    line-height: 1.7;
+  }
+
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  .container { max-width: 1320px; margin: 0 auto; }
+
+  .header { margin-bottom: 1.4rem; }
+  .header-row { display: flex; align-items: center; gap: .75rem; margin-bottom: .4rem; flex-wrap: wrap; }
+  .pulse-dot {
+    width: 10px; height: 10px; background: #fbbf24; border-radius: 50%;
+    animation: pulse 2s infinite; flex-shrink: 0;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+  h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: -.02em; }
+  .subtitle { color: #94a3b8; font-size: .82rem; max-width: 920px; }
+  .subtitle strong { color: #cbd5e1; font-weight: 600; }
+
+  /* ---------- 模式切换 ---------- */
+  .modes { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1rem; }
+  .mode-btn {
+    font-family: inherit;
+    font-size: .78rem;
+    color: #94a3b8;
+    background: rgba(15,23,42,.7);
+    border: 1px solid #334155;
+    border-radius: .5rem;
+    padding: .42rem .85rem;
+    cursor: pointer;
+    transition: all .16s ease;
+  }
+  .mode-btn:hover { color: #e2e8f0; border-color: #475569; }
+  .mode-btn.active {
+    color: #0b1220;
+    background: var(--mc, #fbbf24);
+    border-color: var(--mc, #fbbf24);
+    font-weight: 600;
+  }
+  .mode-btn:focus-visible { outline: 2px solid #7dd3fc; outline-offset: 2px; }
+
+  /* ---------- 布局 ---------- */
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    gap: 1.2rem;
+    align-items: start;
+  }
+  @media (max-width: 1000px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    .detail { position: static !important; }
+  }
+
+  .panel {
+    background: rgba(15,23,42,.55);
+    border: 1px solid #1e293b;
+    border-radius: .85rem;
+    padding: 1.1rem 1.2rem;
+  }
+
+  .svg-wrap { overflow-x: auto; }
+  .flow-svg { width: 100%; min-width: 900px; height: auto; display: block; }
+
+  /* ---------- SVG 状态 ---------- */
+  .zone {
+    fill: rgba(30,41,59,.28);
+    stroke: #334155;
+    stroke-width: 1;
+    stroke-dasharray: 7,5;
+  }
+  .zone-lbl { font-size: 12px; fill: #64748b; font-weight: 600; letter-spacing: .08em; }
+
+  .node { cursor: pointer; transition: opacity .22s ease; }
+  .node.dim { opacity: .22; }
+  .node .box {
+    fill: rgba(15,23,42,.95);
+    stroke: #475569;
+    stroke-width: 1.4;
+    transition: stroke .22s ease, stroke-width .22s ease, filter .22s ease;
+  }
+  .node:hover .box { stroke: #94a3b8; stroke-width: 2; }
+  .node.sel .box {
+    stroke-width: 2.4;
+    filter: drop-shadow(0 0 8px rgba(255,255,255,.28));
+  }
+  .node .ntitle { font-size: 12.5px; font-weight: 600; fill: #e2e8f0; }
+  .node .nsub   { font-size: 10px; fill: #64748b; }
+  .node.excl .box { stroke: #fbbf24; }
+  .node.shared .box { stroke: #22d3ee; }
+  .node.cond .box { stroke: #a78bfa; }
+  .node.core .box { stroke: #34d399; }
+  .node.excl.sel .box, .node.shared.sel .box, .node.cond.sel .box, .node.core.sel .box {
+    stroke: #f1f5f9; stroke-width: 2.6;
+  }
+  .node.excl .ntitle { fill: #fcd34d; }
+  .node.shared .ntitle { fill: #67e8f9; }
+  .node.cond .ntitle { fill: #c4b5fd; }
+  .node.core .ntitle { fill: #6ee7b7; }
+
+  .edge {
+    fill: none;
+    stroke-width: 1.3;
+    transition: opacity .22s ease, stroke .22s ease, stroke-width .22s ease;
+  }
+  .edge.excl   { stroke: rgba(251,191,36,.28);  marker-end: url(#a-amber-dim); }
+  .edge.shared { stroke: rgba(34,211,238,.28);  marker-end: url(#a-cyan-dim); }
+  .edge.cond   { stroke: rgba(167,139,250,.28); marker-end: url(#a-violet-dim); }
+  .edge.on { opacity: 1; stroke-width: 1.9; }
+  .edge.excl.on   { stroke: #fbbf24; marker-end: url(#a-amber); }
+  .edge.shared.on { stroke: #22d3ee; marker-end: url(#a-cyan); }
+  .edge.cond.on   { stroke: #a78bfa; marker-end: url(#a-violet); }
+
+  .edge-label { font-size: 10px; fill: #64748b; opacity: .55; transition: opacity .22s ease; }
+  .edge-label.on { opacity: 1; fill: #cbd5e1; }
+
+  /* ---------- 详情面板 ---------- */
+  .detail { position: sticky; top: 1.2rem; }
+  .detail-head { border-bottom: 1px solid #1e293b; padding-bottom: .7rem; margin-bottom: .85rem; }
+  .detail-name {
+    font-size: 1rem; font-weight: 700; color: #f1f5f9;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    overflow-wrap: anywhere;
+  }
+  .detail-role { font-size: .72rem; color: #64748b; margin-top: .25rem; }
+
+  .dsection { margin-bottom: .9rem; }
+  .dsection h3 {
+    font-size: .68rem; color: #64748b; letter-spacing: .1em;
+    text-transform: uppercase; font-weight: 700; margin-bottom: .35rem;
+  }
+  .dsection p, .dsection li { font-size: .79rem; color: #cbd5e1; }
+  .dsection ul { list-style: none; }
+  .dsection li { padding-left: .9rem; position: relative; margin-bottom: .3rem; }
+  .dsection li::before {
+    content: ""; position: absolute; left: 0; top: .58em;
+    width: 4px; height: 4px; border-radius: 50%; background: var(--nc, #64748b);
+  }
+  .dsection p code, .dsection li code {
+    font-size: .94em; color: #7dd3fc;
+    background: rgba(8,47,73,.4); padding: .05rem .3rem; border-radius: .25rem;
+    overflow-wrap: anywhere;
+  }
+  .d-note h3 { color: #fb7185; }
+  .d-note p, .d-note li { color: #fda4af; }
+
+  .mode-summary {
+    font-size: .78rem; color: #cbd5e1;
+    background: rgba(30,41,59,.45);
+    border: 1px solid #1e293b;
+    border-left: 3px solid var(--mc, #fbbf24);
+    border-radius: 0 .4rem .4rem 0;
+    padding: .6rem .8rem;
+    margin-bottom: .9rem;
+  }
+  .mode-summary strong { color: #f1f5f9; }
+
+  .footer { margin-top: 1.3rem; text-align: center; color: #475569; font-size: .72rem; }
+  .caption {
+    margin-top: .8rem; font-size: .74rem; color: #94a3b8; line-height: 1.75;
+    border-left: 2px solid #1e293b; padding-left: .7rem;
+  }
+  .caption code { color: #7dd3fc; font-size: .94em; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <div class="header-row">
+      <span class="pulse-dot"></span>
+      <h1>AQS 获取 / 释放流程 · 独占与共享模式 · Condition 转移</h1>
+    </div>
+    <p class="subtitle">
+      <code>AbstractQueuedSynchronizer</code> 的完整状态机。<strong>切换模式</strong>查看三条路径的高亮，
+      <strong>点击流程节点</strong>查看该步骤的职责与边界。
+    </p>
+  </div>
+
+  <div class="modes" id="modes"></div>
+
+  <div class="layout">
+    <div class="panel">
+      <div class="svg-wrap">
+        <svg class="flow-svg" viewBox="0 0 1100 510" role="img" aria-label="AQS 获取释放流程图">
+          <defs>
+            <marker id="a-amber" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+              <polygon points="0 0, 9 3.5, 0 7" fill="#fbbf24"/>
+            </marker>
+            <marker id="a-amber-dim" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+              <polygon points="0 0, 9 3.5, 0 7" fill="rgba(251,191,36,.35)"/>
+            </marker>
+            <marker id="a-cyan" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+              <polygon points="0 0, 9 3.5, 0 7" fill="#22d3ee"/>
+            </marker>
+            <marker id="a-cyan-dim" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+              <polygon points="0 0, 9 3.5, 0 7" fill="rgba(34,211,238,.35)"/>
+            </marker>
+            <marker id="a-violet" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+              <polygon points="0 0, 9 3.5, 0 7" fill="#a78bfa"/>
+            </marker>
+            <marker id="a-violet-dim" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+              <polygon points="0 0, 9 3.5, 0 7" fill="rgba(167,139,250,.35)"/>
+            </marker>
+          </defs>
+
+          <!-- ============ 区域底框 ============ -->
+          <rect class="zone" x="16" y="26" width="1068" height="220" rx="10"/>
+          <text class="zone-lbl" x="34" y="48">同步队列 · 独占模式</text>
+
+          <rect class="zone" x="16" y="252" width="1068" height="110" rx="10"/>
+          <text class="zone-lbl" x="34" y="274">同步队列 · 共享（读）模式</text>
+
+          <rect class="zone" x="16" y="378" width="1068" height="110" rx="10"/>
+          <text class="zone-lbl" x="34" y="400">条件队列 · 与同步队列的转移</text>
+
+          <!-- ============ 独占模式：第一行（获取） ============ -->
+          <g class="node excl" id="n-lock">
+            <rect class="box" x="36" y="64" width="140" height="56" rx="7"/>
+            <text class="ntitle" x="106" y="92" text-anchor="middle">lock()</text>
+            <text class="nsub" x="106" y="110" text-anchor="middle">独占入口</text>
+          </g>
+          <g class="node excl" id="n-tryAcquire">
+            <rect class="box" x="216" y="64" width="170" height="56" rx="7"/>
+            <text class="ntitle" x="301" y="92" text-anchor="middle">tryAcquire()</text>
+            <text class="nsub" x="301" y="110" text-anchor="middle">CAS state</text>
+          </g>
+          <g class="node excl" id="n-addWaiter">
+            <rect class="box" x="426" y="64" width="170" height="56" rx="7"/>
+            <text class="ntitle" x="511" y="92" text-anchor="middle">addWaiter()</text>
+            <text class="nsub" x="511" y="110" text-anchor="middle">入队</text>
+          </g>
+          <g class="node excl" id="n-acquireQueued">
+            <rect class="box" x="636" y="64" width="200" height="56" rx="7"/>
+            <text class="ntitle" x="736" y="92" text-anchor="middle">acquireQueued()</text>
+            <text class="nsub" x="736" y="110" text-anchor="middle">自旋 / 前驱</text>
+          </g>
+
+          <!-- ============ 独占模式：第二行（释放） ============ -->
+          <g class="node excl" id="n-unlock">
+            <rect class="box" x="36" y="176" width="140" height="56" rx="7"/>
+            <text class="ntitle" x="106" y="204" text-anchor="middle">unlock()</text>
+            <text class="nsub" x="106" y="222" text-anchor="middle">释放入口</text>
+          </g>
+          <g class="node excl" id="n-tryRelease">
+            <rect class="box" x="216" y="176" width="170" height="56" rx="7"/>
+            <text class="ntitle" x="301" y="204" text-anchor="middle">tryRelease()</text>
+            <text class="nsub" x="301" y="222" text-anchor="middle">state --</text>
+          </g>
+          <g class="node excl" id="n-unparkSuccessor">
+            <rect class="box" x="426" y="176" width="170" height="56" rx="7"/>
+            <text class="ntitle" x="511" y="204" text-anchor="middle">unparkSuccessor</text>
+            <text class="nsub" x="511" y="222" text-anchor="middle">唤醒后继</text>
+          </g>
+          <g class="node excl" id="n-park">
+            <rect class="box" x="636" y="176" width="200" height="56" rx="7"/>
+            <text class="ntitle" x="736" y="204" text-anchor="middle">park()</text>
+            <text class="nsub" x="736" y="222" text-anchor="middle">阻塞</text>
+          </g>
+
+          <!-- ============ 共享模式 ============ -->
+          <g class="node shared" id="n-lockShared">
+            <rect class="box" x="36" y="282" width="160" height="56" rx="7"/>
+            <text class="ntitle" x="116" y="310" text-anchor="middle">lockShared()</text>
+            <text class="nsub" x="116" y="328" text-anchor="middle">共享入口</text>
+          </g>
+          <g class="node shared" id="n-tryAcquireShared">
+            <rect class="box" x="236" y="282" width="190" height="56" rx="7"/>
+            <text class="ntitle" x="331" y="310" text-anchor="middle">tryAcquireShared()</text>
+            <text class="nsub" x="331" y="328" text-anchor="middle">读计数 ++</text>
+          </g>
+          <g class="node shared" id="n-propagate">
+            <rect class="box" x="466" y="282" width="200" height="56" rx="7"/>
+            <text class="ntitle" x="566" y="310" text-anchor="middle">setHeadAndPropagate()</text>
+            <text class="nsub" x="566" y="328" text-anchor="middle">传播唤醒</text>
+          </g>
+          <g class="node shared" id="n-nextReader">
+            <rect class="box" x="706" y="282" width="170" height="56" rx="7"/>
+            <text class="ntitle" x="791" y="310" text-anchor="middle">后继读者</text>
+            <text class="nsub" x="791" y="328" text-anchor="middle">共享唤醒</text>
+          </g>
+
+          <!-- ============ Condition 路径 ============ -->
+          <g class="node cond" id="n-await">
+            <rect class="box" x="36" y="410" width="150" height="56" rx="7"/>
+            <text class="ntitle" x="111" y="438" text-anchor="middle">await()</text>
+            <text class="nsub" x="111" y="456" text-anchor="middle">完全释放锁</text>
+          </g>
+          <g class="node cond" id="n-condQueue">
+            <rect class="box" x="226" y="410" width="170" height="56" rx="7"/>
+            <text class="ntitle" x="311" y="438" text-anchor="middle">条件队列</text>
+            <text class="nsub" x="311" y="456" text-anchor="middle">await 队列</text>
+          </g>
+          <g class="node cond" id="n-signal">
+            <rect class="box" x="436" y="410" width="150" height="56" rx="7"/>
+            <text class="ntitle" x="511" y="438" text-anchor="middle">signal()</text>
+            <text class="nsub" x="511" y="456" text-anchor="middle">转移节点</text>
+          </g>
+          <g class="node cond" id="n-transfer">
+            <rect class="box" x="626" y="410" width="210" height="56" rx="7"/>
+            <text class="ntitle" x="731" y="438" text-anchor="middle">transferAfterWait</text>
+            <text class="nsub" x="731" y="456" text-anchor="middle">入同步队列尾部</text>
+          </g>
+          <g class="node cond" id="n-reacquire">
+            <rect class="box" x="876" y="410" width="170" height="56" rx="7"/>
+            <text class="ntitle" x="961" y="438" text-anchor="middle">重获锁</text>
+            <text class="nsub" x="961" y="456" text-anchor="middle">返回 await</text>
+          </g>
+
+          <!-- ============ 连线 ============ -->
+          <path class="edge excl" id="e-lock-try"      d="M 176 92 L 212 92"/>
+          <path class="edge excl" id="e-try-add"      d="M 386 92 L 422 92"/>
+          <path class="edge excl" id="e-add-aq"       d="M 596 92 L 632 92"/>
+          <path class="edge excl" id="e-aq-park"      d="M 736 120 L 736 172"/>
+          <path class="edge excl" id="e-unlock-rel"   d="M 176 204 L 212 204"/>
+          <path class="edge excl" id="e-rel-unpark"   d="M 386 204 L 422 204"/>
+          <path class="edge excl" id="e-unpark-aq"    d="M 596 204 L 610 204 L 610 92 L 632 92"/>
+
+          <path class="edge shared" id="e-shared-try"    d="M 196 310 L 232 310"/>
+          <path class="edge shared" id="e-shared-prop"   d="M 426 310 L 462 310"/>
+          <path class="edge shared" id="e-shared-next"   d="M 666 310 L 702 310"/>
+          <path class="edge shared" id="e-shared-join"   d="M 331 282 L 331 140 L 460 140 L 460 124"/>
+          <path class="edge shared" id="e-shared-rejoin" d="M 876 310 L 892 310 L 892 110 L 840 110"/>
+
+          <path class="edge cond" id="e-await-cond"  d="M 186 438 L 222 438"/>
+          <path class="edge cond" id="e-cond-signal" d="M 396 438 L 432 438"/>
+          <path class="edge cond" id="e-signal-tr"   d="M 586 438 L 622 438"/>
+          <path class="edge cond" id="e-tr-reacq"    d="M 836 438 L 872 438"/>
+          <path class="edge cond" id="e-tr-queue"    d="M 800 410 L 800 370 L 940 370 L 940 80 L 840 80"/>
+
+          <!-- 边标注（短标签） -->
+          <text class="edge-label" id="l-fail"  x="404" y="82"  text-anchor="middle">失败</text>
+          <text class="edge-label" id="l-block" x="760" y="150" text-anchor="start">阻塞</text>
+          <text class="edge-label" id="l-wake"  x="618" y="140" text-anchor="start">唤醒后重试</text>
+          <text class="edge-label" id="l-join"  x="392" y="132" text-anchor="middle">入队</text>
+          <text class="edge-label" id="l-prop"  x="684" y="300" text-anchor="middle">传播</text>
+          <text class="edge-label" id="l-queue" x="948" y="210" text-anchor="start">转入同步队列</text>
+        </svg>
+      </div>
+      <p class="caption">
+        图中连线只画出「失败路径」；<code>tryAcquire</code> / <code>tryAcquireShared</code> 一次 CAS 成功即直接获得锁并进入临界区，不经过队列。
+        独占模式下被唤醒的线程回到 <code>acquireQueued</code> 重新竞争；共享模式沿 <code>setHeadAndPropagate</code> 的传播链连续唤醒读者。
+      </p>
+    </div>
+
+    <div class="panel detail" id="detail">
+      <div class="mode-summary" id="mode-summary"></div>
+      <div class="detail-head">
+        <div class="detail-name" id="d-name">—</div>
+        <div class="detail-role" id="d-role"></div>
+      </div>
+      <div class="dsection">
+        <h3>职责</h3>
+        <div id="d-duty"></div>
+      </div>
+      <div class="dsection">
+        <h3>关键点</h3>
+        <div id="d-key"></div>
+      </div>
+      <div class="dsection d-note">
+        <h3>边界与注意</h3>
+        <div id="d-note"></div>
+      </div>
+    </div>
+  </div>
+
+  <p class="footer">AQS 流程交互图 · 切换模式高亮路径 · 点击节点查看细节</p>
+</div>
+
+<script>
+  /* ============ 节点说明 ============ */
+  const NODES = {
+    "n-lock": {
+      title: "lock()", role: "独占获取入口 · AbstractQueuedSynchronizer 模板方法",
+      cls: "excl",
+      duty: [
+        "调用 <code>acquire(1)</code>，把「获取锁」委托给模板方法序列：<code>tryAcquire</code> → <code>acquire</code> → <code>addWaiter</code> → <code>acquireQueued</code>。"
+      ],
+      key: [
+        "模板方法 <code>acquire</code> 固定了「先尝试、再入队、最后阻塞」的骨架，子类只实现 <code>tryAcquire</code> / <code>tryRelease</code>。",
+        "传入的参数 <code>arg</code> 是状态位的增量，独占模式为 1。"
+      ],
+      note: [
+        "独占模式同一时刻只有一个线程持有 <code>state</code>。"
+      ]
+    },
+    "n-tryAcquire": {
+      title: "tryAcquire()", role: "子类实现 · CAS 尝试一次",
+      cls: "excl",
+      duty: [
+        "子类覆写的方法：用 CAS 把 <code>state</code> 从 0 改为 1（重入时改为加一），成功则记录持有线程并返回 true。"
+      ],
+      key: [
+        "CAS 保证「只有一个线程」能把 state 从 0 改掉，这是整个独占语义的起点。",
+        "重入时由持有线程自己执行 state 加一，因此天然可重入。",
+        "非公平模式下允许刚释放锁的线程直接抢到 state，这就是「插队」。"
+      ],
+      note: [
+        "该方法只尝试一次，失败不代表加锁失败，后续由 <code>acquire</code> 接管入队逻辑。",
+        "公平模式的实现会额外检查队列中是否有更早的等待者。"
+      ]
+    },
+    "n-addWaiter": {
+      title: "addWaiter()", role: "AQS 内部 · 把当前线程挂进同步队列",
+      cls: "excl",
+      duty: [
+        "创建一个包装当前线程的 <code>Node</code>，用 CAS 把队尾指针指向它，并维护 prev / next 指针，把节点挂到同步队列尾部。"
+      ],
+      key: [
+        "AQS 的同步队列是 CLH 变体的双向队列，队首有一个哑节点（dummy head），前驱节点负责在释放时唤醒自己。",
+        "入队后线程的前驱通常处于「等待中」状态，当前线程不会立刻被唤醒。",
+        "非公平模式下入队后仍会再尝试一次抢占，对应 <code>acquireQueued</code> 开头的重试逻辑。"
+      ],
+      note: [
+        "「队首哑节点」这一实现细节在不同 JDK 版本间基本稳定，但具体字段名与内部类命名随版本变化，需核实目标 JDK 源码。"
+      ]
+    },
+    "n-acquireQueued": {
+      title: "acquireQueued()", role: "AQS 内部 · 入队后的获取循环",
+      cls: "excl",
+      duty: [
+        "循环执行：若前驱已释放（<code>head.next == current</code>），则尝试 <code>tryAcquire</code> 抢占；成功则把自己设为队首，否则自旋若干次后 <code>park</code> 阻塞。"
+      ],
+      key: [
+        "「只有前驱释放锁才能唤醒我」是公平性的来源，避免了锁 barging。",
+        "自旋是有限次数的（与 CPU 核心数相关），超过阈值才 park，避免纯自旋烧 CPU。",
+        "被中断时不会立即退出，而是记录中断状态，等到获取到锁之后再抛出或由调用方处理。"
+      ],
+      note: [
+        "<code>acquireQueued</code> 只处理独占模式；共享模式有对应的 <code>acquireShared</code> / <code>acquireSharedInterruptibly</code> 变体。"
+      ]
+    },
+    "n-park": {
+      title: "park()", role: "阻塞点 · 挂起线程",
+      cls: "excl",
+      duty: [
+        "线程在此挂起，等待前驱节点释放锁后调用 <code>unpark</code> 唤醒。"
+      ],
+      key: [
+        "底层是 <code>LockSupport.park</code>，唤醒信号用「许可」模型传递，不会丢失。",
+        "park 期间线程不占用 CPU。"
+      ],
+      note: [
+        "许可最多为 1：连续多次 unpark 不会累积成多次唤醒。"
+      ]
+    },
+    "n-tryRelease": {
+      title: "tryRelease()", role: "子类实现 · 释放并判断是否彻底释放",
+      cls: "excl",
+      duty: [
+        "把 <code>state</code> 减一；减到 0 时清空持有线程记录并返回 true。"
+      ],
+      key: [
+        "重入场景下只有 state 归零才算真正释放锁，释放动作被推迟到最后一层重入退出时。"
+      ],
+      note: [
+        "非持有线程调用 release 会抛 <code>IllegalMonitorStateException</code>，这是锁的使用约束而非释放失败。"
+      ]
+    },
+    "n-unlock": {
+      title: "unlock()", role: "独占释放入口",
+      cls: "excl",
+      duty: [
+        "调用 <code>release(1)</code>，触发 <code>tryRelease</code>；若彻底释放，则继续唤醒后继节点。"
+      ],
+      key: [
+        "释放与唤醒是两步：先改 state，再唤醒后继，顺序不能颠倒。"
+      ],
+      note: [
+        "unlock 与 lock 必须成对出现在 try/finally 中。"
+      ]
+    },
+    "n-unparkSuccessor": {
+      title: "unparkSuccessor()", role: "AQS 内部 · 唤醒队首有效节点",
+      cls: "excl",
+      duty: [
+        "找到队首之后的第一个有效等待节点，对其调用 <code>unpark</code>，并把队首指针推进。"
+      ],
+      key: [
+        "唤醒的是「后继」而不是「所有等待者」，这是独占模式下严格串行化的来源。",
+        "取消（cancel）的节点会被跳过，因此同步队列中可能出现已取消的节点残留。"
+      ],
+      note: [
+        "具体唤醒策略在 JDK 版本间有调整（如取消节点的处理），需核实目标 JDK 源码。"
+      ]
+    },
+    "n-lockShared": {
+      title: "lockShared()", role: "共享获取入口",
+      cls: "shared",
+      duty: [
+        "调用 <code>acquireShared(1)</code>，进入共享模式的模板方法。"
+      ],
+      key: [
+        "共享模式允许「读锁计数」大于 1，多个读线程可同时持有。"
+      ],
+      note: [
+        "共享模式不提供独占语义，若子类未覆写共享方法则会抛 <code>UnsupportedOperationException</code>。"
+      ]
+    },
+    "n-tryAcquireShared": {
+      title: "tryAcquireShared()", role: "子类实现 · 尝试增加读计数",
+      cls: "shared",
+      duty: [
+        "在没有写者占用时通过 CAS 增加读计数；若有写者则返回负值表示获取失败。"
+      ],
+      key: [
+        "返回值语义：大于 0 表示获取成功并可继续传播唤醒，等于 0 表示获取成功但不再传播，小于 0 表示失败。"
+      ],
+      note: [
+        "「返回 0 不再传播」这一约定是共享模式可实现写者优先的基础，需核实具体子类的实现选择。"
+      ]
+    },
+    "n-propagate": {
+      title: "setHeadAndPropagate()", role: "AQS 内部 · 设置队首并向后传播",
+      cls: "shared",
+      duty: [
+        "获取成功的读线程成为新的队首，并检查其后继：若后继也是共享模式的等待者，则继续唤醒，形成「唤醒链」。"
+      ],
+      key: [
+        "这是共享模式能连续唤醒多个读者的关键，与独占模式「只唤醒一个」形成对比。",
+        "传播依赖前驱节点记录的共享计数（<code>SHARED</code> 标记）。"
+      ],
+      note: [
+        "唤醒链的传播范围受 <code>PROPAGATE</code> 状态影响，属于 AQS 实现细节，需核实目标 JDK 源码。"
+      ]
+    },
+    "n-nextReader": {
+      title: "后继读者", role: "共享模式下的连续唤醒",
+      cls: "shared",
+      duty: [
+        "被唤醒的读线程重新进入获取流程，若此刻仍无写者插入，则同样获取读锁。"
+      ],
+      key: [
+        "读锁之间不互斥，因此读吞吐随读线程数近似线性提升。"
+      ],
+      note: [
+        "写线程在等待时，部分实现会通过返回 0 停止传播来降低写饥饿概率，具体行为需核实目标 JDK 版本。"
+      ]
+    },
+    "n-await": {
+      title: "await()", role: "Condition 接口 · 等待条件成立",
+      cls: "cond",
+      duty: [
+        "把当前线程完全释放锁（不是重入计数减一，而是彻底释放），然后把自己加入条件队列并 park。"
+      ],
+      key: [
+        "「完全释放」是必要步骤：否则其他线程无法进入临界区修改条件，条件永远不会成立。",
+        "被唤醒后重新竞争获取锁，获取成功才从 <code>await</code> 返回。"
+      ],
+      note: [
+        "await 期间必须用 try/finally 配合 signal，否则可能永久挂起。",
+        "同一个 Condition 对象上的等待顺序不保证公平。"
+      ]
+    },
+    "n-condQueue": {
+      title: "条件队列", role: "每个 Condition 独享的等待队列",
+      cls: "cond",
+      duty: [
+        "每个 <code>Condition</code> 对象持有独立的等待队列，线程在其中排队等待信号。"
+      ],
+      key: [
+        "条件队列通常是单向链表结构，与同步队列（双向）不同。",
+        "条件队列里的线程不参与锁的竞争，只有被转移到同步队列后才有资格抢锁。"
+      ],
+      note: [
+        "条件队列不保证顺序，signal 通常取第一个节点。"
+      ]
+    },
+    "n-signal": {
+      title: "signal()", role: "Condition 接口 · 发出信号",
+      cls: "cond",
+      duty: [
+        "把条件队列中第一个等待节点取出，调用 <code>transferAfterCancelledWait</code> 之类的逻辑把它转移到同步队列，并唤醒它。"
+      ],
+      key: [
+        "signal 只唤醒一个线程，signalAll 唤醒全部。",
+        "signal 必须在持有该锁的前提下调用，否则抛 <code>IllegalMonitorStateException</code>。"
+      ],
+      note: [
+        "被唤醒的线程被放回同步队列尾部（排队顺序改变），而不是直接插队获取锁。"
+      ]
+    },
+    "n-transfer": {
+      title: "transferAfterWait", role: "条件队列 → 同步队列",
+      cls: "cond",
+      duty: [
+        "把条件队列节点挂到同步队列尾部，使其重新参与正常的锁竞争。"
+      ],
+      key: [
+        "这是「条件队列与同步队列的转移关系」的核心：条件队列负责等待，同步队列负责竞争锁。"
+      ],
+      note: [
+        "转移后仍要重新走 <code>acquireQueued</code> 的完整获取流程，不存在「唤醒即获得锁」。"
+      ]
+    },
+    "n-reacquire": {
+      title: "重获锁并返回", role: "await 的出口",
+      cls: "cond",
+      duty: [
+        "被 signal 唤醒的线程回到同步队列重新竞争锁，拿到锁后 <code>await</code> 才真正返回。"
+      ],
+      key: [
+        "从 signal 到 await 返回之间存在时间差，条件可能已经再次失效，因此返回后必须重新检查业务条件。"
+      ],
+      note: [
+        "典型写法是 while 循环检查条件，而不是 if。"
+      ]
+    }
+  };
+
+  /* ============ 模式定义 ============ */
+  const MODES = {
+    excl: {
+      label: "独占模式", color: "#fbbf24",
+      nodes: ["n-lock", "n-tryAcquire", "n-addWaiter", "n-acquireQueued", "n-park",
+              "n-unlock", "n-tryRelease", "n-unparkSuccessor"],
+      edges: ["e-lock-try", "e-try-add", "e-add-aq", "e-aq-park",
+              "e-unlock-rel", "e-rel-unpark", "e-unpark-aq"],
+      labels: ["l-fail", "l-block", "l-wake"],
+      summary: "<strong>独占模式</strong>：CAS 抢占 state；成功则直接获得锁，失败则入队等待；持有者释放后唤醒后继，后继在 acquireQueued 中重新竞争。"
+    },
+    shared: {
+      label: "共享模式", color: "#22d3ee",
+      nodes: ["n-lockShared", "n-tryAcquireShared", "n-propagate", "n-nextReader",
+              "n-addWaiter", "n-acquireQueued", "n-park"],
+      edges: ["e-shared-try", "e-shared-prop", "e-shared-next", "e-shared-join", "e-shared-rejoin"],
+      labels: ["l-prop", "l-join"],
+      summary: "<strong>共享模式</strong>：读计数 CAS 成功后成为队首，并沿后继链继续传播唤醒，因此可连续放行多个读者；若有写者占用则退化为入队等待。"
+    },
+    cond: {
+      label: "Condition 转移", color: "#a78bfa",
+      nodes: ["n-await", "n-condQueue", "n-signal", "n-transfer", "n-reacquire",
+              "n-acquireQueued", "n-park"],
+      edges: ["e-await-cond", "e-cond-signal", "e-signal-tr", "e-tr-reacq", "e-tr-queue"],
+      labels: ["l-queue"],
+      summary: "<strong>Condition 转移</strong>：await 完全释放锁并进入条件队列；signal 把节点转移到同步队列尾部，被唤醒者重新竞争锁后 await 才返回。"
+    }
+  };
+
+  /* ============ 渲染模式按钮 ============ */
+  const modesEl = document.getElementById("modes");
+  Object.keys(MODES).forEach(mid => {
+    const m = MODES[mid];
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "mode-btn";
+    b.dataset.mode = mid;
+    b.textContent = m.label;
+    b.style.setProperty("--mc", m.color);
+    b.addEventListener("click", () => setMode(mid));
+    modesEl.appendChild(b);
+  });
+
+  /* ============ 渲染详情 ============ */
+  function ul(list) {
+    return "<ul>" + list.map(x => "<li>" + x + "</li>").join("") + "</ul>";
+  }
+
+  function showNode(id) {
+    const d = NODES[id];
+    if (!d) return;
+    document.querySelectorAll(".node").forEach(n => n.classList.remove("sel"));
+    const node = document.getElementById(id);
+    if (node) node.classList.add("sel");
+    document.getElementById("detail").style.setProperty("--nc", ({
+      excl: "#fbbf24", shared: "#22d3ee", cond: "#a78bfa", core: "#34d399"
+    })[d.cls] || "#64748b");
+    document.getElementById("d-name").textContent = d.title;
+    document.getElementById("d-role").textContent = d.role;
+    document.getElementById("d-duty").innerHTML = ul(d.duty);
+    document.getElementById("d-key").innerHTML = ul(d.key);
+    document.getElementById("d-note").innerHTML = ul(d.note);
+  }
+
+  /* ============ 模式切换 ============ */
+  let currentMode = "excl";
+
+  function setMode(mid) {
+    currentMode = mid;
+    const m = MODES[mid];
+
+    document.querySelectorAll(".mode-btn").forEach(b => {
+      b.classList.toggle("active", b.dataset.mode === mid);
+    });
+
+    const ns = new Set(m.nodes);
+    const es = new Set(m.edges);
+    const ls = new Set(m.labels || []);
+
+    document.querySelectorAll(".node").forEach(n => {
+      n.classList.toggle("dim", !ns.has(n.id));
+    });
+    document.querySelectorAll(".edge").forEach(e => {
+      e.classList.toggle("on", es.has(e.id));
+    });
+    document.querySelectorAll(".edge-label").forEach(l => {
+      l.classList.toggle("on", ls.has(l.id));
+    });
+
+    document.getElementById("detail").style.setProperty("--mc", m.color);
+    document.getElementById("mode-summary").innerHTML = m.summary;
+
+    showNode(m.nodes[0]);
+  }
+
+  document.querySelectorAll(".node").forEach(n => {
+    n.addEventListener("click", () => showNode(n.id));
+  });
+
+  setMode("excl");
+</script>
+</body>
+</html>
