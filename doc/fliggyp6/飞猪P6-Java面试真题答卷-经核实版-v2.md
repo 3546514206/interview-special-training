@@ -262,6 +262,8 @@
 
 **【一句话答】** 每个 Thread 内部有 `ThreadLocalMap`，key 是 ThreadLocal（弱引用）+ value 是用户存的值；**用完必 `remove()`** 否则线程池场景会内存泄漏+数据串号。
 
+> 🎬 **动态交互图**（浏览器打开 → 点击步骤 / ← → / 自动演示 / 可导出 PNG·PDF）：[fliggyp6/diagrams/q06-threadlocal.html](doc/fliggyp6/diagrams/q06-threadlocal.html)
+
 **【标准答】**
 - **结构**：`Thread.threadLocals` 是 `ThreadLocalMap`（类似 HashMap 但 Entry 用 WeakReference）
 - **4 个关键点**：
