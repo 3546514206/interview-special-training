@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>单机并发锁全景 · 互斥 / 读写 / 乐观 / 分段</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
+                 "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+    background: #020617;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 2rem;
+    line-height: 1.7;
+  }
+
+  code, .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  }
+
+  .container { max-width: 1280px; margin: 0 auto; }
+
+  /* ---------- header ---------- */
+  .header { margin-bottom: 1.6rem; }
+  .header-row { display: flex; align-items: center; gap: .75rem; margin-bottom: .4rem; }
+  .pulse-dot {
+    width: 10px; height: 10px; background: #22d3ee; border-radius: 50%;
+    animation: pulse 2s infinite; flex-shrink: 0;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+  h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: -.02em; }
+  .subtitle { color: #94a3b8; font-size: .82rem; max-width: 900px; }
+  .subtitle strong { color: #cbd5e1; font-weight: 600; }
+
+  /* ---------- layout ---------- */
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 380px;
+    gap: 1.2rem;
+    align-items: start;
+  }
+  @media (max-width: 980px) {
+    .layout { grid-template-columns: minmax(0, 1fr); }
+    .detail { position: static !important; }
+  }
+
+  .panel {
+    background: rgba(15, 23, 42, .6);
+    border: 1px solid #1e293b;
+    border-radius: .85rem;
+    padding: 1.1rem 1.2rem;
+  }
+  .panel-title {
+    font-size: .7rem; color: #64748b; letter-spacing: .12em;
+    text-transform: uppercase; font-weight: 700; margin-bottom: .8rem;
+  }
+
+  /* ---------- svg overview ---------- */
+  .svg-wrap { overflow-x: auto; }
+  .map-svg { width: 100%; min-width: 640px; height: auto; display: block; }
+  .map-svg .qbox { transition: fill .2s ease, stroke .2s ease; }
+  .map-svg .qbox.active { fill: rgba(34,211,238,.12); stroke-width: 2; }
+  .map-svg .qlbl { font-size: 15px; font-weight: 700; }
+  .map-svg .qsub { font-size: 10px; fill: #64748b; }
+  .map-svg .core-lbl { font-size: 12px; font-weight: 600; fill: #cbd5e1; }
+
+  /* ---------- quadrant grid ---------- */
+  .quadrants {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 1.2rem;
+  }
+  @media (max-width: 700px) { .quadrants { grid-template-columns: minmax(0, 1fr); } }
+
+  .quad {
+    border: 1px solid #1e293b;
+    border-radius: .8rem;
+    padding: 1rem 1.05rem;
+    background: rgba(15, 23, 42, .45);
+    border-top: 3px solid var(--qc);
+    min-width: 0;
+  }
+  .quad-head { margin-bottom: .75rem; }
+  .quad-head h2 { font-size: .95rem; color: var(--qc); font-weight: 700; }
+  .quad-head p { font-size: .72rem; color: #64748b; margin-top: .25rem; line-height: 1.6; }
+
+  .chip-list { display: flex; flex-wrap: wrap; gap: .45rem; }
+  .chip {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: .74rem;
+    color: #cbd5e1;
+    background: #0b1220;
+    border: 1px solid #334155;
+    border-radius: .4rem;
+    padding: .32rem .6rem;
+    cursor: pointer;
+    transition: all .16s ease;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    text-align: left;
+  }
+  .chip:hover { border-color: var(--qc); color: #f1f5f9; background: #111c33; }
+  .chip.active {
+    background: color-mix(in srgb, var(--qc) 18%, transparent);
+    border-color: var(--qc);
+    color: #f8fafc;
+  }
+  .chip:focus-visible { outline: 2px solid var(--qc); outline-offset: 2px; }
+
+  /* ---------- detail ---------- */
+  .detail { position: sticky; top: 1.2rem; }
+  .detail-head { border-bottom: 1px solid #1e293b; padding-bottom: .7rem; margin-bottom: .8rem; }
+  .detail-name { font-size: 1.05rem; font-weight: 700; color: #f1f5f9; overflow-wrap: anywhere; }
+  .detail-jdk { font-size: .74rem; color: #94a3b8; margin-top: .25rem; overflow-wrap: anywhere; }
+  .detail-jdk code { color: #7dd3fc; }
+
+  .tags { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: .9rem; }
+  .tag {
+    font-size: .66rem; padding: .2rem .55rem; border-radius: 999px;
+    border: 1px solid; white-space: nowrap;
+  }
+  .tag-q    { color: #fcd34d; border-color: rgba(251,191,36,.35); background: rgba(120,53,15,.25); }
+  .tag-mech { color: #67e8f9; border-color: rgba(34,211,238,.35); background: rgba(8,51,68,.35); }
+  .tag-cas  { color: #6ee7b7; border-color: rgba(52,211,153,.35); background: rgba(6,78,59,.3); }
+
+  .dsection { margin-bottom: .85rem; }
+  .dsection h3 {
+    font-size: .68rem; color: #64748b; letter-spacing: .1em;
+    text-transform: uppercase; font-weight: 700; margin-bottom: .3rem;
+  }
+  .dsection p, .dsection li { font-size: .78rem; color: #cbd5e1; }
+  .dsection ul { list-style: none; }
+  .dsection li { padding-left: .85rem; position: relative; margin-bottom: .25rem; }
+  .dsection li::before {
+    content: ""; position: absolute; left: 0; top: .58em;
+    width: 4px; height: 4px; border-radius: 50%; background: var(--qc, #64748b);
+  }
+  .dsection p code, .dsection li code {
+    font-size: .95em; color: #7dd3fc;
+    background: rgba(8,47,73,.4); padding: .05rem .28rem; border-radius: .25rem;
+  }
+  .d-warn h3 { color: #fb7185; }
+  .d-warn p, .d-warn li { color: #fda4af; }
+
+  .footer { margin-top: 1.4rem; text-align: center; color: #475569; font-size: .72rem; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <div class="header-row">
+      <span class="pulse-dot"></span>
+      <h1>单机并发锁全景 · 互斥 / 读写 / 乐观 / 分段</h1>
+    </div>
+    <p class="subtitle">
+      单机（单 JVM）并发控制手段的分类视图。<strong>点击任意锁卡片</strong>，右侧面板给出该锁的原理、源码入口、适用场景与常见坑。
+      分布式锁不在本图范围内。
+    </p>
+  </div>
+
+  <div class="layout">
+
+    <!-- ============ 左：全景 + 四象限 ============ -->
+    <div>
+      <div class="panel">
+        <div class="panel-title">分类结构</div>
+        <div class="svg-wrap">
+          <svg class="map-svg" viewBox="0 0 920 350" role="img" aria-label="单机锁分类结构图">
+            <defs>
+              <marker id="lm-arrow" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+                <polygon points="0 0, 9 3.5, 0 7" fill="#475569"/>
+              </marker>
+            </defs>
+
+            <!-- 起点 -->
+            <rect x="16" y="143" width="150" height="64" rx="8"
+                  fill="rgba(15,23,42,.8)" stroke="#475569" stroke-width="1.5"/>
+            <text x="91" y="172" text-anchor="middle" class="core-lbl" fill="#e2e8f0">并发临界区</text>
+            <text x="91" y="193" text-anchor="middle" class="qsub">共享状态</text>
+
+            <!-- 箭头 -->
+            <line x1="168" y1="175" x2="244" y2="48"  stroke="#475569" stroke-width="1.2" marker-end="url(#lm-arrow)" opacity=".7"/>
+            <line x1="168" y1="175" x2="244" y2="128" stroke="#475569" stroke-width="1.2" marker-end="url(#lm-arrow)" opacity=".7"/>
+            <line x1="168" y1="175" x2="244" y2="208" stroke="#475569" stroke-width="1.2" marker-end="url(#lm-arrow)" opacity=".7"/>
+            <line x1="168" y1="175" x2="244" y2="288" stroke="#475569" stroke-width="1.2" marker-end="url(#lm-arrow)" opacity=".7"/>
+
+            <!-- 互斥 -->
+            <g class="qbox" id="box-mutex" data-q="mutex">
+              <rect x="250" y="16" width="200" height="64" rx="8" fill="rgba(120,53,15,.22)" stroke="#fbbf24" stroke-width="1.5"/>
+              <text x="350" y="42" text-anchor="middle" class="qlbl" fill="#fbbf24">互斥锁</text>
+              <text x="350" y="63" text-anchor="middle" class="qsub">synchronized / ReentrantLock</text>
+            </g>
+            <!-- 读写 -->
+            <g class="qbox" id="box-rw" data-q="rw">
+              <rect x="250" y="96" width="200" height="64" rx="8" fill="rgba(8,51,68,.28)" stroke="#22d3ee" stroke-width="1.5"/>
+              <text x="350" y="122" text-anchor="middle" class="qlbl" fill="#22d3ee">读写锁</text>
+              <text x="350" y="143" text-anchor="middle" class="qsub">RRWL / StampedLock</text>
+            </g>
+            <!-- 乐观 -->
+            <g class="qbox" id="box-opt" data-q="opt">
+              <rect x="250" y="176" width="200" height="64" rx="8" fill="rgba(6,78,59,.28)" stroke="#34d399" stroke-width="1.5"/>
+              <text x="350" y="202" text-anchor="middle" class="qlbl" fill="#34d399">乐观锁</text>
+              <text x="350" y="223" text-anchor="middle" class="qsub">CAS / AtomicXXX</text>
+            </g>
+            <!-- 分段 -->
+            <g class="qbox" id="box-seg" data-q="seg">
+              <rect x="250" y="256" width="200" height="64" rx="8" fill="rgba(76,29,149,.3)" stroke="#a78bfa" stroke-width="1.5"/>
+              <text x="350" y="282" text-anchor="middle" class="qlbl" fill="#a78bfa">分段锁</text>
+              <text x="350" y="303" text-anchor="middle" class="qsub">Cell / Segment</text>
+            </g>
+
+            <!-- 底层机制列：与象限一一对应 -->
+            <rect x="520" y="16" width="180" height="304" rx="8" fill="rgba(30,41,59,.35)" stroke="#334155" stroke-width="1" stroke-dasharray="6,4"/>
+            <text x="610" y="40" text-anchor="middle" class="core-lbl">底层机制</text>
+
+            <rect x="532" y="52" width="156" height="40" rx="6" fill="rgba(120,53,15,.3)" stroke="#fbbf24" stroke-width="1"/>
+            <text x="610" y="69" text-anchor="middle" class="qsub" fill="#fcd34d">Monitor</text>
+            <text x="610" y="85" text-anchor="middle" class="qsub">AQS 独占 state</text>
+
+            <rect x="532" y="100" width="156" height="56" rx="6" fill="rgba(8,51,68,.4)" stroke="#22d3ee" stroke-width="1"/>
+            <text x="610" y="118" text-anchor="middle" class="qsub" fill="#67e8f9">共享 + 独占</text>
+            <text x="610" y="134" text-anchor="middle" class="qsub">高 16 / 低 16 位</text>
+            <text x="610" y="148" text-anchor="middle" class="qsub">版本戳</text>
+
+            <rect x="532" y="164" width="156" height="40" rx="6" fill="rgba(6,78,59,.4)" stroke="#34d399" stroke-width="1"/>
+            <text x="610" y="181" text-anchor="middle" class="qsub" fill="#6ee7b7">CAS</text>
+            <text x="610" y="197" text-anchor="middle" class="qsub">volatile</text>
+
+            <rect x="532" y="212" width="156" height="40" rx="6" fill="rgba(76,29,149,.4)" stroke="#a78bfa" stroke-width="1"/>
+            <text x="610" y="229" text-anchor="middle" class="qsub" fill="#c4b5fd">哈希散列</text>
+            <text x="610" y="245" text-anchor="middle" class="qsub">固定桶 / 槽位</text>
+
+            <rect x="532" y="260" width="156" height="48" rx="6" fill="rgba(30,41,59,.6)" stroke="#64748b" stroke-width="1"/>
+            <text x="610" y="278" text-anchor="middle" class="qsub" fill="#cbd5e1">队列 + park</text>
+            <text x="610" y="294" text-anchor="middle" class="qsub">阻塞唤醒模型</text>
+
+            <!-- 作用范围 -->
+            <rect x="740" y="143" width="160" height="64" rx="8" fill="rgba(15,23,42,.8)" stroke="#334155" stroke-width="1.2"/>
+            <text x="820" y="172" text-anchor="middle" class="core-lbl">共享内存</text>
+            <text x="820" y="193" text-anchor="middle" class="qsub">单 JVM 内有效</text>
+
+            <line x1="702" y1="175" x2="736" y2="175" stroke="#475569" stroke-width="1.2" marker-end="url(#lm-arrow)" opacity=".7"/>
+            <line x1="452" y1="48"  x2="516" y2="72"  stroke="#475569" stroke-width="1.2" marker-end="url(#lm-arrow)" opacity=".55"/>
+            <line x1="452" y1="128" x2="516" y2="128" stroke="#475569" stroke-width="1.2" marker-end="url(#lm-arrow)" opacity=".55"/>
+            <line x1="452" y1="208" x2="516" y2="184" stroke="#475569" stroke-width="1.2" marker-end="url(#lm-arrow)" opacity=".55"/>
+            <line x1="452" y1="288" x2="516" y2="232" stroke="#475569" stroke-width="1.2" marker-end="url(#lm-arrow)" opacity=".55"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="quadrants" id="quadrants"></div>
+    </div>
+
+    <!-- ============ 右：详情 ============ -->
+    <div class="panel detail" id="detail">
+      <div class="detail-head">
+        <div class="detail-name" id="d-name">—</div>
+        <div class="detail-jdk" id="d-jdk"></div>
+      </div>
+      <div class="tags" id="d-tags"></div>
+      <div class="dsection" id="d-principle-box">
+        <h3>原理</h3>
+        <div id="d-principle"></div>
+      </div>
+      <div class="dsection">
+        <h3>源码入口</h3>
+        <div id="d-source"></div>
+      </div>
+      <div class="dsection">
+        <h3>适用</h3>
+        <div id="d-usage"></div>
+      </div>
+      <div class="dsection d-warn">
+        <h3>坑</h3>
+        <div id="d-pitfall"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <p class="footer">单机并发锁分类视图 · 交互说明：点击锁卡片查看细节</p>
+</div>
+
+<script>
+  const QUADS = {
+    mutex: { label: "互斥锁", color: "#fbbf24",
+      desc: "同一时刻只允许一个线程进入临界区，写操作与状态变更的标准手段。",
+      items: ["synchronized", "ReentrantLock", "LockSupport"] },
+    rw: { label: "读写锁", color: "#22d3ee",
+      desc: "读读共享、读写互斥，用读写分离提高读多写少场景的并发度。",
+      items: ["ReentrantReadWriteLock", "StampedLock"] },
+    opt: { label: "乐观锁", color: "#34d399",
+      desc: "不预先加锁，提交时校验冲突，冲突则重试或放弃，适合低冲突场景。",
+      items: ["AtomicInteger", "AtomicReference", "AtomicStampedReference", "LongAdder"] },
+    seg: { label: "分段锁", color: "#a78bfa",
+      desc: "把数据切成若干段，每段独立加锁，把全局竞争降级为局部竞争。",
+      items: ["ConcurrentHashMap", "Guava Striped（外部库）"] }
+  };
+
+  const LOCKS = {
+    "synchronized": {
+      quad: "mutex", name: "synchronized", jdk: "java.lang 关键字（非类），由 JVM 实现",
+      mech: "对象 Monitor", cas: false,
+      principle: [
+        "编译为字节码指令 <code>monitorenter</code> / <code>monitorexit</code>，由 JVM 解释执行。",
+        "锁信息存放在对象头的 Mark Word 中；无竞争时走轻量级锁（CAS 替换 Mark Word 指针），竞争加剧后膨胀为重量级锁（依赖 <code>ObjectMonitor</code>，其入口、退出、阻塞唤醒逻辑与 AQS 高度同构，具体对应关系需核实 JDK 源码）。"
+      ],
+      source: [
+        "<code>java.lang.Object</code> 的 monitor 相关为 JVM 内建；<code>synchronized</code> 关键字本身在 <code>javap</code> 中表现为 ACC_SYNCHRONIZED 标志与 monitorenter/monitorexit 指令。"
+      ],
+      usage: [
+        "临界区逻辑简单、无需超时/中断/公平性要求的场景，优先使用。",
+        "锁粒度以「对象」为单位，通常用私有 final 对象做锁，避免锁错公共对象。"
+      ],
+      pitfall: [
+        "不可超时、不可中断、无法 tryLock，扩展能力弱于 <code>ReentrantLock</code>。",
+        "锁粒度写错会导致线程互相等待对方持有的锁，形成死锁。",
+        "偏向锁在 JDK 15 起默认关闭、在后续版本被移除（移除的确切版本需核实），不能再以「偏向锁无竞争开销」作为优化理由。"
+      ]
+    },
+    "ReentrantLock": {
+      quad: "mutex", name: "ReentrantLock", jdk: "java.util.concurrent.locks.ReentrantLock",
+      mech: "AQS 独占模式", cas: true,
+      principle: [
+        "内部持有一个 <code>NonfairSync</code> 或 <code>FairSync</code>（均继承 AQS 的 <code>Sync</code>）。",
+        "AQS 的 <code>state</code> 表示重入次数：<code>tryAcquire</code> 中 CAS 成功即持锁，state 加一；释放时 state 减一，归零才真正释放。",
+        "获取失败走 <code>acquire</code> → <code>addWaiter</code> 入队 → <code>acquireQueued</code> 自旋/park 等待；释放走 <code>release</code> → <code>unparkSuccessor</code> 唤醒队首。"
+      ],
+      source: [
+        "<code>java.util.concurrent.locks.ReentrantLock</code>：<code>lock()</code> / <code>unlock()</code> / <code>lockInterruptibly()</code> / <code>tryLock()</code> / <code>newCondition()</code>；",
+        "共享底座：<code>java.util.concurrent.locks.AbstractQueuedSynchronizer</code>。"
+      ],
+      usage: [
+        "需要超时获取、可中断获取、公平策略或多个条件队列（<code>Condition</code>）时。",
+        "替代方案 <code>synchronized</code> 的写法和错误示例代码。"
+      ],
+      pitfall: [
+        "必须在 <code>finally</code> 中 <code>unlock()</code>，否则异常路径下锁永远不释放。",
+        "<code>unlock()</code> 次数必须与 <code>lock()</code> 匹配，否则抛出 <code>IllegalMonitorStateException</code>。",
+        "公平锁吞吐低于非公平锁，且非公平模式下的「插队」在极端饥饿场景下可能造成饥饿。"
+      ]
+    },
+    "LockSupport": {
+      quad: "mutex", name: "LockSupport", jdk: "java.util.concurrent.locks.LockSupport",
+      mech: "底层 park/unpark", cas: false,
+      principle: [
+        "直接对线程暴露 <code>park</code> / <code>unpark</code> 原语，不依赖持有锁的语义。",
+        "许可（permit）模型：<code>unpark</code> 使目标线程的许可加一，线程在 <code>park</code> 时若许可大于零则直接返回，不会丢失唤醒信号。"
+      ],
+      source: [
+        "<code>java.util.concurrent.locks.LockSupport</code>：<code>park</code> / <code>unpark</code> / <code>parkNanos</code> / <code>parkUntil</code>；",
+        "底层实现：JDK 内部 <code>Unsafe.park</code> / <code>Unsafe.unpark</code>（线程操作被移除后由 JDK 内部替代机制承接，细节随版本变化，需核实目标 JDK）。"
+      ],
+      usage: [
+        "实现自定义锁、同步器的底层原语，AQS 的阻塞唤醒就建立在 park/unpark 之上。",
+        "不需要锁语义、只需要阻塞/唤醒的场景。"
+      ],
+      pitfall: [
+        "<code>unpark</code> 的许可最多为 1，连续多次 unpark 不会累积多次唤醒。",
+        "返回的布尔值不代表是否被唤醒，只表示许可是否因本次调用而消耗，需要判断 interrupt 状态。",
+        "它是工具类而非锁，单独使用没有任何互斥保证。"
+      ]
+    },
+    "ReentrantReadWriteLock": {
+      quad: "rw", name: "ReentrantReadWriteLock", jdk: "java.util.concurrent.locks.ReentrantReadWriteLock",
+      mech: "AQS 共享+独占", cas: true,
+      principle: [
+        "同一个 AQS 实例上维护两套计数：<code>state</code> 高 16 位为读锁计数，低 16 位为写锁计数，写锁计数同时充当重入次数。",
+        "读锁是共享模式，多个读线程可同时持有；写锁是独占模式，独占且与读互斥。",
+        "支持锁降级：持有写锁时可直接获取读锁，再释放写锁，从而在不释放数据可见性的前提下让出写锁。"
+      ],
+      source: [
+        "<code>java.util.concurrent.locks.ReentrantReadWriteLock</code>：<code>readLock()</code> / <code>writeLock()</code> / <code>newCondition()</code>（仅写锁支持 Condition）。"
+      ],
+      usage: [
+        "读多写少、临界区可读的数据结构，如缓存、配置快照、只读元数据。",
+        "需要锁降级的场景（如写完立即读回校验）。"
+      ],
+      pitfall: [
+        "读锁本身可重入，但不支持锁升级：持有读锁时获取写锁会死锁（同一线程自我等待）。",
+        "写锁饥饿：非公平模式下连续读可能让写线程长期拿不到写锁（部分版本提供 <code>writerPreference</code> 策略，具体行为需核实版本）。",
+        "锁降级只保证「读-写-读」顺序，反向的「读-写」升级不可行。"
+      ]
+    },
+    "StampedLock": {
+      quad: "rw", name: "StampedLock", jdk: "java.util.concurrent.locks.StampedLock",
+      mech: "版本戳 + CAS", cas: true,
+      principle: [
+        "不基于 AQS，内部维护状态字并用 CAS 更新，配合版本戳（stamp）标识一次成功的获取。",
+        "三种模式：写锁（互斥）、悲观读锁（共享，可重入计数）、乐观读（<code>tryOptimisticRead</code> 不加锁，仅取一个版本戳）。",
+        "乐观读之后必须调用 <code>validate(stamp)</code> 校验期间是否有写发生，若校验失败则退化为悲观读锁重试。"
+      ],
+      source: [
+        "<code>java.util.concurrent.locks.StampedLock</code>：<code>writeLock()</code> / <code>readLock()</code> / <code>tryOptimisticRead()</code> / <code>validate(stamp)</code> / <code>tryConvertToWriteLock(stamp)</code>。"
+      ],
+      usage: [
+        "读远多于写、且读操作很短的场景（如时间戳采样、计数器快照、只读统计）。",
+        "需要比 <code>ReentrantReadWriteLock</code> 更高读吞吐的场合。"
+      ],
+      pitfall: [
+        "不可重入：同一线程重复获取写锁会自锁死。",
+        "不支持 <code>Condition</code>。",
+        "乐观读读到的可能是撕裂数据，必须 <code>validate</code> 校验后才可使用；校验失败要重读。",
+        "使用后必须 <code>unlock</code> 对应的 stamp，类型用错（写 stamp 当读 stamp 用）会抛异常。"
+      ]
+    },
+    "AtomicInteger": {
+      quad: "opt", name: "AtomicInteger / AtomicXXX", jdk: "java.util.concurrent.atomic.AtomicInteger 等",
+      mech: "volatile + CAS", cas: true,
+      principle: [
+        "内部持有一个 <code>volatile int value</code>，更新时以 CAS 循环：读取当前值 → 计算新值 → <code>compareAndSet</code> → 失败则重试。",
+        "CAS（compare-and-swap）由 CPU 指令保证原子性，配合 volatile 保证可见性。",
+        "同一类型的原子类覆盖 int / long / boolean / reference 等；引用类型额外提供 <code>AtomicReference</code>、<code>AtomicStampedReference</code>、<code>AtomicMarkableReference</code>。"
+      ],
+      source: [
+        "<code>java.util.concurrent.atomic</code> 包：<code>AtomicInteger</code>、<code>AtomicLong</code>、<code>AtomicBoolean</code>、<code>AtomicReference</code>、<code>AtomicIntegerArray</code>、<code>LongAdder</code>。"
+      ],
+      usage: [
+        "单变量的线程安全自增、状态标记更新、无锁队列（如 <code>ConcurrentLinkedQueue</code>）的节点指针更新。",
+        "作为其他并发组件（如 <code>ConcurrentHashMap</code> 的计数）的基础积木。"
+      ],
+      pitfall: [
+        "高竞争下 CAS 自旋会浪费 CPU：线程数远多于核数时，<code>LongAdder</code> 往往优于 <code>AtomicLong</code>。",
+        "复合操作（先 get 再 set）不是原子的，需要 <code>updateAndGet</code> / <code>accumulateAndGet</code> 这类原子方法。",
+        "CAS 只保证单变量原子，多个变量之间的一致性需要额外手段。"
+      ]
+    },
+    "AtomicReference": {
+      quad: "opt", name: "AtomicReference", jdk: "java.util.concurrent.atomic.AtomicReference",
+      mech: "volatile + CAS", cas: true,
+      principle: [
+        "原子地持有并更新一个对象引用，常用于实现不可变对象的整体替换（如 copy-on-write 的指针切换）。",
+        "与 AtomicInteger 同源：内部 volatile 引用 + CAS 更新循环。"
+      ],
+      source: [
+        "<code>java.util.concurrent.atomic.AtomicReference</code>：<code>get</code> / <code>set</code> / <code>compareAndSet</code> / <code>getAndSet</code> / <code>updateAndGet</code>。"
+      ],
+      usage: [
+        "以「整体替换」方式更新共享状态：状态对象做成不可变，替换引用即完成更新。",
+        "作为无锁栈、简易发布订阅的指针。"
+      ],
+      pitfall: [
+        "CAS 更新的是引用，引用指向对象内部字段的修改不会被自动同步——对象本身应当设计为不可变。",
+        "同样存在 ABA 风险（引用值回退到旧值），需要配合版本戳。"
+      ]
+    },
+    "AtomicStampedReference": {
+      quad: "opt", name: "AtomicStampedReference", jdk: "java.util.concurrent.atomic.AtomicStampedReference",
+      mech: "引用 + 版本戳 CAS", cas: true,
+      principle: [
+        "在引用的基础上额外维护一个整型版本戳，更新时引用与版本戳一起 CAS。",
+        "用于解决 ABA 问题：即使引用值变回原值，版本戳已改变，比较仍会失败。"
+      ],
+      source: [
+        "<code>java.util.concurrent.atomic.AtomicStampedReference</code>：<code>getReference</code> / <code>getStamp</code> / <code>compareAndSet(ref, expectRef, newRef, expectStamp, newStamp)</code>。"
+      ],
+      usage: [
+        "无锁栈/队列等指针复用场景，规避 ABA 导致的错误出栈。",
+        "任何「值可能回退」的 CAS 更新场景。"
+      ],
+      pitfall: [
+        "多一个版本戳字段，更新成本略高。",
+        "版本戳本身溢出回绕的极端情况需评估，常规业务不构成问题。"
+      ]
+    },
+    "LongAdder": {
+      quad: "opt", name: "LongAdder", jdk: "java.util.concurrent.atomic.LongAdder",
+      mech: "Cell 分段 + CAS", cas: true,
+      principle: [
+        "内部维护多个 <code>Cell</code>（分段），不同线程按哈希落到不同 Cell 上做 CAS 累加，把竞争分散开。",
+        "求和时把各 Cell 与 base 值累加。Cell 数量随竞争自动扩容（对应 <code>longAccumulate</code> 中的扩容逻辑，具体扩容阈值需核实 JDK 版本）。",
+        "读多写少且累加频繁的场景下，吞吐显著优于 <code>AtomicLong</code>。"
+      ],
+      source: [
+        "<code>java.util.concurrent.atomic.LongAdder</code> / <code>DoubleAdder</code>；底层依赖 <code>java.util.concurrent.atomic.Striped64</code>。"
+      ],
+      usage: [
+        "统计计数、流量打点等高频累加场景。",
+        "不要求读取瞬时精确值的统计口径。"
+      ],
+      pitfall: [
+        "<code>sum()</code> 不是强一致的原子快照，读取过程中并发写入会导致结果与某一瞬间的真实值不严格对应。",
+        "不适合需要严格原子读-改-写语义的场景（如「判断后自增」）。",
+        "对极高基数且写极少的场景，可能不如 <code>AtomicLong</code> 简洁。"
+      ]
+    },
+    "ConcurrentHashMap": {
+      quad: "seg", name: "ConcurrentHashMap", jdk: "java.util.concurrent.ConcurrentHashMap",
+      mech: "分段锁 / CAS + 桶级锁", cas: true,
+      principle: [
+        "JDK 7 采用 Segment 分段：内部是一个 Segment 数组，每个 Segment 自带一把 <code>ReentrantLock</code>，定位到段后加锁访问。",
+        "JDK 8 取消了 Segment 结构，改为「CAS + synchronized」：空桶用 CAS 插入，非空桶对桶头节点加 synchronized 锁，冲突多时转红黑树。",
+        "读操作不加锁：桶头是 <code>Node</code> 时直接读 volatilely 可见的 value 与 next 指针。"
+      ],
+      source: [
+        "<code>java.util.concurrent.ConcurrentHashMap</code>：<code>putVal</code>（插入路径）、<code>get</code>（读路径）；",
+        "JDK 8 内部类 <code>Node</code>、<code>TreeBin</code>、<code>ForwardingNode</code>。"
+      ],
+      usage: [
+        "高并发读写的键值容器，是「分段锁思想 → 无锁化演进」的典型教材案例。",
+        "替代 <code>HashMap</code> + 外部锁的写法。"
+      ],
+      pitfall: [
+        "复合操作（如 <code>if (!map.containsKey(k)) map.put(k, v)</code>）不是原子的，需要 <code>computeIfAbsent</code> / <code>merge</code> / <code>putIfAbsent</code>。",
+        "<code>size()</code> 是估算值，不精确；<code>isEmpty</code> 同理。",
+        "不允许 null 键和 null 值（避免与「键不存在」的判定冲突）。"
+      ]
+    },
+    "Guava Striped（外部库）": {
+      quad: "seg", name: "Guava Striped", jdk: "com.google.common.util.concurrent.Striped（Guava，非 JDK）",
+      mech: "散列到固定数量的锁", cas: false,
+      principle: [
+        "把任意对象按散列映射到固定数量的锁上，同一组对象共用一把锁，从而用有限数量的锁替代按 key 加锁。",
+        "锁数量固定（可配置），内存占用有上界；不同 key 可能共用一把锁，形成一定程度的无关竞争。"
+      ],
+      source: [
+        "<code>com.google.common.util.concurrent.Striped</code>：<code>lazyWeakLock</code> / <code>lazyWeakReadWriteLock</code> / <code>get(Object)</code>。"
+      ],
+      usage: [
+        "按 key 串行化处理、且 key 基数不可控时的折中方案（如批量任务去重执行）。",
+        "示例场景：同一用户维度的串行处理，避免为每个用户都建一把锁。"
+      ],
+      pitfall: [
+        "锁数量过少会让无关 key 互相阻塞，过多则失去「固定内存」的意义。",
+        "不同 key 争抢同一把锁仍然存在，公平性无保证。",
+        "属于第三方库，引入前需确认依赖策略。"
+      ]
+    }
+  };
+
+  /* ---------- 渲染四象限 ---------- */
+  const quadWrap = document.getElementById("quadrants");
+  Object.keys(QUADS).forEach(qid => {
+    const q = QUADS[qid];
+    const sec = document.createElement("section");
+    sec.className = "quad";
+    sec.style.setProperty("--qc", q.color);
+    sec.innerHTML =
+      '<div class="quad-head"><h2>' + q.label + '</h2><p>' + q.desc + '</p></div>' +
+      '<div class="chip-list">' +
+      q.items.map(it => '<button type="button" class="chip" data-lock="' + it + '">' + it + '</button>').join("") +
+      '</div>';
+    quadWrap.appendChild(sec);
+  });
+
+  /* ---------- 详情渲染 ---------- */
+  const el = {
+    name: document.getElementById("d-name"),
+    jdk: document.getElementById("d-jdk"),
+    tags: document.getElementById("d-tags"),
+    principle: document.getElementById("d-principle"),
+    source: document.getElementById("d-source"),
+    usage: document.getElementById("d-usage"),
+    pitfall: document.getElementById("d-pitfall")
+  };
+
+  function ul(list) {
+    return "<ul>" + list.map(x => "<li>" + x + "</li>").join("") + "</ul>";
+  }
+
+  function render(key) {
+    const d = LOCKS[key];
+    if (!d) return;
+    const q = QUADS[d.quad];
+    document.getElementById("detail").style.setProperty("--qc", q.color);
+
+    el.name.textContent = d.name;
+    el.jdk.innerHTML = "JDK / 实现：<code>" + d.jdk + "</code>";
+    el.tags.innerHTML =
+      '<span class="tag tag-q">' + q.label + '</span>' +
+      '<span class="tag tag-mech">' + d.mech + '</span>' +
+      (d.cas ? '<span class="tag tag-cas">CAS</span>' : '');
+
+    el.principle.innerHTML = ul(d.principle);
+    el.source.innerHTML = ul(d.source);
+    el.usage.innerHTML = ul(d.usage);
+    el.pitfall.innerHTML = ul(d.pitfall);
+
+    document.querySelectorAll(".chip").forEach(c => {
+      c.classList.toggle("active", c.dataset.lock === key);
+    });
+    document.querySelectorAll(".map-svg .qbox").forEach(g => {
+      g.classList.toggle("active", g.dataset.q === d.quad);
+    });
+  }
+
+  document.getElementById("quadrants").addEventListener("click", e => {
+    const chip = e.target.closest(".chip");
+    if (chip) render(chip.dataset.lock);
+  });
+
+  /* SVG 象限也可点击 */
+  document.querySelectorAll(".map-svg .qbox").forEach(g => {
+    g.style.cursor = "pointer";
+    g.addEventListener("click", () => {
+      const q = QUADS[g.dataset.q];
+      if (q && q.items.length) render(q.items[0]);
+    });
+  });
+
+  render("ReentrantLock");
+</script>
+</body>
+</html>
