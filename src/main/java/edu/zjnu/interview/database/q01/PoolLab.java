@@ -77,7 +77,7 @@ public class PoolLab {
         List<Long> waitTimes  = new ArrayList<>();
 
         try (HikariDataSource ds = newHikariDataSource(poolSize)) {
-            // ExecutorService 在 Java 19+ 才实现 AutoCloseable,Java 17 需手动 shutdown
+            // Java 8 的 ExecutorService 不支持 try-with-resources, 需要手动 shutdown
             ExecutorService pool = Executors.newFixedThreadPool(threads);
             try {
 

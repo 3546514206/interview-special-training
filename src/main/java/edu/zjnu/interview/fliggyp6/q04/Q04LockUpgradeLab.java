@@ -40,7 +40,7 @@ public class Q04LockUpgradeLab {
         }
         print(o, "退出同步块后"); // 偏向不会释放, mark word 里仍留着线程 ID
         System.out.println(">> 101 = 偏向锁, mark word 记录了当前线程 ID; 退出后仍是 101 —— 偏向保持, 下次同线程进入零成本");
-        System.out.println(">> 面试点: JDK 15 起默认禁用偏向锁 (JEP 374), 现代应用多线程多, 撤销偏向的代价 > 收益\n");
+        System.out.println(">> JDK 8 默认开启偏向锁; 后续 JDK 15 起废弃 (JEP 374), JDK 18 移除实现\n");
     }
 
     static void step3_lightweight() {

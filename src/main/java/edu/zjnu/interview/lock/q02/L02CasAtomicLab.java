@@ -1,7 +1,5 @@
 package edu.zjnu.interview.lock.q02;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -14,9 +12,8 @@ import java.util.concurrent.atomic.LongAdder;
 /**
  * 锁专题 Lab 2：CAS、原子类与 ABA 问题。
  *
- * <p>运行命令（默认 java 是 JDK 8，必须显式指定 JDK 17）：
+ * <p>运行命令（JDK 8）：
  * <pre>
- * export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
  * mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q02.L02CasAtomicLab
  * </pre>
  *
@@ -42,33 +39,27 @@ public class L02CasAtomicLab {
     // ------------------------------------------------------------------
 
     /**
-     * 手写 CAS 自增器：底层用 VarHandle 做 compareAndSet（JDK 9+ 提供的标准 CAS 原语）。
+     * 手写 CAS 自增器：底层用 AtomicIntegerFieldUpdater 做 compareAndSet
+     * （Java 5+ 就有的标准 CAS 原语，JDK 8 可用）。
      * 语义与 AtomicInteger.incrementAndGet() 等价：读当前值 → 计算新值 → CAS 写回，失败则重试。
      */
     static final class CasCounter {
         private volatile int value;                 // 普通 volatile 字段即可，CAS 负责原子性
-        private static final VarHandle VALUE;
-
-        static {
-            try {
-                VALUE = MethodHandles.lookup().findVarHandle(CasCounter.class, "value", int.class);
-            } catch (ReflectiveOperationException e) {
-                throw new ExceptionInInitializerError(e);
-            }
-        }
+        private static final AtomicIntegerFieldUpdater<CasCounter> VALUE =
+                AtomicIntegerFieldUpdater.newUpdater(CasCounter.class, "value");
 
         int get() {
-            return (int) VALUE.getVolatile(this);
+            return value;
         }
 
         /** CAS 自旋：读 → 改 → CAS，失败则重试。 */
         void increment() {
             for (;;) {
-                int current = (int) VALUE.getVolatile(this);
+                int current = value;
                 if (VALUE.compareAndSet(this, current, current + 1)) {
                     return;
                 }
-                Thread.onSpinWait();
+                Thread.yield();
             }
         }
     }
@@ -298,45 +289,33 @@ public class L02CasAtomicLab {
 
     /**
      * 读取 JDK 内部私有字段的工具。
-     * <p>JDK 9+ 的模块系统没有向未命名模块开放 java.base 的包，
-     * {@code Field.setAccessible(true)} 会抛 InaccessibleObjectException；
-     * 这里改用 jdk.unsupported 模块导出的 sun.misc.Unsafe 取字段偏移后直接读值，避开访问检查。
+     * <p>JDK 8 没有模块系统，{@code Field.setAccessible(true)} 后可以直接读取私有字段。
      */
     static final class InternalField {
-        private static final sun.misc.Unsafe UNSAFE;
-
-        static {
-            sun.misc.Unsafe u = null;
-            try {
-                java.lang.reflect.Field f = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
-                f.setAccessible(true);
-                u = (sun.misc.Unsafe) f.get(null);
-            } catch (Throwable ignored) {
-                // 取不到就保持为 null，下面的调用方会走「不可用」分支
-            }
-            UNSAFE = u;
-        }
 
         private InternalField() {
         }
 
         static boolean available() {
-            return UNSAFE != null;
+            return true;
         }
 
-        @SuppressWarnings("deprecation")
         static int readInt(Object target, Class<?> owner, String field) throws Exception {
-            return UNSAFE.getInt(target, UNSAFE.objectFieldOffset(owner.getDeclaredField(field)));
+            java.lang.reflect.Field f = owner.getDeclaredField(field);
+            f.setAccessible(true);
+            return f.getInt(target);
         }
 
-        @SuppressWarnings("deprecation")
         static long readLong(Object target, Class<?> owner, String field) throws Exception {
-            return UNSAFE.getLong(target, UNSAFE.objectFieldOffset(owner.getDeclaredField(field)));
+            java.lang.reflect.Field f = owner.getDeclaredField(field);
+            f.setAccessible(true);
+            return f.getLong(target);
         }
 
-        @SuppressWarnings("deprecation")
         static Object readObject(Object target, Class<?> owner, String field) throws Exception {
-            return UNSAFE.getObject(target, UNSAFE.objectFieldOffset(owner.getDeclaredField(field)));
+            java.lang.reflect.Field f = owner.getDeclaredField(field);
+            f.setAccessible(true);
+            return f.get(target);
         }
     }
 

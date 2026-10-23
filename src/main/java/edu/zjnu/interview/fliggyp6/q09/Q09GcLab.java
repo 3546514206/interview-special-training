@@ -46,9 +46,9 @@ public class Q09GcLab {
 
         System.out.println("=== 收集器速记 (对照输出) ===");
         System.out.println("  Serial: 单线程 STW, 客户端;  Parallel(本机默认): 吞吐优先, 多线程 STW");
-        System.out.println("  CMS: 并发标记清除, 低停顿, 有碎片+浮动垃圾, JDK14 弃用/JDK17 移除");
-        System.out.println("  G1: Region 化(2048个1-32MB) + 可预测停顿 MaxGCPauseMillis, JDK9+ 默认");
-        System.out.println("  ZGC: 染色指针+读屏障, 并发整理, TB级堆 <10ms 且停顿不随堆涨\n");
+        System.out.println("  CMS: JDK 8 可用, 并发标记清除, 低停顿, 有碎片+浮动垃圾 (后续 JDK 已移除)");
+        System.out.println("  G1: JDK 8 可选, Region 化(2048个1-32MB) + 可预测停顿 MaxGCPauseMillis (后续版本默认)");
+        System.out.println("  ZGC: JDK 11 才引入, JDK 8 不可用; 染色指针+读屏障, 并发整理, 低停顿\n");
     }
 
     static void snapshot(String label) {

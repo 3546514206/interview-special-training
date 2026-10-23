@@ -166,9 +166,16 @@ public class L04DeadlockLab {
 
     // ========== 实验3: jcmd / jstack 现场抓栈 ==========
 
+    /** Java 8 没有 ProcessHandle, 从 RuntimeMXBean 的 "pid@host" 里取 pid */
+    static long currentPid() {
+        String name = ManagementFactory.getRuntimeMXBean().getName();
+        int at = name.indexOf('@');
+        return Long.parseLong(at > 0 ? name.substring(0, at) : name);
+    }
+
     static void step3_dumpWithJcmd() throws Exception {
         System.out.println("=== 实验3: jcmd <pid> Thread.print 现场抓死锁现场 ===");
-        long pid = ProcessHandle.current().pid();
+        long pid = currentPid();
         System.out.println("  当前进程 pid = " + pid);
         String dump = runDumpTool(pid);
         if (dump == null) {

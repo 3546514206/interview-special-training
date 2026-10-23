@@ -78,7 +78,7 @@
           <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
         </div>
       </div>
-      <p class="subtitle">无锁 → 偏向 → 轻量 → 重量 · 单向不可逆 · JDK 15 起默认禁用偏向锁（JEP 374）</p>
+      <p class="subtitle">无锁 → 偏向 → 轻量 → 重量 · 单向不可逆 · JDK 8 默认开启偏向锁（启动延迟约 4s）</p>
     </div>
 
     <!-- Main Diagram -->
@@ -156,7 +156,7 @@
 
         <!-- skip arc: unlocked -> lightweight (JDK15+) -->
         <path d="M 165 260 C 165 330, 625 330, 625 260" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrowrose)"/>
-        <text x="395" y="322" fill="#fb7185" font-size="8" text-anchor="middle">JDK 15+ 默认禁用偏向（JEP 374）：新线程直接走轻量级 CAS</text>
+        <text x="395" y="322" fill="#fb7185" font-size="8" text-anchor="middle">后续 JDK（15+）默认禁用偏向（JEP 374）：新线程直接走轻量级 CAS</text>
 
         <!-- state boxes -->
         <rect x="70" y="190" width="188" height="64" rx="6" fill="#0f172a"/>
@@ -229,13 +229,13 @@
         <rect x="70" y="660" width="16" height="10" rx="2" fill="rgba(30, 41, 59, 0.5)" stroke="#94a3b8" stroke-width="1"/>
         <text x="92" y="668" fill="#94a3b8" font-size="8">无锁</text>
         <rect x="140" y="660" width="16" height="10" rx="2" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1"/>
-        <text x="162" y="668" fill="#94a3b8" font-size="8">偏向（JDK15+ 默认关）</text>
+        <text x="162" y="668" fill="#94a3b8" font-size="8">偏向（JDK 8 默认开）</text>
         <rect x="290" y="660" width="16" height="10" rx="2" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1"/>
         <text x="312" y="668" fill="#94a3b8" font-size="8">轻量</text>
         <rect x="360" y="660" width="16" height="10" rx="2" fill="rgba(136, 19, 55, 0.4)" stroke="#fb7185" stroke-width="1"/>
         <text x="382" y="668" fill="#94a3b8" font-size="8">重量</text>
         <line x1="440" y1="665" x2="456" y2="665" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="3,3"/>
-        <text x="462" y="668" fill="#94a3b8" font-size="8">JDK15+ 默认跳过路径</text>
+        <text x="462" y="668" fill="#94a3b8" font-size="8">后续 JDK 默认跳过路径</text>
       </svg>
     </div>
 

@@ -1,10 +1,12 @@
 # Java 单机并发锁专题
 
-> **目标**：把「单机并发锁」串成一条体系线——内存模型与可见性 → 锁的实现原理 → CAS 与原子类 → AQS 框架 → 可重入与公平性 → 读写锁 → StampedLock → 死锁 → 选型，覆盖 40 道面试题与 7 个可运行实验。
+> **目标**：把「单机并发锁」串成一条体系线——内存模型与可见性 → 锁的实现原理 → CAS 与原子类 → AQS 框架 → 可重入与公平性 → 读写锁 → StampedLock → 死锁 → 选型，覆盖 40 道面试题与 8 个可运行实验。
 >
 > **范围**：本专题只讨论**单 JVM 内**的并发控制。分布式锁不在本专题展开，参见文末说明。
 >
 > **风格**：结论先行；先说「是什么、为什么这么设计」，再说「源码在哪一步」；所有不确定的版本相关行为一律标注「需核实」。
+>
+> **版本基线**：JDK 8（全部实验在 JDK 8 上实跑；后续 JDK 的差异单独标注，不与本基线混用）。
 
 ## 文件导航
 
@@ -14,7 +16,8 @@
 | [lab-guide.md](./lab-guide.md) | 实验教程 7 篇（Lab1 可见性 · Lab2 CAS 原子类 · Lab3 AQS · Lab4 死锁 · Lab5 读写锁 · Lab6 StampedLock · Lab7 选型基准） |
 | [diagrams/lock-map.html](./diagrams/lock-map.html) | 单机锁全景交互图（四象限分类 + 点选查看原理 / 源码入口 / 适用 / 坑） |
 | [diagrams/aqs-flow.html](./diagrams/aqs-flow.html) | AQS 获取释放流程交互图（独占 / 共享 / Condition 三条路径可切换高亮） |
-| `src/main/java/edu/zjnu/interview/lock/` | 实验代码，按 `q<NN>/L<NN><Name>Lab.java` 组织，7 个实验对应 7 个可运行入口 |
+| `src/main/java/edu/zjnu/interview/lock/` | 实验代码，按 `q<NN>/L<NN><Name>Lab.java` 组织，8 个实验对应 8 个可运行入口 |
+| `src/main/java/edu/zjnu/interview/lock/q08/L08ThreadCommunicationLab.java` | 线程通信实验：wait/notifyAll、join、sleep vs wait、interrupt、park/unpark |
 | `src/main/java/edu/zjnu/interview/lock/q03/SimpleAqsStudy.java` | **附加动手篇**：简化版 AQS 骨架 + 简化版可重入锁（自己手写一遍，注释讲原理） |
 
 ## 一张图
@@ -66,7 +69,7 @@ Java 单机并发锁
 > 补充说明：
 > - `ReentrantReadWriteLock` 的读锁可重入，但**不支持锁升级**：持读锁再取写锁时 `tryLock` 返回 false，`lock()` 永久阻塞（实测另一线程处于 WAITING 且中断无效）；支持**锁降级**（写 → 读）。
 > - `StampedLock` 的乐观读返回的是一个版本戳，读完必须 `validate(stamp)` 校验期间无写入，否则需要退化为悲观读锁重读。
-> - `synchronized` 的偏向锁在 JDK 15 起默认禁用并废弃（JEP 374），JDK 18 移除实现（JDK-8256425），JDK 19+ 相关 VM 参数已不可用（`Unrecognized VM option`）；现代 JDK 的锁升级路径是「无锁 → 轻量级 → 重量级」。
+> - JDK 8 默认开启偏向锁（启动后约 4s 生效），锁升级路径是「无锁 → 偏向 → 轻量级 → 重量级」；JDK 15 起偏向锁被废弃（JEP 374），JDK 18 移除实现（JDK-8256425），那之后的 JDK 才是「无锁 → 轻量级 → 重量级」。
 > - `LongAdder.sum()` 不是某一瞬间的强一致快照，读取过程中并发写入会导致结果与真实值不严格对应。
 
 ## 推荐学习路线

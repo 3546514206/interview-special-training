@@ -18,7 +18,7 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * 验证面试点:
  * 1. 读读共享: 多个读线程可同时进入临界区; 读写互斥: 写线程与读线程互斥
  * 2. 锁降级 (write -> read) 可行, 降级后仍能读到"自己写进去的值", 不丢写
- * 3. 锁升级 (read -> write) 不可行: JDK 17 实测 tryLock 返回 false, lock() 永久阻塞
+ * 3. 锁升级 (read -> write) 不可行: JDK 8 实测 tryLock 返回 false, lock() 永久阻塞
  * 4. 公平锁 vs 非公平锁: 公平 = 严格 FIFO, 非公平 = 允许插队, 但吞吐更高
  * 5. 写线程饥饿: 非公平模式下读线程是否插队, 取决于队首是否为等待中的写者
  */
@@ -186,7 +186,7 @@ public class L05ReadWriteLockLab {
         ReentrantReadWriteLock rw = new ReentrantReadWriteLock();
         rw.readLock().lock();
         try {
-            // 4.1 tryLock: JDK 17 实测返回 false
+            // 4.1 tryLock: JDK 8 实测返回 false
             try {
                 boolean got = rw.writeLock().tryLock();
                 System.out.println("  tryLock() 期望: 无法升级 -> 实际: 返回 " + got);
@@ -216,7 +216,7 @@ public class L05ReadWriteLockLab {
         } finally {
             rw.readLock().unlock();
         }
-        System.out.println(">> 面试点: JDK 17 的 ReentrantReadWriteLock 不支持升级, 官方文档写明"
+        System.out.println(">> 面试点: JDK 8 的 ReentrantReadWriteLock 不支持升级, 官方文档写明"
                 + "\"If a reader tries to acquire the write lock it will never succeed\";");
         System.out.println("   实测 tryLock 返回 false, lock() 永久阻塞 —— 与\"抛 IllegalMonitorStateException\"的说法有出入, 以实际版本为准");
         System.out.println("   正确做法: 释放读锁再取写锁(中间有窗口), 或用 tryLock + 重试\n");
@@ -321,7 +321,7 @@ public class L05ReadWriteLockLab {
             Thread writer = new Thread(() -> {
                 // 确保此刻确实有读线程在临界区内, 这样写线程一定会进入等待队列
                 while (readersInside.get() == 0) {
-                    Thread.onSpinWait();
+                    Thread.yield();
                 }
                 writerAboutToLock.countDown();
                 long t = System.nanoTime();

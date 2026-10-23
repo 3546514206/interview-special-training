@@ -7,9 +7,8 @@ import java.util.concurrent.locks.LockSupport;
 /**
  * 简化版 AQS + 简化版可重入锁（教学版，只讲核心原理）
  *
- * <p>运行：
+ * <p>运行（JDK 8）：
  * <pre>
- * export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
  * mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q03.SimpleAqsStudy
  * </pre>
  *

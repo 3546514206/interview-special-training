@@ -12,24 +12,23 @@
 
 | 项 | 值 | 说明 |
 |---|---|---|
-| JDK | **17.0.10 (LTS)** | 本教程所有「预期输出」均在 JDK 17.0.10 上实跑取得 |
-| 构建 | Maven（`maven-compiler-plugin` 显式 `release=17`） | 仓库根目录 `pom.xml` 已锁定 17 |
+| JDK | **8 (1.8.0_432)** | 本教程所有「预期输出」均在 JDK 8 上实跑取得 |
+| 构建 | Maven（`maven-compiler-plugin` 显式 `source/target=1.8`） | 仓库根目录 `pom.xml` 已锁定 1.8 |
 | 外部依赖 | **无** | 不需要 MySQL / Redis / 网络；所有实验都是纯 JVM 内存操作 |
 | 线程数 | 多数实验用 4–16 线程 | 基准类实验的数值与核数强相关 |
 | 参考机器 | 8 逻辑核（macOS） | 换机器后所有耗时 / 吞吐 / 自旋次数都会变 |
 
-**每次实验独立可跑**：7 个 Lab 各自是一个 `main` 入口，互不依赖，互不共享状态，可以单独运行、单独重跑。
+**每次实验独立可跑**：8 个 Lab 各自是一个 `main` 入口，互不依赖，互不共享状态，可以单独运行、单独重跑。
 
 **统一运行命令**（下文各 Lab 的「步骤」一节不再重复贴）：
 
 ```bash
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
 mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.qXX.L0X...Lab
 ```
 
-> `JAVA_HOME` 必须显式设置：仓库根 `pom.xml` 锁的是 Java 17，而部分机器的默认 `java` 仍是 JDK 8，直接 `mvn` 会报 `release version 17 not supported`。
+> `JAVA_HOME` 必须指向 JDK 8：仓库根 `pom.xml` 锁的是 Java 8。若用更高版本运行，编译仍能通过，但偏向锁、AQS 字段名等运行时行为会与本文预期不符。
 >
-> 首次运行前建议确认一次：`$JAVA_HOME/bin/java -version` 应输出 `17.0.10`。
+> 首次运行前建议确认一次：`java -version` 应输出 `1.8.0_xxx`。
 
 ### 怎么看 PASS / FAIL
 
@@ -61,6 +60,7 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.qXX.L0X...Lab
 | Lab 5 | 读写锁 | **LK29**、LK30、LK31、LK32 |
 | Lab 6 | StampedLock | **LK33**、LK34、LK35、LK36 |
 | Lab 7 | 锁选型基准 | LK18、**LK40** |
+| Lab 8 | 线程通信（wait/notify、join、sleep vs wait、interrupt、park/unpark） | LK07、LK23 |
 | 附加 | 简化版 AQS 与可重入锁（动手写） | LK19、LK20、LK22、LK23、LK26 |
 
 对应 [README.md 推荐学习路线](./README.md#推荐学习路线) 的阶段划分：Lab 1–2 属阶段 1/3，Lab 3/5 属阶段 4（重心），Lab 4/6/7 属阶段 5。
@@ -75,7 +75,6 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.qXX.L0X...Lab
 
 ```bash
 # 1. JDK 版本（必须是 17.x）
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
 $JAVA_HOME/bin/java -version
 
 # 2. Maven 是否可用
@@ -92,26 +91,26 @@ ls $JAVA_HOME/bin/jcmd $JAVA_HOME/bin/jstack
 ### 预期
 
 ```text
-java version "17.0.10" 2024-01-16 LTS
-Java(TM) SE Runtime Environment (build 17.0.10+11-LTS-240)
-Java HotSpot(TM) 64-Bit Server VM (build 17.0.10+11-LTS-240, mixed mode, sharing)
+openjdk version "1.8.0_432-432"
+OpenJDK Runtime Environment (build 1.8.0_432-432-b06)
+OpenJDK 64-Bit Server VM (build 25.432-b06, mixed mode)
 ```
 
-- **【确定值】** `java version "17.0.10"`；若显示 `1.8.x` 说明 `JAVA_HOME` 没设或设错了。
+- **【确定值】** `java version "1.8.0_xxx"`；若显示 `17.x` 或更高版本说明 `JAVA_HOME` 指向了错误的 JDK。
 - **【确定值】** `jcmd` / `jstack` 两个文件都存在。缺任何一个，Lab 4 实验 3 与 Lab 7 实验 3b 会打印「jcmd / jstack 均不可用 … 本步跳过」并**继续执行**，不会崩。
 - **【机器相关值】** 核数：8。
 
 ### 验证点
 
-- `java -version` 是 17 而不是 8；
+- `java -version` 是 8（`1.8.0_xxx`），不是 17+；
 - `mvn -v` 能跑起来；
 - `jcmd` 可执行（`ls` 只看存在性，实际能否 attach 取决于系统权限，Lab 4 会实测并回退 `jstack`）。
 
 ### 面试追问
 
-- 为什么实验要锁死 JDK 版本？因为并发行为的**观测结果**依赖 JIT 编译时机与内存屏障实现，`Node.status` 位图、`signalNext`、偏向锁废弃都是版本相关的；换版本结论要重新核。
-- 「JDK 17 有没有偏向锁？」——没有。偏向锁 JDK 15 起默认禁用并废弃（JEP 374），JDK 18 移除实现（JDK-8256425），JDK 19+ `UseBiasedLocking` 直接报 `Unrecognized VM option`。现代 JDK 的锁升级路径是「无锁 → 轻量级 → 重量级」。（详见 Lab 3 实验 6 末尾的补充段）
-- 「虚拟线程（JDK 21，JEP 444）会改变这些结论吗？」——虚拟线程用 `ReentrantLock` 阻塞时不 pin 载体线程；`synchronized` 的 pinning 差异各版本不同，**需核实**。本专题实验全部是平台线程，不覆盖虚拟线程。
+- 为什么实验要锁死 JDK 版本？因为并发行为的**观测结果**依赖 JIT 编译时机与内存屏障实现，`Node.waitStatus`、`unparkSuccessor`、偏向锁都是 JDK 8 的实现细节；换版本结论要重新核。
+- 「JDK 8 有偏向锁吗？」——有，且默认开启（启动后延迟约 4s 生效）。JDK 15（JEP 374）才默认禁用并废弃，JDK 18 移除实现（JDK-8256425），JDK 19+ `UseBiasedLocking` 直接报 `Unrecognized VM option`。（详见 Lab 3 实验 6 末尾的补充段）
+- 「虚拟线程（JDK 21，JEP 444）会改变这些结论吗？」——那是后续 JDK 的话题；本专题基线是 JDK 8，实验全部是平台线程，不覆盖虚拟线程。
 
 ---
 
@@ -124,7 +123,6 @@ Java HotSpot(TM) 64-Bit Server VM (build 17.0.10+11-LTS-240, mixed mode, sharing
 ### 步骤
 
 ```bash
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
 mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q01.L01VisibilityLab
 ```
 
@@ -204,7 +202,7 @@ volatile 版：16 个线程共拿到 1 个不同实例（期望 1）
   [PASS] 规则8 传递性（tA 的普通写经 tB 中转后对 tC 可见） | 期望 = 7 | 实际 = 7
 ```
 
-- 全部 6 条：**【确定值】**。规则 1（程序顺序）、规则 7（终结器）只做文字陈述，不实机演示——`Object.finalize()` 在 JDK 17 已被废弃。
+- 全部 6 条：**【确定值】**。规则 1（程序顺序）、规则 7（终结器）只做文字陈述，不实机演示——`Object.finalize()` 不应依赖。
 
 ### 验证点
 
@@ -236,7 +234,6 @@ volatile 版：16 个线程共拿到 1 个不同实例（期望 1）
 ### 步骤
 
 ```bash
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
 mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q02.L02CasAtomicLab
 ```
 
@@ -343,7 +340,6 @@ Striped64.cells 数组长度 = 8（Cell 槽位数量，CPU 核数 = 8）
 ### 步骤
 
 ```bash
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
 mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q03.L03AqsQueueLab
 ```
 
@@ -353,12 +349,12 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q03.L03AqsQueu
 |---|---|
 | 1 | 继承 AQS 手写可重入锁（互斥 / 可重入 / 非持有者解锁报错） |
 | 2 | 反射读 `ReentrantLock` / `Semaphore` / `CountDownLatch` 的 `state`，看三种语义 |
-| 3 | 打印 JDK 17.0.10 `src.zip` 里 AQS 的关键源码片段（带行号） |
+| 3 | 打印 JDK 8 `src.zip` 里 AQS 的关键源码片段 |
 | 4 | 公平锁 vs 非公平锁：插队次数 + 首轮获取顺序 |
 | 5 | `Condition` 的 `await` / `signal` / `signalAll` / 中断 |
 | 6 | AQS 队列节点的状态位（实机反射读 tail 节点） |
 
-> 子实验 3 的源码片段是从**运行时的 JDK 17.0.10 `src.zip`** 里抽出来的，行号以该 `src.zip` 内文件为准。换 JDK 版本行号会变、片段也可能变。
+> 子实验 3 的源码片段是从 **JDK 8 的 `src.zip`** 里抽出来的。不同 8u 发行版的行号可能略有差异，**以你机器上 `src.zip` 的实际内容为准**。
 
 ### 预期输出
 
@@ -398,36 +394,46 @@ CountDownLatch(5) 的 state = 5（语义：剩余计数）
 
 - 全部数值：**【确定值】**。
 
-**子实验 3**（JDK 17 AQS 源码，节选）：
+**子实验 3**（JDK 8 AQS 源码，节选）：
 
 ```text
-[2] acquire(int)：先试一次，失败才进队列（AQS.java 第 936-939 行）
+[2] acquire(int)：先试一次，失败才入队
 public final void acquire(int arg) {
-    if (!tryAcquire(arg))
-        acquire(null, arg, false, false, false, 0L);
+    if (!tryAcquire(arg) &&
+        acquireQueued(addWaiter(Node.EXCLUSIVE), arg))
+        selfInterrupt();
 }
 
-[3] release(int)：tryRelease 返回 true 后，由 AQS 负责唤醒后继（AQS.java 第 1006-1014 行）
+[3] release(int)：tryRelease 返回 true 后，由 AQS 负责唤醒后继
 public final boolean release(int arg) {
     if (tryRelease(arg)) {
-        signalNext(head);
+        Node h = head;
+        if (h != null && h.waitStatus != 0)
+            unparkSuccessor(h);
         return true;
     }
     return false;
 }
 
-[4] signalNext(Node)：JDK 17 的唤醒实现——清 WAITING 位 + unpark（AQS.java 第 607-613 行）
-private static void signalNext(Node h) {
-    Node s;
-    if (h != null && (s = h.next) != null && s.status != 0) {
-        s.getAndUnsetStatus(WAITING);
-        LockSupport.unpark(s.waiter);
+[4] unparkSuccessor(Node)：JDK 8 的唤醒实现——清 SIGNAL 位 + unpark 后继
+private void unparkSuccessor(Node node) {
+    int ws = node.waitStatus;
+    if (ws < 0)
+        compareAndSetWaitStatus(node, ws, 0);
+    Node s = node.next;
+    if (s == null || s.waitStatus > 0) {
+        s = null;
+        for (Node t = tail; t != null && t != node; t = t.prev)
+            if (t.waitStatus <= 0)
+                s = t;
     }
+    if (s != null)
+        LockSupport.unpark(s.thread);
 }
 ```
 
-- 源码片段本身：**【确定值】**（固定为 JDK 17.0.10 `src.zip` 的内容）。
-- **行号**：绑定 JDK 17.0.10 的 `src.zip`。换 JDK 版本行号会变——**以你机器上 `src.zip` 的实际行号为准**。
+- 源码片段本身：**【确定值】**（JDK 8 `src.zip` 的内容）。
+- **行号**：不同 8u 发行版的 `src.zip` 行号可能略有差异——**以你机器上 `src.zip` 的实际内容为准**。
 
 **子实验 4**（公平 vs 非公平）：
 
@@ -461,43 +467,43 @@ signalAll 后被唤醒的等待者数量 = 3 / 3（期望 3）
 
 - 全部：**【确定值】**（消费序列严格递增是 `signal` 的 FIFO 语义体现）。
 
-**子实验 6**（节点状态位）：
+**子实验 6**（节点状态）：
 
 ```text
-实机观察：等待线程已进入同步队列，tail 节点的 status = 1
-  status & 1（WAITING）  = true（期望 true：线程已 park 等待唤醒）
-  status & 2（COND）     = false（期望 false：它等的是锁，不是条件）
-  status < 0（CANCELLED）= false（期望 false）
-  [PASS] 排队中的节点带有 WAITING 位 | 期望 = true | 实际 = true
+实机观察：等待线程已进入同步队列
+  head.waitStatus = -1（SIGNAL = -1：队首承诺唤醒后继）
+  tail.waitStatus = 0（0：正常等待；1 表示已取消）
+  [PASS] 队首已置 SIGNAL | 期望 = -1 | 实际 = -1
+  [PASS] 排队节点未被取消 | 期望 = true | 实际 = true
 ```
 
-- `status = 1` 与三条判定：**【确定值】**。
+- `head.waitStatus = -1` / `tail.waitStatus = 0`：**【确定值】**。
 
-程序末尾还有一段**偏向锁补充**（JDK 17 没有偏向锁阶段）：
+程序末尾还有一段**偏向锁补充**（JDK 8 默认开启偏向锁）：
 
 ```text
-【补充：JDK 17 没有偏向锁阶段】
-偏向锁是 JDK 6 引入、JDK 15 起废弃（JEP 374，默认禁用并废弃全部相关参数）、JDK 18 移除实现（JDK-8256425）的机制；JDK 19 起 UseBiasedLocking 直接是 Unrecognized VM option。
-因此现代 JDK（JDK 17 实验基线）的锁升级路径是「无锁 → 轻量级 → 重量级」，没有偏向阶段；「无锁 → 偏向 → 轻量级 → 重量级」四阶段说法是 JDK 8 特有的历史机制。
+【补充：JDK 8 的锁升级】
+偏向锁在 JDK 8 默认开启（启动后约 4s 生效，可用 -XX:-UseBiasedLocking 关闭）；
+锁升级路径是「无锁 → 偏向 → 轻量级 → 重量级」，验证见 Q04LockUpgradeLab。
 ```
 
 ### 验证点
 
 1. 手写 AQS 子类只实现了 `tryAcquire` / `tryRelease` 两个方法，就拿到了互斥 + 可重入 + 正确的 owner 校验——证明 AQS 是**框架**不是锁。
 2. `ReentrantLock` / `Semaphore` / `CountDownLatch` 三个子类的 `state` 语义完全不同，但底层是**同一个 `volatile int`**。
-3. JDK 17 的唤醒路径是 `release()` → `signalNext(head)` → `LockSupport.unpark(s.waiter)`。**JDK 17 已经没有 `unparkSuccessor` 这个方法了**（JDK 8 特有，JDK 11 同），网上流传的「在 `tryRelease` 里调用 `unparkSuccessor`」的手写模板在 JDK 8 之后编译不过。
+3. JDK 8 的唤醒路径是 `release()` → `unparkSuccessor(head)` → `LockSupport.unpark(s.thread)`。`unparkSuccessor` 是 AQS 的 `private` 方法，子类不能调用；网上流传的「在 `tryRelease` 里调用 `unparkSuccessor`」的手写模板编译不过。
 4. 公平锁插队 **0** 次、非公平锁插队 **> 0** 次——这就是 `hasQueuedPredecessors()` 这一个判断造成的全部差异。
 5. Condition 的 `await` 会**原子地**释放锁并进条件队列，`signal` 只是把等待者搬回同步队列重新竞争（不保证立刻拿到锁）。
-6. 实机读到 tail 节点 `status = 1`（WAITING 位），证明 JDK 17 用的是**位图**而不是 JDK 8 的 `waitStatus` 四值枚举。
+6. 实机读到 `head.waitStatus = -1`（SIGNAL）、`tail.waitStatus = 0`，证明 JDK 8 用 `waitStatus` 四值枚举表达节点状态。
 
 ### 面试追问
 
 - **AQS 是什么？**（LK19）——框架不是锁。模板方法：固定 `acquire`/`release`/`acquireShared`/`releaseShared` 流程，变化点留给子类的 `tryAcquire`/`tryRelease`/`tryAcquireShared`/`tryReleaseShared`。
 - **`state` 有哪几种语义？**（LK20）——独占=重入次数；共享=许可数/倒计数；读写锁=高 16 位读计数、低 16 位写计数。
-- **`acquire` / `release` 的完整流程？**（LK23）——先 `tryAcquire`，失败则 `addWaiter` 入队 → `acquireQueued` 自旋若干次 → `LockSupport.park` 阻塞 → 被 `unpark` 唤醒后重新竞争 → 成功后 `setHead` 并唤醒后继。释放侧：`tryRelease` 成功后 `signalNext`。
+- **`acquire` / `release` 的完整流程？**（LK23）——先 `tryAcquire`，失败则 `addWaiter` 入队 → `acquireQueued` 自旋若干次 → `LockSupport.park` 阻塞 → 被 `unpark` 唤醒后重新竞争 → 成功后 `setHead` 并唤醒后继。释放侧：`tryRelease` 成功后 `unparkSuccessor(head)`。
 - **`lock()` 会被中断吗？**——不会抛 `InterruptedException`，但中断标志被记住，拿到锁后由 `selfInterrupt` 恢复。要可中断用 `lockInterruptibly()`。
-- **JDK 8 的 `waitStatus` 有哪些值？JDK 17 呢？**（LK22、LK24）——JDK 8：`SIGNAL=-1`、`CONDITION=-2`、`PROPAGATE=-3`、`CANCELLED=1`；JDK 17 改名 `status`，改用位：`WAITING=1`、`COND=2`、`CANCELLED=0x80000000`。**JDK 17 没有 `SIGNAL`/`CONDITION`/`PROPAGATE` 这三个常量**。
-- **Condition 队列和同步队列的区别？**（LK25）——条件队列每个 `Condition` 一条、单向链、只放 `await` 的线程；同步队列是 CLH 双向队列、竞争锁。JDK 17 把条件队列节点拆成独立的 `ConditionNode`。
+- **JDK 8 的 `waitStatus` 有哪些值？**（LK22、LK24）——`SIGNAL=-1`、`CONDITION=-2`、`PROPAGATE=-3`、`CANCELLED=1`、初始值 `0`。`SIGNAL` 写在**前驱**节点上，表示「前驱承诺唤醒后继」。
+- **Condition 队列和同步队列的区别？**（LK25）——条件队列每个 `Condition` 一条、单向链、只放 `await` 的线程；同步队列是 CLH 双向队列、竞争锁。JDK 8 的条件队列节点直接复用 `Node`，用 `nextWaiter` 串链。
 - **公平锁和非公平锁差在哪？**（LK27、LK28）——只差 `hasQueuedPredecessors()` 这一个判断。公平锁每次获取都要查队列、每次释放都要唤醒队首，吞吐更低；非公平锁允许 barging，有饥饿风险。
 - **默认用哪个？**——默认非公平；只有观察到长期饥饿才改公平。
 
@@ -511,7 +517,6 @@ signalAll 后被唤醒的等待者数量 = 3 / 3（期望 3）
 **运行命令**
 
 ```bash
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
 mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q03.SimpleAqsStudy
 ```
 
@@ -569,9 +574,9 @@ setState(c);                // 再放状态（放状态的瞬间别人才能抢�
 | 公平 / 非公平之分 | 简化版统一按 FIFO，相当于公平锁；JDK 用 `hasQueuedPredecessors()` 决定是否让排队者先走 |
 | 取消队列节点（CANCELLED） | 线程被中断后无法从队列中摘除；JDK 有 `cancelAcquire` 处理 |
 | 中断响应与超时获取 | 简化版不抛 `InterruptedException`，也没有 `tryLock(timeout)` |
-| 状态位图 | JDK 17 用 `Node.status` 位图（`WAITING`/`COND`/`CANCELLED`）；简化版沿用 JDK 8 语义（一个 int 装重入次数），因为可重入只需要计数 |
+| 节点状态 | JDK 8 的 AQS 用 `Node.waitStatus` 四值枚举表达节点状态；简化版只用一个 int 装重入次数，节点状态直接省略 |
 
-> 简化版用 `AtomicIntegerFieldUpdater` 实现 CAS，**不用 `sun.misc.Unsafe`**（JDK 17 的模块封装也不允许直接反射 `java.util.concurrent.locks` 包的私有字段）。
+> 简化版用 `AtomicIntegerFieldUpdater` 实现 CAS，**不依赖 `sun.misc.Unsafe`**；JDK 8 允许反射私有字段，但这里没有必要。
 > 讲给面试官时可以直接说明：CAS 原语用哪种实现不影响锁的语义，AQS 自己也是用 `Unsafe` 做同一件事。
 
 ---
@@ -585,7 +590,6 @@ setState(c);                // 再放状态（放状态的瞬间别人才能抢�
 ### 步骤
 
 ```bash
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
 mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q04.L04DeadlockLab
 ```
 
@@ -645,7 +649,7 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q04.L04Deadloc
 ```text
 === 实验3: jcmd <pid> Thread.print 现场抓死锁现场 ===
   当前进程 pid = 24199
-  使用工具: /Library/Java/JavaVirtualMachines/JDK17/Contents/Home/bin/jcmd
+  使用工具: $JAVA_HOME/bin/jcmd
   期望: 输出包含 "Found one Java-level deadlock" -> 实际: true
   --- 关键片段 ---
   | Found one Java-level deadlock:
@@ -666,7 +670,6 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q04.L04Deadloc
 
 ```bash
 # 终端 1：跑实验（死锁一旦形成就会一直保持）
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
 mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q04.L04DeadlockLab
 
 # 终端 2：拿 pid —— 三种方式任选
@@ -747,7 +750,6 @@ kill -3 <pid>
 ### 步骤
 
 ```bash
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
 mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q05.L05ReadWriteLockLab
 ```
 
@@ -867,7 +869,6 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q05.L05ReadWri
 ### 步骤
 
 ```bash
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
 mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q06.L06StampedLockLab
 ```
 
@@ -978,7 +979,6 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q06.L06Stamped
 ### 步骤
 
 ```bash
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
 mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q07.L07LockChoiceBench
 ```
 
@@ -1084,7 +1084,7 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q07.L07LockCho
 | 2 | 同上，但读者看到 `= true` 以为「普通变量也可见」 | 碰巧可见 | 不能作为正确性依据。JMM 不给任何承诺，不同 JVM 版本 / JIT 编译时机结果可能不同 |
 | 3 | `volatile int i; i++` 在 10 线程下丢数 | `i++` 是读-改-写三步；volatile 只保证单次读/写，不保证复合操作原子 | 用 `AtomicInteger` / `LongAdder` / 加锁。丢失的**幅度**是概率，**丢失本身**是必然 |
 | 4 | DCL 非 volatile 版**没复现**多实例，以为「不加 volatile 也行」 | 是否复现取决于 CPU、内存布局、JIT 编译时机等偶然因素 | JMM 不给任何保证。工程上用静态内部类 Holder 或枚举，不要依赖运气 |
-| 5 | 读写锁**读锁取写锁**：`tryLock` 返回 `false`、`lock()` **永久阻塞**，与「抛 `IllegalMonitorStateException`」的说法不符 | JDK 17 实测行为：写锁与读锁对同一线程互斥，读锁不释放就永远拿不到写锁 | `IllegalMonitorStateException` 是「**未持锁却 unlock**」才抛。正确做法：释放读锁再取写锁（中间有窗口），或 `tryLock` + 重试 |
+| 5 | 读写锁**读锁取写锁**：`tryLock` 返回 `false`、`lock()` **永久阻塞**，与「抛 `IllegalMonitorStateException`」的说法不符 | JDK 8 实测行为：写锁与读锁对同一线程互斥，读锁不释放就永远拿不到写锁 | `IllegalMonitorStateException` 是「**未持锁却 unlock**」才抛。正确做法：释放读锁再取写锁（中间有窗口），或 `tryLock` + 重试 |
 | 6 | `StampedLock` 同线程二次 `writeLock()` **把自己挂起** | `StampedLock` 用「版本戳 + 计数」管理状态，**不记录 owner**，无法识别重入 | 不可重入是硬约束。递归路径上重复加锁 → 自死锁，且线程栈里看不出是哪把锁，排查成本高。需要可重入 / `Condition` 就用 `ReentrantReadWriteLock` |
 | 7 | `StampedLock` 乐观读读到**旧值** | 乐观读不加锁，允许读到旧快照 | 读到旧值是正常现象；关键是 `validate(stamp)` 校验失败后**必须**退化为悲观读重取，并**用同一个 stamp** 解锁 |
 | 8 | `jcmd` 抓死锁现场报「找不到进程 / attach 被拒绝」 | ① pid 拿错；② 跨用户 / 容器内 attach 受限；③ `jcmd` 不在 `JAVA_HOME/bin` | 拿 pid 三选一：`jps -l \| grep L04DeadlockLab`、实验输出里的「当前进程 pid = NNNNN」、`pgrep -f L04DeadlockLab`。attach 不上就换 `jstack -l <pid>`，再不行用 `kill -3 <pid>`（SIGQUIT，不终止进程） |
@@ -1094,9 +1094,9 @@ mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q07.L07LockCho
 | 12 | 读写锁在 Lab 7 里**比 `synchronized` 还慢** | 临界区极短（纳秒级）时，读锁的 AQS 进入开销盖过了读并发的好处 | 这是正常且正确的观测。只有当读逻辑本身较重、或线程数远大于核数时，读并发才转化成吞吐优势 |
 | 13 | 「用 `jstack` 看到大量 `BLOCKED` 就断言死锁」 | `BLOCKED` 只表示在等锁 | 死锁的判定依据是**环**：JVM 会明确输出 `Found one Java-level deadlock` 并列出参与线程；饥饿没有任何 JVM 级标记 |
 | 14 | `findMonitorDeadlockedThreads()` 查不出 `ReentrantLock` 死锁 | 该方法只覆盖 `ObjectMonitor`（`synchronized`） | 用 `findDeadlockedThreads()`，它同时覆盖 monitor 与 `OwnableSynchronizer`（含 `ReentrantLock`） |
-| 15 | 换到 JDK 21 后 `UseBiasedLocking` 报 `Unrecognized VM option` | 偏向锁 JDK 15 默认禁用并废弃（JEP 374）、JDK 18 移除实现（JDK-8256425）、JDK 19+ 参数直接不认 | 现代 JDK 的锁升级路径是「无锁 → 轻量级 → 重量级」，**没有偏向阶段**。「无锁 → 偏向 → 轻量级 → 重量级」是 JDK 8 特有的历史机制 |
-| 16 | 背 JDK 8 的 AQS 字段名，说 `Node.waitStatus` / `SIGNAL` / `PROPAGATE` | JDK 17 已改名并换成位图 | JDK 17：`Node.status`（`volatile int`），常量 `WAITING=1`、`COND=2`、`CANCELLED=0x80000000`。**没有** `SIGNAL`/`CONDITION`/`PROPAGATE`。JDK 17 的唤醒是私有的 `signalNext(Node)`，`unparkSuccessor` 已不存在 |
-| 17 | 用 `unparkSuccessor(head)` 手写 AQS 子类，在 JDK 17 编译不过 | 它是 JDK 8/11 的 `private` 方法，子类不可调用 | JDK 17 用 `release()` 内部的私有 `signalNext(head)`；子类只实现 `tryAcquire`/`tryRelease` |
+| 15 | 换到 JDK 21 后 `UseBiasedLocking` 报 `Unrecognized VM option` | 偏向锁 JDK 15 默认禁用并废弃（JEP 374）、JDK 18 移除实现（JDK-8256425）、JDK 19+ 参数直接不认 | JDK 15+ 的锁升级路径是「无锁 → 轻量级 → 重量级」，**没有偏向阶段**；JDK 8 才有「无锁 → 偏向 → 轻量级 → 重量级」四态路径 |
+| 16 | 把 JDK 8 的 AQS 字段名记成后续版本的 `waiter` / `status` | 字段名随版本变化，JDK 8 不是这一套 | JDK 8：`Node` 用 `thread` 记录等待线程、`volatile int waitStatus` 记录状态；常量是 `SIGNAL=-1`、`CONDITION=-2`、`PROPAGATE=-3`、`CANCELLED=1` |
+| 17 | 用 `unparkSuccessor(head)` 手写 AQS 子类 | 它是 AQS 的 `private` 方法，子类不可调用 | 子类只实现 `tryAcquire`/`tryRelease`；唤醒由 `release()` 内部调用 `unparkSuccessor` 完成 |
 
 ## 附录 · 实验记录模板
 
