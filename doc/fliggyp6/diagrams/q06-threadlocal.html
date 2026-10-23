@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Q6 · ThreadLocal 内部结构与泄漏真相</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js" integrity="sha384-ZZ1pncU3bQe8y31yfZdMFdSpttDoPmOZg2wguVK9almUodir1PghgT0eY7Mrty8H" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js" integrity="sha384-en/ztfPSRkGfME4KIm05joYXynqzUgbsG5nMrj/xEFAHXkeZfO3yMK8QQ+mP7p1/" crossorigin="anonymous"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'JetBrains Mono', 'PingFang SC', monospace;
+      background: #020617;
+      min-height: 100vh;
+      padding: 2rem;
+      color: white;
+    }
+
+    .container { max-width: 1400px; margin: 0 auto; }
+
+    .header { margin-bottom: 1.25rem; }
+    .header-row { display: flex; align-items: center; gap: 1rem; margin-bottom: 0.5rem; }
+    .pulse-dot { width: 12px; height: 12px; background: #22d3ee; border-radius: 50%; animation: pulse 2s infinite; flex-shrink: 0; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    h1 { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.025em; }
+    .subtitle { color: #94a3b8; font-size: 0.95rem; margin-left: 1.75rem; line-height: 1.6; }
+    .subtitle b { color: #fda4af; font-weight: 600; }
+
+    /* ---------- step controls ---------- */
+    .step-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; margin-bottom: 0.9rem; }
+    .step-chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+    .step-chip {
+      background: rgba(30, 41, 59, 0.7);
+      border: 1px solid #334155;
+      color: #94a3b8;
+      padding: 0.4rem 0.7rem;
+      border-radius: 0.45rem;
+      font-family: inherit;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .step-chip:hover { color: #e2e8f0; border-color: #475569; }
+    .step-chip.active {
+      background: rgba(8, 51, 68, 0.8);
+      border-color: #22d3ee;
+      color: #67e8f9;
+      box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.25);
+    }
+    .step-actions { display: flex; gap: 0.4rem; margin-left: auto; }
+    .step-actions button {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid #334155;
+      color: #94a3b8;
+      padding: 0.4rem 0.7rem;
+      border-radius: 0.45rem;
+      font-family: inherit;
+      font-size: 0.8rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+    .step-actions button:hover { background: rgba(51, 65, 85, 0.8); color: white; border-color: #475569; }
+    .step-actions button.primary { border-color: #22d3ee; color: #67e8f9; }
+    .step-actions button:disabled { cursor: default; }
+
+    /* ---------- diagram ---------- */
+    .diagram-container {
+      background: rgba(15, 23, 42, 0.5);
+      border-radius: 1rem;
+      border: 1px solid #1e293b;
+      padding: 1rem;
+      overflow-x: auto;
+    }
+    svg { width: 100%; min-width: 1120px; display: block; }
+    svg text { font-family: 'JetBrains Mono', 'PingFang SC', monospace; }
+
+    /* ---------- step machinery ---------- */
+    .reveal { opacity: 0; pointer-events: none; transition: opacity 0.35s ease; }
+    .reveal.on { opacity: 1; pointer-events: auto; }
+    .off { opacity: 0 !important; pointer-events: none; }
+    .ghost { opacity: 0.18 !important; }
+    .hot-cyan { filter: drop-shadow(0 0 5px rgba(34, 211, 238, 0.85)); }
+    .hot-red { filter: drop-shadow(0 0 7px rgba(251, 113, 133, 0.9)); }
+    .hot-green { filter: drop-shadow(0 0 6px rgba(52, 211, 153, 0.85)); }
+    .hot-amber { filter: drop-shadow(0 0 6px rgba(251, 191, 36, 0.85)); }
+    .weak-flow { animation: dashMove 1.4s linear infinite; }
+    @keyframes dashMove { to { stroke-dashoffset: -20; } }
+    .node { transition: filter 0.3s; }
+    .node:hover { filter: brightness(1.12); cursor: help; }
+    .reveal.node:hover { filter: brightness(1.12); }
+
+    /* ---------- narrative panel ---------- */
+    .step-panel {
+      display: grid;
+      grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+      gap: 1.25rem;
+      margin-top: 1rem;
+      background: rgba(15, 23, 42, 0.55);
+      border: 1px solid #1e293b;
+      border-radius: 0.9rem;
+      padding: 1.25rem 1.35rem;
+    }
+    .step-kicker { color: #22d3ee; font-size: 0.72rem; letter-spacing: 0.08em; font-weight: 600; }
+    .step-panel h2 { font-size: 1.1rem; font-weight: 600; margin: 0.3rem 0 0.6rem; color: #f1f5f9; }
+    .step-body { color: #cbd5e1; font-size: 0.9rem; line-height: 1.75; }
+    .step-body ul { list-style: none; }
+    .step-body li { margin-bottom: 0.42rem; padding-left: 1em; text-indent: -1em; }
+    .step-body li::before { content: '•'; color: #22d3ee; margin-right: 0.5em; }
+    .step-body code {
+      background: rgba(30, 41, 59, 0.8);
+      border: 1px solid #334155;
+      border-radius: 0.25rem;
+      padding: 0.05rem 0.3rem;
+      color: #a7f3d0;
+      font-size: 0.82rem;
+    }
+    .step-body b { color: #f1f5f9; }
+    .step-code {
+      background: #0b1220;
+      border: 1px solid #1e293b;
+      border-radius: 0.6rem;
+      padding: 0.8rem 0.9rem;
+      overflow-x: auto;
+      max-height: 320px;
+      color: #a7f3d0;
+      font-size: 0.8rem;
+      line-height: 1.65;
+      white-space: pre;
+      font-family: inherit;
+    }
+
+    /* ---------- cards ---------- */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; margin-top: 1.25rem; }
+    .card { background: rgba(15, 23, 42, 0.5); border-radius: 0.75rem; border: 1px solid #1e293b; padding: 1.25rem; }
+    .card-header { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .card-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .card-dot.cyan { background: #22d3ee; }
+    .card-dot.emerald { background: #34d399; }
+    .card-dot.violet { background: #a78bfa; }
+    .card-dot.amber { background: #fbbf24; }
+    .card-dot.rose { background: #fb7185; }
+    .card h3 { font-size: 0.95rem; font-weight: 600; }
+    .card ul { list-style: none; color: #94a3b8; font-size: 0.85rem; line-height: 1.7; }
+    .card li { margin-bottom: 0.375rem; }
+    .card code { color: #a7f3d0; }
+
+    .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.8rem; line-height: 1.7; }
+
+    /* ---------- export toolbar ---------- */
+    .toolbar { display: flex; gap: 0.5rem; margin-left: auto; flex-shrink: 0; align-items: center; }
+    .toolbar-toggle {
+      background: transparent; border: none; color: #475569; cursor: pointer;
+      font-size: 1.25rem; line-height: 1; padding: 0.25rem 0.5rem; border-radius: 0.375rem;
+      transition: color 0.2s, background 0.2s;
+    }
+    .toolbar-toggle:hover { color: #94a3b8; background: rgba(30, 41, 59, 0.5); }
+    .toolbar-actions { display: none; gap: 0.5rem; }
+    .toolbar.expanded .toolbar-actions { display: flex; }
+    .toolbar-actions button {
+      background: rgba(30, 41, 59, 0.8); border: 1px solid #334155; color: #94a3b8;
+      padding: 0.375rem 0.75rem; border-radius: 0.375rem; font-family: inherit;
+      font-size: 0.75rem; cursor: pointer; transition: all 0.2s; white-space: nowrap;
+    }
+    .toolbar-actions button:hover { background: rgba(51, 65, 85, 0.8); color: white; border-color: #475569; }
+
+    @media (max-width: 900px) {
+      .step-panel { grid-template-columns: 1fr; }
+      .step-actions { margin-left: 0; }
+    }
+
+    @media print {
+      body { background: #020617; padding: 1rem; }
+      .toolbar, .step-controls { display: none !important; }
+      .diagram-container { overflow: visible; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container" id="report-container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-row">
+        <div class="pulse-dot"></div>
+        <h1>Q6 · ThreadLocal 内部结构与泄漏真相</h1>
+        <div class="toolbar">
+          <div class="toolbar-actions">
+            <button onclick="copyAsImage(this)">📋 Copy</button>
+            <button onclick="downloadPNG(this)">🖼️ PNG</button>
+            <button onclick="downloadPDF(this)">📄 PDF</button>
+          </div>
+          <button class="toolbar-toggle" onclick="this.parentElement.classList.toggle('expanded')" title="Export options" aria-label="Export options">⋯</button>
+        </div>
+      </div>
+      <p class="subtitle">从 Thread 出发：值到底存在哪、弱引用保护了什么、线程池如何把问题放大。<b>弱引用不是防泄漏开关——它只保护 key，不保护 value。</b></p>
+    </div>
+
+    <!-- Step controls -->
+    <div class="step-controls">
+      <div class="step-chips" role="tablist" aria-label="ThreadLocal 演示步骤">
+        <button class="step-chip active" data-step="1" role="tab" aria-selected="true" aria-controls="stepPanel">① 全景结构</button>
+        <button class="step-chip" data-step="2" role="tab" aria-selected="false" aria-controls="stepPanel">② set / get</button>
+        <button class="step-chip" data-step="3" role="tab" aria-selected="false" aria-controls="stepPanel">③ 任务结束</button>
+        <button class="step-chip" data-step="4" role="tab" aria-selected="false" aria-controls="stepPanel">④ GC 之后</button>
+        <button class="step-chip" data-step="5" role="tab" aria-selected="false" aria-controls="stepPanel">⑤ 线程池复用</button>
+        <button class="step-chip" data-step="6" role="tab" aria-selected="false" aria-controls="stepPanel">⑥ remove 修复</button>
+      </div>
+      <div class="step-actions">
+        <button id="prevBtn" type="button" aria-label="上一步">← 上一步</button>
+        <button id="playBtn" type="button" class="primary" aria-label="自动演示">▶ 自动演示</button>
+        <button id="nextBtn" type="button" aria-label="下一步">下一步 →</button>
+      </div>
+    </div>
+
+    <!-- Main diagram -->
+    <div class="diagram-container">
+      <svg id="stage" viewBox="0 0 1320 860" role="img" aria-labelledby="svgTitle svgDesc" data-step="1">
+        <title id="svgTitle">ThreadLocal 内部结构与内存泄漏示意</title>
+        <desc id="svgDesc">从 Thread 的 threadLocals 字段出发，展示 ThreadLocalMap、Entry 的弱引用 key 与强引用 value，以及线程池复用导致的 value 泄漏与数据串号。可用步骤按钮或左右方向键切换演示。</desc>
+
+        <defs>
+          <marker id="arrowCyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <marker id="arrowAmber" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fbbf24" />
+          </marker>
+          <marker id="arrowRed" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#fb7185" />
+          </marker>
+          <marker id="arrowGreen" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#34d399" />
+          </marker>
+          <marker id="arrowWeak" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <rect width="100%" height="100%" fill="url(#grid)" />
+
+        <!-- ============================================================
+             SECTION LABELS
+             ============================================================ -->
+        <text x="30" y="28" fill="#94a3b8" font-size="11.7" font-weight="600">起点：Thread（GC Root）</text>
+        <text x="585" y="28" fill="#94a3b8" font-size="11.7" font-weight="600">key 端：ThreadLocal 对象（只是 key，不存值）</text>
+        <text x="1070" y="28" fill="#94a3b8" font-size="11.7" font-weight="600">结论：GC 只看可达性</text>
+
+        <!-- ============================================================
+             LEFT: WHY THREAD
+             ============================================================ -->
+        <g class="node" data-hot="1" data-hot-color="cyan">
+          <title>值不在 ThreadLocal 里，而在 Thread 的 threadLocals 字段里</title>
+          <rect x="30" y="44" width="230" height="104" rx="8" fill="#0f172a"/>
+          <rect x="30" y="44" width="230" height="104" rx="8" fill="rgba(8, 51, 68, 0.35)" stroke="#22d3ee" stroke-width="1.2" stroke-dasharray="5,3"/>
+          <text x="44" y="64" fill="#67e8f9" font-size="11.7" font-weight="600">为什么从 Thread 画起？</text>
+          <text x="44" y="82" fill="#cbd5e1" font-size="9.75">值不在 ThreadLocal 里</text>
+          <text x="44" y="98" fill="#cbd5e1" font-size="9.75">在 Thread.threadLocals 里</text>
+          <text x="44" y="114" fill="#cbd5e1" font-size="9.75">ThreadLocal 只是 key + 入口</text>
+          <text x="44" y="134" fill="#67e8f9" font-size="9.1" font-weight="600">线程活着，map 就活着</text>
+        </g>
+
+        <!-- ============================================================
+             THREAD
+             ============================================================ -->
+        <g class="node" data-hot="1,2,3" data-hot-color="cyan">
+          <title>Thread 对象：threadLocals 指向 ThreadLocalMap；线程池 worker 长期存活</title>
+          <rect x="30" y="180" width="230" height="220" rx="8" fill="#0f172a"/>
+          <rect x="30" y="180" width="230" height="220" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+          <text x="46" y="204" fill="white" font-size="14.3" font-weight="600">Thread T1</text>
+          <text x="46" y="219" fill="#a7f3d0" font-size="9.75">线程池 worker（长期存活）</text>
+          <rect x="184" y="191" width="64" height="14" rx="3" fill="rgba(136, 19, 55, 0.55)" stroke="#fb7185" stroke-width="1"/>
+          <text x="216" y="201" fill="#fecdd3" font-size="8.45" font-weight="600" text-anchor="middle">GC ROOT</text>
+          <line x1="42" y1="227" x2="248" y2="227" stroke="#1e293b" stroke-width="1"/>
+          <rect x="40" y="234" width="210" height="16" rx="3" fill="rgba(251, 191, 36, 0.12)"/>
+          <text x="46" y="246" fill="#fbbf24" font-size="10.4" font-weight="600">ThreadLocalMap threadLocals;</text>
+          <text x="46" y="266" fill="#94a3b8" font-size="9.75">inheritableThreadLocals;</text>
+          <text x="46" y="288" fill="#cbd5e1" font-size="9.75">stack / frames</text>
+          <text x="46" y="308" fill="#cbd5e1" font-size="9.75">target = Worker</text>
+          <text x="46" y="328" fill="#cbd5e1" font-size="9.75">threadStatus = RUNNABLE</text>
+          <rect x="40" y="340" width="210" height="48" rx="5" fill="rgba(120, 53, 15, 0.25)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="3,3"/>
+          <text x="145" y="358" fill="#fbbf24" font-size="11.05" font-weight="600" text-anchor="middle">线程不死 → map 不死</text>
+          <text x="145" y="375" fill="#fcd34d" font-size="9.1" text-anchor="middle">泄漏被放大的前提</text>
+        </g>
+
+        <!-- Thread -> Map strong reference -->
+        <line x1="260" y1="242" x2="336" y2="242" stroke="#fbbf24" stroke-width="2" marker-end="url(#arrowAmber)" data-hot="1,2" data-hot-color="amber"/>
+        <text x="298" y="232" fill="#fbbf24" font-size="9.1" font-weight="600" text-anchor="middle">threadLocals</text>
+        <text x="298" y="254" fill="#94a3b8" font-size="7.8" text-anchor="middle">强引用</text>
+
+        <!-- ============================================================
+             THREADLOCALMAP
+             ============================================================ -->
+        <g class="node">
+          <title>ThreadLocalMap：Thread 的私有字段，内部是 Entry[] table</title>
+          <rect x="340" y="180" width="700" height="420" rx="12" fill="#0f172a"/>
+          <rect x="340" y="180" width="700" height="420" rx="12" fill="rgba(76, 29, 149, 0.18)" stroke="#a78bfa" stroke-width="1.5" data-hot="1" data-hot-color="cyan"/>
+          <text x="356" y="204" fill="#c4b5fd" font-size="14.3" font-weight="600">ThreadLocalMap</text>
+          <text x="356" y="219" fill="#94a3b8" font-size="9.75">Thread 的私有字段 · 每个线程一份</text>
+
+          <!-- sidebar fields -->
+          <text x="356" y="242" fill="#cbd5e1" font-size="9.1">table : Entry[16]</text>
+          <text x="356" y="256" fill="#cbd5e1" font-size="9.1">size : int</text>
+          <text x="356" y="270" fill="#cbd5e1" font-size="9.1">threshold 2/3</text>
+          <text x="356" y="284" fill="#cbd5e1" font-size="9.1">idx = h &amp; (n-1)</text>
+          <text x="356" y="298" fill="#a78bfa" font-size="9.1">冲突 → 线性探测</text>
+
+          <!-- lower note -->
+          <text x="356" y="486" fill="#94a3b8" font-size="9.36">Entry[] 长度 = 2^n（初始 16）</text>
+          <text x="356" y="502" fill="#94a3b8" font-size="9.36">index = threadLocalHashCode &amp; (len-1)</text>
+          <text x="356" y="518" fill="#94a3b8" font-size="9.36">冲突：nextIndex 线性探测，无链表</text>
+          <text x="356" y="534" fill="#94a3b8" font-size="9.36">threshold = 2/3，超过则 rehash</text>
+          <text x="356" y="556" fill="#64748b" font-size="8.45">HASH_INCREMENT = 0x61c88647（斐波那契散列）</text>
+
+          <!-- ============ TABLE SLOT [0] empty ============ -->
+          <text x="451" y="292" fill="#64748b" font-size="9.75">[0]</text>
+          <rect x="445" y="300" width="130" height="140" rx="6" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1"/>
+          <text x="510" y="374" fill="#475569" font-size="11.7" text-anchor="middle">null</text>
+          <text x="510" y="390" fill="#334155" font-size="8.45" text-anchor="middle">empty</text>
+
+          <!-- ============ TABLE SLOT [1] USER ============ -->
+          <text x="591" y="292" fill="#64748b" font-size="9.75">[1]</text>
+          <rect x="585" y="300" width="130" height="140" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.3"/>
+          <text x="595" y="317" fill="#94a3b8" font-size="8.45">key</text>
+          <circle cx="695" cy="313" r="5" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="2,1.5"/>
+          <text x="695" y="315.5" fill="#94a3b8" font-size="6.5" text-anchor="middle">W</text>
+          <text x="595" y="335" fill="#67e8f9" font-size="10.4" font-weight="600">USER</text>
+          <line x1="590" y1="343" x2="710" y2="343" stroke="#1e293b"/>
+          <text x="595" y="361" fill="white" font-size="10.4" font-weight="600">Entry</text>
+          <text x="595" y="374" fill="#64748b" font-size="7.54">WeakReference&lt;ThreadLocal&gt;</text>
+          <text x="595" y="393" fill="#94a3b8" font-size="8.45">value</text>
+          <circle cx="695" cy="389" r="5" fill="#fbbf24"/>
+          <text x="695" y="391.5" fill="#020617" font-size="6.5" font-weight="600" text-anchor="middle">S</text>
+          <text x="595" y="409" fill="#fbbf24" font-size="10.4" font-weight="600">UserCtx</text>
+
+          <!-- ============ TABLE SLOT [2] ORDER ============ -->
+          <text x="731" y="292" fill="#64748b" font-size="9.75">[2]</text>
+          <rect x="725" y="300" width="130" height="140" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.2"/>
+          <g class="occupied-order" data-hide-from="6">
+            <text x="735" y="317" fill="#94a3b8" font-size="8.45">key</text>
+            <circle cx="835" cy="313" r="5" fill="none" stroke="#94a3b8" stroke-width="1" stroke-dasharray="2,1.5"/>
+            <text x="835" y="315.5" fill="#94a3b8" font-size="6.5" text-anchor="middle">W</text>
+            <g data-hide-from="4">
+              <text x="735" y="335" fill="#fbbf24" font-size="10.4" font-weight="600">OrderTL</text>
+            </g>
+            <g class="reveal" data-show="4,5">
+              <text x="790" y="335" fill="#fb7185" font-size="10.4" font-weight="600" text-anchor="middle">null</text>
+            </g>
+            <line x1="730" y1="343" x2="850" y2="343" stroke="#1e293b"/>
+            <text x="735" y="361" fill="white" font-size="10.4" font-weight="600">Entry</text>
+            <text x="735" y="374" fill="#64748b" font-size="7.54">WeakReference&lt;ThreadLocal&gt;</text>
+            <text x="735" y="393" fill="#94a3b8" font-size="8.45">value</text>
+            <circle cx="835" cy="389" r="5" fill="#fbbf24"/>
+            <text x="835" y="391.5" fill="#020617" font-size="6.5" font-weight="600" text-anchor="middle">S</text>
+            <text x="735" y="409" fill="#fbbf24" font-size="10.4" font-weight="600">OrderCtx</text>
+          </g>
+
+          <!-- stale-entry overlay: key becomes null, Entry remains -->
+          <g class="reveal" data-show="4,5">
+            <rect x="725" y="300" width="130" height="140" rx="6" fill="none" stroke="#fb7185" stroke-width="2" stroke-dasharray="5,3"/>
+            <text x="790" y="282" fill="#fb7185" font-size="9.1" font-weight="600" text-anchor="middle">key = null，Entry 还在</text>
+          </g>
+
+          <!-- remove-fixed overlay -->
+          <g class="reveal" data-show="6">
+            <rect x="725" y="300" width="130" height="140" rx="6" fill="#0f172a"/>
+            <rect x="725" y="300" width="130" height="140" rx="6" fill="rgba(6, 78, 59, 0.25)" stroke="#34d399" stroke-width="1.6"/>
+            <text x="790" y="366" fill="#34d399" font-size="11.05" font-weight="600" text-anchor="middle">remove()</text>
+            <text x="790" y="382" fill="#a7f3d0" font-size="9.1" text-anchor="middle">槽位清空</text>
+            <text x="790" y="398" fill="#a7f3d0" font-size="8.45" text-anchor="middle">value = null</text>
+          </g>
+
+          <!-- ============ TABLE SLOT [3] empty ============ -->
+          <text x="871" y="292" fill="#64748b" font-size="9.75">[3]</text>
+          <rect x="865" y="300" width="130" height="140" rx="6" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1"/>
+          <text x="930" y="374" fill="#475569" font-size="11.7" text-anchor="middle">null</text>
+          <text x="930" y="390" fill="#334155" font-size="8.45" text-anchor="middle">empty</text>
+
+          <!-- ============ stale entries accumulate (step 5) ============ -->
+          <g class="reveal" data-show="5">
+            <rect x="445" y="300" width="130" height="140" rx="6" fill="#0f172a"/>
+            <rect x="445" y="300" width="130" height="140" rx="6" fill="rgba(136, 19, 55, 0.18)" stroke="#fb7185" stroke-width="1.3" stroke-dasharray="4,3"/>
+            <text x="510" y="334" fill="#fb7185" font-size="9.75" font-weight="600" text-anchor="middle">null</text>
+            <text x="510" y="374" fill="#94a3b8" font-size="8.45" text-anchor="middle">stale Entry</text>
+            <text x="510" y="394" fill="#fda4af" font-size="9.1" text-anchor="middle">OrderCtx#2</text>
+          </g>
+          <g class="reveal" data-show="5">
+            <rect x="865" y="300" width="130" height="140" rx="6" fill="#0f172a"/>
+            <rect x="865" y="300" width="130" height="140" rx="6" fill="rgba(136, 19, 55, 0.18)" stroke="#fb7185" stroke-width="1.3" stroke-dasharray="4,3"/>
+            <text x="930" y="334" fill="#fb7185" font-size="9.75" font-weight="600" text-anchor="middle">null</text>
+            <text x="930" y="374" fill="#94a3b8" font-size="8.45" text-anchor="middle">stale Entry</text>
+            <text x="930" y="394" fill="#fda4af" font-size="9.1" text-anchor="middle">OrderCtx#3</text>
+          </g>
+          <text class="reveal" data-show="5" x="865" y="270" fill="#fb7185" font-size="9.1" font-weight="600">stale entries 越积越多 →</text>
+        </g>
+
+        <!-- ============================================================
+             KEY ARROWS (slot -> ThreadLocal object)
+             ============================================================ -->
+        <!-- USER key: weak -->
+        <line x1="650" y1="300" x2="650" y2="176" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrowWeak)" class="weak-flow" data-hot="2" data-hot-color="cyan"/>
+        <text x="660" y="244" fill="#94a3b8" font-size="8.45">弱引用</text>
+        <!-- ORDER key: weak, alive in step 3, gone after GC -->
+        <line x1="790" y1="300" x2="790" y2="176" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrowWeak)" class="weak-flow" data-hide-from="4"/>
+        <line class="reveal weak-flow" data-show="3" x1="790" y1="300" x2="790" y2="176" stroke="#fbbf24" stroke-width="2" stroke-dasharray="5,5" marker-end="url(#arrowAmber)"/>
+        <text x="800" y="244" fill="#94a3b8" font-size="8.45" data-hide-from="4">弱引用</text>
+
+        <!-- ============================================================
+             VALUE ARROWS (slot -> user data)
+             ============================================================ -->
+        <!-- USER value: strong -->
+        <line x1="650" y1="440" x2="650" y2="652" stroke="#fbbf24" stroke-width="1.8" marker-end="url(#arrowAmber)" data-hot="2" data-hot-color="cyan"/>
+        <text x="660" y="560" fill="#fbbf24" font-size="8.45">强引用</text>
+        <!-- ORDER value: strong, turns red after key is GC'd -->
+        <line x1="790" y1="440" x2="790" y2="652" stroke="#fbbf24" stroke-width="1.8" marker-end="url(#arrowAmber)" data-hide-from="4"/>
+        <line class="reveal" data-show="4,5" x1="790" y1="440" x2="790" y2="652" stroke="#fb7185" stroke-width="2.4" marker-end="url(#arrowRed)"/>
+        <text x="800" y="560" fill="#fbbf24" font-size="8.45" data-hide-from="4">强引用</text>
+        <text class="reveal" data-show="4,5" x="800" y="560" fill="#fb7185" font-size="8.45" font-weight="600">仍强可达</text>
+
+        <!-- ============================================================
+             KEY OBJECTS (above the map)
+             ============================================================ -->
+        <!-- static holder -->
+        <g class="node" data-hot="3" data-hot-color="cyan">
+          <title>UserContextHolder：static final 强引用 USER，key 不会被 GC</title>
+          <rect x="585" y="42" width="130" height="44" rx="6" fill="#0f172a"/>
+          <rect x="585" y="42" width="130" height="44" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.2"/>
+          <text x="650" y="60" fill="#67e8f9" font-size="11.05" font-weight="600" text-anchor="middle">UserContextHolder</text>
+          <text x="650" y="76" fill="#94a3b8" font-size="8.45" text-anchor="middle">static final ThreadLocal</text>
+        </g>
+        <line x1="650" y1="86" x2="650" y2="98" stroke="#22d3ee" stroke-width="1.8" marker-end="url(#arrowCyan)"/>
+        <text x="660" y="95" fill="#67e8f9" font-size="8.45">static 强引用</text>
+
+        <!-- USER key object -->
+        <g class="node" data-hot="1,2" data-hot-color="cyan">
+          <title>USER：static final ThreadLocal 对象，作为 map 的 key；本身不存值</title>
+          <rect x="585" y="100" width="130" height="72" rx="6" fill="#0f172a"/>
+          <rect x="585" y="100" width="130" height="72" rx="6" fill="rgba(8, 51, 68, 0.4)" stroke="#22d3ee" stroke-width="1.4"/>
+          <text x="650" y="118" fill="#67e8f9" font-size="12.35" font-weight="600" text-anchor="middle">USER</text>
+          <text x="650" y="133" fill="#cbd5e1" font-size="8.84" text-anchor="middle">ThreadLocal&lt;UserCtx&gt;</text>
+          <text x="650" y="148" fill="#64748b" font-size="8.06" text-anchor="middle">threadLocalHashCode = 0x…</text>
+          <text x="650" y="164" fill="#67e8f9" font-size="8.45" text-anchor="middle">不存值，只是 key</text>
+        </g>
+
+        <!-- Task A frame -->
+        <g class="node" data-ghost-from="3">
+          <title>Task A 栈帧：局部变量 tl 强引用 OrderTL；方法返回后栈帧销毁</title>
+          <rect x="725" y="42" width="130" height="44" rx="6" fill="#0f172a"/>
+          <rect x="725" y="42" width="130" height="44" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.2"/>
+          <text x="790" y="60" fill="#fbbf24" font-size="11.05" font-weight="600" text-anchor="middle">Task A 栈帧</text>
+          <text x="790" y="76" fill="#fcd34d" font-size="8.45" text-anchor="middle">tl = new ThreadLocal&lt;&gt;()</text>
+        </g>
+        <line x1="790" y1="86" x2="790" y2="98" stroke="#fbbf24" stroke-width="1.8" marker-end="url(#arrowAmber)" data-hide-from="3"/>
+        <text x="800" y="95" fill="#fbbf24" font-size="8.45" data-hide-from="3">强引用（运行中）</text>
+        <g class="reveal" data-show="3,4,5">
+          <text x="865" y="62" fill="#fb7185" font-size="9.1" font-weight="600">return → 栈帧销毁</text>
+          <text x="865" y="78" fill="#fda4af" font-size="8.45">局部变量 tl 的强引用消失</text>
+        </g>
+
+        <!-- ORDER key object -->
+        <g class="node" data-hot="3" data-hot-color="amber" data-hide-from="4">
+          <title>OrderTL：任务内 new 的临时 ThreadLocal；任务结束后只剩 Entry 的弱引用</title>
+          <rect x="725" y="100" width="130" height="72" rx="6" fill="#0f172a"/>
+          <rect x="725" y="100" width="130" height="72" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.4"/>
+          <text x="790" y="118" fill="#fbbf24" font-size="12.35" font-weight="600" text-anchor="middle">OrderTL</text>
+          <text x="790" y="133" fill="#cbd5e1" font-size="8.84" text-anchor="middle">ThreadLocal&lt;OrderCtx&gt;</text>
+          <text x="790" y="148" fill="#64748b" font-size="8.06" text-anchor="middle">threadLocalHashCode = 0x…</text>
+          <text x="790" y="164" fill="#fbbf24" font-size="8.45" text-anchor="middle">任务内 new</text>
+        </g>
+
+        <!-- T2 data-bleed callout -->
+        <g class="reveal" data-show="5">
+          <text x="575" y="272" fill="#fb7185" font-size="9.75" font-weight="600" text-anchor="end">T2 复用 → 读到 T1 的值</text>
+          <line x1="578" y1="276" x2="585" y2="300" stroke="#fb7185" stroke-width="1.4" marker-end="url(#arrowRed)"/>
+          <rect x="585" y="300" width="130" height="140" rx="6" fill="none" stroke="#fb7185" stroke-width="2"/>
+        </g>
+
+        <!-- ============================================================
+             VALUE OBJECTS (below the map)
+             ============================================================ -->
+        <text x="356" y="628" fill="#fbbf24" font-size="11.05" font-weight="600">value 端：用户数据（Entry.value 强引用持有）</text>
+
+        <!-- UserCtx -->
+        <g class="node" data-hot="2" data-hot-color="cyan">
+          <title>UserCtx：Task A 写入的值；T2 如果没有 remove，会读到它</title>
+          <rect x="585" y="656" width="130" height="84" rx="6" fill="#0f172a"/>
+          <rect x="585" y="656" width="130" height="84" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.4"/>
+          <text x="650" y="678" fill="#fbbf24" font-size="13" font-weight="600" text-anchor="middle">UserCtx</text>
+          <text x="650" y="694" fill="#fcd34d" font-size="8.84" text-anchor="middle">{ userId, token }</text>
+          <text x="650" y="710" fill="#94a3b8" font-size="8.84" text-anchor="middle">普通 Java 对象</text>
+          <text x="650" y="727" fill="#fbbf24" font-size="8.19" text-anchor="middle">被 Entry.value 强引用</text>
+        </g>
+        <g class="reveal" data-show="5">
+          <rect x="585" y="656" width="130" height="84" rx="6" fill="none" stroke="#fb7185" stroke-width="2" stroke-dasharray="5,3"/>
+          <text x="650" y="756" fill="#fb7185" font-size="8.45" font-weight="600" text-anchor="middle">T2 读到的就是它</text>
+        </g>
+
+        <!-- OrderCtx -->
+        <g class="node" data-hot="4,5" data-hot-color="red">
+          <title>OrderCtx：key 被 GC 后，value 仍被 Entry 强引用，无法回收</title>
+          <rect x="725" y="656" width="130" height="84" rx="6" fill="#0f172a"/>
+          <rect x="725" y="656" width="130" height="84" rx="6" fill="rgba(120, 53, 15, 0.3)" stroke="#fbbf24" stroke-width="1.4"/>
+          <text x="790" y="678" fill="#fbbf24" font-size="13" font-weight="600" text-anchor="middle">OrderCtx</text>
+          <text x="790" y="694" fill="#fcd34d" font-size="8.84" text-anchor="middle">{ orderId, 大字段 }</text>
+          <text x="790" y="710" fill="#94a3b8" font-size="8.84" text-anchor="middle">普通 Java 对象</text>
+          <g data-hide-from="4">
+            <text x="790" y="727" fill="#fbbf24" font-size="8.19" text-anchor="middle">key 没了，它还在</text>
+          </g>
+          <g class="reveal" data-show="4,5">
+            <text x="790" y="727" fill="#fb7185" font-size="8.19" text-anchor="middle">仍强可达 → 泄漏</text>
+          </g>
+          <g class="reveal" data-show="6">
+            <text x="790" y="727" fill="#34d399" font-size="8.19" text-anchor="middle">remove 后 → 可回收</text>
+          </g>
+        </g>
+        <rect class="reveal" data-show="6" x="725" y="656" width="130" height="84" rx="6" fill="none" stroke="#34d399" stroke-width="1.8" stroke-dasharray="5,3"/>
+
+        <!-- ============================================================
+             RIGHT: REACHABILITY CONCLUSION
+             ============================================================ -->
+        <g class="node">
+          <title>GC 只看可达性：Thread → threadLocals → table → Entry → value 这条链没断，value 就不能回收</title>
+          <rect x="1070" y="180" width="230" height="360" rx="10" fill="#0f172a"/>
+          <rect x="1070" y="180" width="230" height="360" rx="10" fill="rgba(30, 41, 59, 0.45)" stroke="#334155" stroke-width="1.5"/>
+          <text x="1088" y="204" fill="white" font-size="12.35" font-weight="600">判断标准：可达性</text>
+          <text x="1088" y="220" fill="#94a3b8" font-size="8.84">GC 不看弱引用，只看到达不了</text>
+          <text x="1088" y="250" fill="#fb7185" font-size="9.75" font-weight="600">GC Roots</text>
+          <text x="1088" y="268" fill="#cbd5e1" font-size="9.36">└ Thread T1（存活）</text>
+          <text x="1088" y="284" fill="#cbd5e1" font-size="9.36">  └ threadLocals</text>
+          <text x="1088" y="300" fill="#cbd5e1" font-size="9.36">    └ table[]</text>
+          <text x="1088" y="316" fill="#cbd5e1" font-size="9.36">      └ Entry</text>
+          <text x="1088" y="332" fill="#fb7185" font-size="9.36" font-weight="600">        └ value → 用户对象</text>
+          <line x1="1088" y1="348" x2="1282" y2="348" stroke="#1e293b"/>
+          <text x="1088" y="370" fill="#fb7185" font-size="9.75" font-weight="600">key 被清掉 ≠ Entry 被删除</text>
+          <text x="1088" y="388" fill="#cbd5e1" font-size="9.36">value 仍强可达 → 不能回收</text>
+          <text x="1088" y="406" fill="#cbd5e1" font-size="9.36">worker 不退出 → 链常驻</text>
+          <text x="1088" y="424" fill="#fbbf24" font-size="9.36">弱引用只保护 key，不保护 value</text>
+          <line x1="1088" y1="440" x2="1282" y2="440" stroke="#1e293b"/>
+          <text x="1088" y="462" fill="#34d399" font-size="9.36" font-weight="600">remove() 才能断开整条链</text>
+          <text x="1088" y="480" fill="#a7f3d0" font-size="8.84">clear key + value=null + 清槽</text>
+          <text x="1088" y="500" fill="#64748b" font-size="8.45">get/set 的清理只是机会性的</text>
+        </g>
+        <rect class="reveal" data-show="4,5" x="1070" y="180" width="230" height="360" rx="10" fill="none" stroke="#fb7185" stroke-width="2"/>
+        <rect class="reveal" data-show="6" x="1070" y="180" width="230" height="360" rx="10" fill="none" stroke="#34d399" stroke-width="2" stroke-dasharray="6,4"/>
+
+        <!-- remove call box -->
+        <g class="reveal" data-show="6">
+          <rect x="1070" y="70" width="230" height="80" rx="8" fill="#0f172a"/>
+          <rect x="1070" y="70" width="230" height="80" rx="8" fill="rgba(6, 78, 59, 0.4)" stroke="#34d399" stroke-width="1.5"/>
+          <text x="1088" y="94" fill="#34d399" font-size="11.05" font-weight="600">finally { tl.remove(); }</text>
+          <text x="1088" y="112" fill="#a7f3d0" font-size="8.84">e.clear() + value = null</text>
+          <text x="1088" y="128" fill="#a7f3d0" font-size="8.84">expungeStaleEntry() 清槽</text>
+          <text x="1088" y="143" fill="#64748b" font-size="8.19">确定性清理，不靠 GC</text>
+        </g>
+
+        <!-- ============================================================
+             LEFT: TASK TIMELINE
+             ============================================================ -->
+        <g class="node">
+          <title>同一个 worker 串行执行 Task A、Task B；任务结束不等于线程结束</title>
+          <rect x="30" y="430" width="230" height="140" rx="8" fill="#0f172a"/>
+          <rect x="30" y="430" width="230" height="140" rx="8" fill="rgba(120, 53, 15, 0.18)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="5,3"/>
+          <text x="44" y="450" fill="#fbbf24" font-size="11.05" font-weight="600">同一个 worker 串行执行</text>
+          <rect x="40" y="462" width="100" height="34" rx="5" fill="rgba(30, 41, 59, 0.6)" stroke="#64748b" stroke-width="1" data-hot="3" data-hot-color="amber"/>
+          <text x="90" y="483" fill="#e2e8f0" font-size="10.4" text-anchor="middle">Task A</text>
+          <line x1="140" y1="479" x2="150" y2="479" stroke="#64748b" stroke-width="1.5" marker-end="url(#arrowWeak)"/>
+          <rect x="150" y="462" width="100" height="34" rx="5" fill="rgba(30, 41, 59, 0.6)" stroke="#64748b" stroke-width="1" data-hot="5" data-hot-color="red"/>
+          <text x="200" y="483" fill="#e2e8f0" font-size="10.4" text-anchor="middle">Task B</text>
+          <text x="44" y="516" fill="#cbd5e1" font-size="9.36">任务 A 结束 ≠ 线程结束</text>
+          <text x="44" y="532" fill="#cbd5e1" font-size="9.36">下一个任务继续用同一份 map</text>
+          <text x="44" y="550" fill="#fb7185" font-size="9.36" font-weight="600">→ 上一位租客的行李还在</text>
+        </g>
+
+        <!-- ============================================================
+             LEGEND (outside all boundaries)
+             ============================================================ -->
+        <text x="30" y="792" fill="white" font-size="11.7" font-weight="600">图例</text>
+        <line x1="80" y1="788" x2="110" y2="788" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowCyan)"/>
+        <text x="116" y="792" fill="#94a3b8" font-size="9.75">强引用</text>
+        <line x1="190" y1="788" x2="220" y2="788" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5,5" marker-end="url(#arrowWeak)"/>
+        <text x="226" y="792" fill="#94a3b8" font-size="9.75">弱引用（GC 可清除 referent）</text>
+        <line x1="470" y1="788" x2="500" y2="788" stroke="#fb7185" stroke-width="2" marker-end="url(#arrowRed)"/>
+        <text x="506" y="792" fill="#94a3b8" font-size="9.75">泄漏路径 / 仍可达</text>
+        <line x1="690" y1="788" x2="720" y2="788" stroke="#34d399" stroke-width="2" marker-end="url(#arrowGreen)"/>
+        <text x="726" y="792" fill="#94a3b8" font-size="9.75">remove() 断开</text>
+        <rect x="880" y="780" width="20" height="14" rx="3" fill="none" stroke="#fbbf24" stroke-width="1" stroke-dasharray="3,3"/>
+        <text x="906" y="792" fill="#94a3b8" font-size="9.75">线程池长期存活</text>
+        <rect x="1060" y="780" width="20" height="14" rx="3" fill="rgba(136, 19, 55, 0.3)" stroke="#fb7185" stroke-width="1" stroke-dasharray="4,3"/>
+        <text x="1086" y="792" fill="#94a3b8" font-size="9.75">stale Entry（key=null）</text>
+        <text x="30" y="826" fill="#475569" font-size="9.1">OpenJDK ThreadLocal / ThreadLocalMap · JDK 8–21 结构一致 · 图中 table 只画 4 个槽示意，实际初始长度 16</text>
+      </svg>
+    </div>
+
+    <!-- Step narrative -->
+    <div class="step-panel" id="stepPanel" aria-live="polite">
+      <div class="step-copy">
+        <div class="step-kicker" id="stepKicker">STEP 01 / 06</div>
+        <h2 id="stepTitle">值不在 ThreadLocal 里，而在 Thread 里</h2>
+        <div class="step-body" id="stepBody"></div>
+      </div>
+      <pre class="step-code"><code id="stepCode"></code></pre>
+    </div>
+
+    <!-- Summary cards -->
+    <div class="cards">
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot cyan"></div>
+          <h3>结构真相</h3>
+        </div>
+        <ul>
+          <li>• 值存在 <code>Thread.threadLocals</code>，不在 <code>ThreadLocal</code></li>
+          <li>• 链路：Thread → ThreadLocalMap → Entry[] → value</li>
+          <li>• key = ThreadLocal 实例（弱引用）</li>
+          <li>• 每个线程一份 map，天然线程隔离</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot rose"></div>
+          <h3>泄漏真相</h3>
+        </div>
+        <ul>
+          <li>• 弱引用只回收 key，不回收 value</li>
+          <li>• <code>key=null</code> 的 Entry 仍被 <code>table[]</code> 强引用</li>
+          <li>• 线程池 worker 不退出 → 引用链常驻</li>
+          <li>• <code>static final</code> 忘记 remove → 泄漏 + 串号</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-dot emerald"></div>
+          <h3>正确姿势</h3>
+        </div>
+        <ul>
+          <li>• <code>static final ThreadLocal</code> + <code>finally remove()</code></li>
+          <li>• 不要每次任务 new ThreadLocal</li>
+          <li>• 跨线程用 TTL；Java 21 可看 ScopedValue</li>
+          <li>• <code>get/set</code> 的顺手清理不能依赖</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="footer">
+      Q6 · ThreadLocal 内部结构与泄漏真相 · 基于 OpenJDK ThreadLocal / ThreadLocalMap 源码<br>
+      交互：点击步骤 / ← → 方向键 / 自动演示 · 可导出 PNG / PDF
+    </p>
+  </div>
+
+  <script>
+    const STEPS = [
+      {
+        kicker: 'STEP 01 / 06 · 全景',
+        title: '值不在 ThreadLocal 里，而在 Thread 里',
+        body: `
+          <ul>
+            <li><code>Thread</code> 对象里有两个字段：<code>threadLocals</code>、<code>inheritableThreadLocals</code>，类型都是 <code>ThreadLocalMap</code>。</li>
+            <li>所以值是挂在<b>当前线程</b>身上的，不是挂在 <code>ThreadLocal</code> 对象上。</li>
+            <li><code>ThreadLocal</code> 只是 map 的 key + 访问入口；同一个 ThreadLocal 在不同线程里对应不同的 map、不同的值。</li>
+            <li><code>Entry</code> 继承 <code>WeakReference&lt;ThreadLocal&lt;?&gt;&gt;</code>：key 弱引用；<code>value</code> 是普通强引用字段。</li>
+          </ul>`,
+        code: `// Thread.java
+ThreadLocal.ThreadLocalMap threadLocals = null;
+ThreadLocal.ThreadLocalMap inheritableThreadLocals = null;
+
+// ThreadLocal.ThreadLocalMap
+static class Entry extends WeakReference<ThreadLocal<?>> {
+    Object value;              // 强引用
+    Entry(ThreadLocal<?> k, Object v) {
+        super(k);              // key 弱引用
+        value = v;
+    }
+}`
+      },
+      {
+        kicker: 'STEP 02 / 06 · 存取',
+        title: 'set/get 都是对「当前线程的 map」操作',
+        body: `
+          <ul>
+            <li><code>set(v)</code>：先 <code>Thread.currentThread()</code>，再取这个线程的 map，最后 <code>map.set(this, v)</code>。</li>
+            <li><code>get()</code> 同理：当前线程的 map + 当前 ThreadLocal 实例作 key。</li>
+            <li>线程隔离的本质是「每个线程一张表」，不是 ThreadLocal 里存了多份值。</li>
+            <li>同一个 key 再次 set 会覆盖 <code>Entry.value</code>；key 不存在才新建 Entry。</li>
+          </ul>`,
+        code: `public void set(T value) {
+    Thread t = Thread.currentThread();
+    ThreadLocalMap map = getMap(t);     // t.threadLocals
+    if (map != null) map.set(this, value);
+    else createMap(t, value);
+}
+
+public T get() {
+    Thread t = Thread.currentThread();
+    ThreadLocalMap map = getMap(t);
+    if (map != null) {
+        Entry e = map.getEntry(this);
+        if (e != null) return (T) e.value;
+    }
+    return setInitialValue();
+}`
+      },
+      {
+        kicker: 'STEP 03 / 06 · 任务结束',
+        title: '任务结束：强引用消失，只剩 Entry 的弱引用',
+        body: `
+          <ul>
+            <li>方法里 <code>new ThreadLocal&lt;&gt;()</code>，方法返回后栈帧销毁，业务代码对它的强引用消失。</li>
+            <li>此时 ThreadLocal 对象只剩 <code>Entry</code> 里那个 <code>WeakReference</code> 指向它——弱引用不阻止 GC。</li>
+            <li><b>对照：</b>如果 ThreadLocal 是 <code>static final</code>（如 <code>USER</code>），类字段一直强引用它，key 永远不会被 GC。弱引用在这条路径上根本帮不上忙。</li>
+            <li>弱引用只决定 key 能不能被回收，不决定 value。</li>
+          </ul>`,
+        code: `void handle() {
+    ThreadLocal<OrderCtx> tl = new ThreadLocal<>();
+    tl.set(new OrderCtx(...));
+    // 方法返回：栈帧销毁，tl 这个强引用消失
+    // 只剩 Entry.key 的 WeakReference → OrderTL
+}`
+      },
+      {
+        kicker: 'STEP 04 / 06 · GC 之后',
+        title: 'GC 之后：key 变 null，value 还在',
+        body: `
+          <ul>
+            <li>GC 发现 ThreadLocal 对象只有弱引用可达，清除 <code>WeakReference.referent</code>；<code>entry.get()</code> 变成 null。</li>
+            <li>但 <code>Entry</code> 对象本身仍被 <code>table[]</code> 强引用，<code>Entry.value</code> 仍强引用用户对象。</li>
+            <li>可达链：GC Root（存活线程）→ <code>Thread.threadLocals</code> → <code>table[]</code> → <code>Entry</code> → <code>value</code>。这条链没断，GC 就不能回收 value。</li>
+            <li><b>结论：</b>弱引用只避免 ThreadLocal 对象本身泄漏，没有解决 value 泄漏。这是那张图最容易让人误读的地方。</li>
+          </ul>`,
+        code: `GC Roots
+└─ Thread T1（线程池 worker，存活）
+   └─ threadLocals : ThreadLocalMap
+      └─ table[2] : Entry
+         ├─ key   = null        // 弱引用已被 GC 清除
+         └─ value ──strong──▶ OrderCtx   // 仍然可达 → 不能回收`
+      },
+      {
+        kicker: 'STEP 05 / 06 · 线程池复用',
+        title: '线程池复用：泄漏累积 + 数据串号',
+        body: `
+          <ul>
+            <li>线程池 worker 长期存活，任务结束线程不结束，map 跟着线程一直活着。</li>
+            <li><b>泄漏累积：</b>每次任务 new 一个 ThreadLocal，GC 后留下一个 <code>key=null</code> 的 Entry；任务越多，stale entry 和 value 越多。</li>
+            <li><b>数据串号：</b>静态 ThreadLocal 忘记 remove，下一个任务直接 <code>get()</code> 会读到上一个任务留下的值。</li>
+            <li><b>清理是机会性的：</b>只有当前线程在 get/set/remove 时才顺带 <code>expungeStaleEntry</code>；没有操作就不会清，别指望 GC 主动帮你扫 map。</li>
+          </ul>`,
+        code: `// 线程池里两个任务复用同一个 worker
+Task A: USER.set(new UserCtx("A"));
+        // 忘记 remove
+Task B: UserCtx ctx = USER.get();
+        // 读到 A 的值 → 串号
+
+// 临时 ThreadLocal：每次任务 new
+Task A: new ThreadLocal<OrderCtx>().set(...);
+        // GC 后 → table 里多一个 key=null 的 Entry`
+      },
+      {
+        kicker: 'STEP 06 / 06 · 修复',
+        title: '正确姿势：finally remove()',
+        body: `
+          <ul>
+            <li><code>remove()</code> 找到 key 对应的 Entry，<code>e.clear()</code> 清弱引用，<code>expungeStaleEntry()</code> 把 <code>value=null</code>、槽位置空，并重整冲突槽。</li>
+            <li>必须放在 <code>finally</code>，异常路径也要清理。</li>
+            <li>推荐 <code>static final ThreadLocal</code> + <code>try/finally</code>；不要每个任务 new 一个 ThreadLocal。</li>
+            <li>跨线程传递：<code>InheritableThreadLocal</code> 只在子线程创建时继承，线程池复用会失效；用阿里 TTL（TransmittableThreadLocal）或 Java 21 ScopedValue。</li>
+          </ul>`,
+        code: `private static final ThreadLocal<UserCtx> USER = new ThreadLocal<>();
+
+try {
+    USER.set(ctx);
+    // business logic
+} finally {
+    USER.remove();          // 唯一确定的清理时机
+}`
+      }
+    ];
+
+    const stage = document.getElementById('stage');
+    const chips = Array.from(document.querySelectorAll('.step-chip'));
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const playBtn = document.getElementById('playBtn');
+    const stepKicker = document.getElementById('stepKicker');
+    const stepTitle = document.getElementById('stepTitle');
+    const stepBody = document.getElementById('stepBody');
+    const stepCode = document.getElementById('stepCode');
+    const total = STEPS.length;
+    let current = 1;
+    let timer = null;
+
+    function applyStep(n) {
+      current = Math.max(1, Math.min(total, n));
+      stage.dataset.step = String(current);
+
+      chips.forEach(chip => {
+        const active = Number(chip.dataset.step) === current;
+        chip.classList.toggle('active', active);
+        chip.setAttribute('aria-selected', String(active));
+      });
+
+      stage.querySelectorAll('[data-show]').forEach(el => {
+        el.classList.toggle('on', el.dataset.show.split(',').includes(String(current)));
+      });
+      stage.querySelectorAll('[data-hide-from]').forEach(el => {
+        el.classList.toggle('off', current >= Number(el.dataset.hideFrom));
+      });
+      stage.querySelectorAll('[data-ghost-from]').forEach(el => {
+        el.classList.toggle('ghost', current >= Number(el.dataset.ghostFrom));
+      });
+      stage.querySelectorAll('[data-hot]').forEach(el => {
+        const color = el.dataset.hotColor || 'cyan';
+        el.classList.toggle('hot-' + color, el.dataset.hot.split(',').includes(String(current)));
+      });
+
+      const s = STEPS[current - 1];
+      stepKicker.textContent = s.kicker;
+      stepTitle.textContent = s.title;
+      stepBody.innerHTML = s.body;
+      stepCode.textContent = s.code;
+
+      prevBtn.disabled = current === 1;
+      nextBtn.disabled = current === total;
+      prevBtn.style.opacity = current === 1 ? '0.45' : '1';
+      nextBtn.style.opacity = current === total ? '0.45' : '1';
+    }
+
+    function stopPlay() {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
+      playBtn.classList.remove('primary');
+      playBtn.textContent = '▶ 自动演示';
+    }
+
+    function startPlay() {
+      if (timer) return;
+      if (current === total) applyStep(1);
+      playBtn.classList.add('primary');
+      playBtn.textContent = '⏸ 暂停';
+      timer = setInterval(() => {
+        if (current >= total) {
+          stopPlay();
+          return;
+        }
+        applyStep(current + 1);
+      }, 3000);
+    }
+
+    function togglePlay() {
+      timer ? stopPlay() : startPlay();
+    }
+
+    chips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        stopPlay();
+        applyStep(Number(chip.dataset.step));
+      });
+    });
+    prevBtn.addEventListener('click', () => { stopPlay(); applyStep(current - 1); });
+    nextBtn.addEventListener('click', () => { stopPlay(); applyStep(current + 1); });
+    playBtn.addEventListener('click', togglePlay);
+
+    document.addEventListener('keydown', (evt) => {
+      if (evt.key !== 'ArrowLeft' && evt.key !== 'ArrowRight') return;
+      const tag = (evt.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+      evt.preventDefault();
+      stopPlay();
+      applyStep(current + (evt.key === 'ArrowRight' ? 1 : -1));
+    });
+
+    const hashStep = location.hash.match(/^#step([1-6])$/);
+    applyStep(hashStep ? Number(hashStep[1]) : 1);
+
+    /* ---------- export helpers (from architecture-diagram skill) ---------- */
+    async function copyAsImage(btn) {
+      const orig = btn.textContent;
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+        btn.textContent = '✓ Copied!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPNG(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const link = document.createElement('a');
+        link.download = 'q06-threadlocal.png';
+        link.href = canvas.toDataURL('image/png');
+        link.click();
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+
+    async function downloadPDF(btn) {
+      const orig = btn.textContent;
+      btn.textContent = '⏳ ...';
+      try {
+        const el = document.getElementById('report-container');
+        const r = el.getBoundingClientRect();
+        const pad = 32;
+        const canvas = await html2canvas(document.body, { backgroundColor: '#020617', scale: 2, useCORS: true, ignoreElements: (e) => e.classList && e.classList.contains('toolbar'), x: r.left + window.scrollX - pad, y: r.top + window.scrollY - pad, width: r.width + pad * 2, height: r.height + pad * 2 });
+        const imgData = canvas.toDataURL('image/png');
+        const { jsPDF } = window.jspdf;
+        const orientation = canvas.width > canvas.height ? 'landscape' : 'portrait';
+        const pdf = new jsPDF({ orientation, unit: 'px', format: [canvas.width, canvas.height], hotfixes: ['px_scaling'] });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save('q06-threadlocal.pdf');
+        btn.textContent = '✓ Done!';
+      } catch (e) {
+        btn.textContent = '✗ Failed';
+      }
+      setTimeout(() => btn.textContent = orig, 2000);
+    }
+  </script>
+</body>
+</html>
