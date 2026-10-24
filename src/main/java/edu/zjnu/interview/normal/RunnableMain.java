@@ -13,6 +13,11 @@ public class RunnableMain implements Runnable {
     public void run() {
         Thread currentThread = Thread.currentThread();
         System.out.println(currentThread.getName());
+
+        StackTraceElement[] stackTraces = currentThread.getStackTrace();
+        for (StackTraceElement stackTrace : stackTraces) {
+            System.out.println(stackTrace);
+        }
     }
 
     public static void main(String[] args) {
