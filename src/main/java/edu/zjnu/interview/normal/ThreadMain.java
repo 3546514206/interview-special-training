@@ -17,7 +17,7 @@ public class ThreadMain extends Thread {
 
 
     public static void main(String[] args) {
-        ThreadMain t = new ThreadMain();
+        Thread t = new ThreadMain();
         t.start();
     }
 }
