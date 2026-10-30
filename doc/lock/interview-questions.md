@@ -249,7 +249,7 @@ end:
   - 获取：非公平模式下 `NonfairSync#tryAcquire` 调用 `Sync#nonfairTryAcquire`，一个方法同时处理「首次获取 + 重入」——`state == 0` 时 CAS 到 1 并记录 owner；owner 是当前线程则 `state + 1`，超过上限抛 `Error("Maximum lock count exceeded")`。
   - 公平模式下 `FairSync#tryAcquire` 在 `state == 0` 时先检查 `!hasQueuedPredecessors()`，再 CAS；重入路径与非公平一致。
   - 释放：`tryRelease` —— 校验 owner 是自己（否则抛 `IllegalMonitorStateException`），`state - 1`，减到 0 时清空 owner 并返回 true，由 AQS 的 `release()` 负责唤醒后继。
-- `synchronized`：HotSpot 在轻量级锁状态下，mark word 指向栈上的 Lock Record，重入时追加新的 Lock Record 形成链；重量级锁（`ObjectMonitor`）侧有重入计数字段。字段归属与命名随 HotSpot 版本变化，具体实现需核实。
+- `synchronized`：HotSpot 在轻量级锁状态下，mark word 指向栈上的 Lock Record，重入时追加新的 Lock Record 形成链；重量级锁（`ObjectMonitor`）侧的重入计数是 `_recursions`（**JDK 8 源码已复核**：`hotspot/src/share/vm/runtime/objectMonitor.hpp`，`_recursions` 注释为 "recursion count, 0 for first entry"）。同文件还定义了 `_owner`（持有者 Thread*）、`_EntryList`（阻塞在进入或重入上的线程）、`_WaitSet`（调用 `wait()` 的线程）、`_cxq`、`_waiters`、`_count`。配图：[diagrams/monitor-mechanism.html](./diagrams/monitor-mechanism.html)。JDK 13+ 该文件的字段有调整，跨版本结论需另行核实。
 - 可重入的价值：避免「自己再拿自己需要的锁」导致的自锁死；也让 `synchronized` 方法之间可以安全互相调用，锁对象可以作为参数传递。
 - 不可重入锁的失败模式：同一线程二次加锁会把自己挂起，等自己释放 → 永久自死锁。
 
