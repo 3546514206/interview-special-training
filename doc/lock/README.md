@@ -16,6 +16,7 @@
 | [lab-guide.md](./lab-guide.md) | 实验教程 7 篇（Lab1 可见性 · Lab2 CAS 原子类 · Lab3 AQS · Lab4 死锁 · Lab5 读写锁 · Lab6 StampedLock · Lab7 选型基准） |
 | [diagrams/lock-map.html](./diagrams/lock-map.html) | 单机锁全景交互图（四象限分类 + 点选查看原理 / 源码入口 / 适用 / 坑） |
 | [diagrams/aqs-flow.html](./diagrams/aqs-flow.html) | AQS 获取释放流程交互图（独占 / 共享 / Condition 三条路径可切换高亮） |
+| [diagrams/monitor-mechanism.html](./diagrams/monitor-mechanism.html) | `synchronized` 底层 Monitor 机制图（对象头重量级锁指针 → ObjectMonitor 的 _owner / _EntryList / _WaitSet / _recursions / _count + ①-⑤ 状态流转） |
 | `src/main/java/edu/zjnu/interview/lock/` | 实验代码，按 `q<NN>/L<NN><Name>Lab.java` 组织，8 个实验对应 8 个可运行入口 |
 | `src/main/java/edu/zjnu/interview/lock/q08/L08ThreadCommunicationLab.java` | 线程通信实验：wait/notifyAll、join、sleep vs wait、interrupt、park/unpark |
 | `src/main/java/edu/zjnu/interview/lock/q03/SimpleAqsStudy.java` | **附加动手篇**：简化版 AQS 骨架 + 简化版可重入锁（自己手写一遍，注释讲原理） |
