@@ -122,7 +122,7 @@ TRUNCATE TABLE mysql.general_log;
 SET GLOBAL general_log = ON;
 
 -- 3. 制造一些语句
-SELECT 1 AS demo;
+SELECT 1 AS threadSynchronizedMain;
 CREATE TABLE IF NOT EXISTS interview_lab.log_lab (
   id INT PRIMARY KEY,
   val VARCHAR(32)
