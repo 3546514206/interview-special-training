@@ -9,6 +9,7 @@
 | 文件 | 内容 |
 |---|---|
 | [AI面试真题答卷-v1.md](./AI面试真题答卷-v1.md) | Top 50 高频题速记答卷（Agent / RAG / LLM / MCP / 评估 / 工程 / Prompt 等 10 章节） |
+| [**rag/ 子专题**](./rag/README.md) | **RAG 深度专题（Qdrant 落地版）** · 24 题答卷 + 5 个可复现实验 · 每个结论配自建 13.6 万 chunk 知识库的实测数字 |
 | [diagrams/ai01-react-loop.html](./diagrams/ai01-react-loop.html) | **Q1 · ReAct 循环 + Function Calling** · 7 阶段 step-through · Prompt 演化 + Tool JSON Schema |
 | [diagrams/ai02-rag-pipeline.html](./diagrams/ai02-rag-pipeline.html) | **Q21-Q26 · RAG 完整链路** · 离线索引 / 在线查询 / Agentic RAG 三模式可切换 · Rerank 对比 |
 | [diagrams/ai03-multi-agent.html](./diagrams/ai03-multi-agent.html) | **Q5/Q17 · Multi-Agent 协作** · 4 种模式（单 / Supervisor / Hierarchical / Peer）+ 单 vs 多决策表 |
