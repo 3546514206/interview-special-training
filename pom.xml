@@ -20,7 +20,8 @@
     -->
     <modules>
         <module>java-labs</module>
-        <!-- 后续子项目在此登记，例如：<module>spring-labs</module> -->
+        <module>spring-labs</module>
+        <!-- 后续子项目在此登记 -->
     </modules>
 
     <properties>

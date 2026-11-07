@@ -1,0 +1,30 @@
+server:
+  port: ${SERVER_PORT:8080}
+  # 容器 / 远程调试场景需要监听所有网卡
+  address: 0.0.0.0
+  shutdown: graceful
+
+spring:
+  application:
+    name: spring-labs
+  mvc:
+    # 错误响应体统一走 GlobalExceptionHandler 的 {"error":"..."}，不用 ProblemDetail
+    problemdetails:
+      enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        # 只暴露 health / info，不暴露 env 等敏感端点
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+  info:
+    env:
+      enabled: false
+
+logging:
+  level:
+    edu.zjnu.interview.springlabs: INFO

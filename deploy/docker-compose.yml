@@ -1,0 +1,69 @@
+# ==========================================================================
+#  spring-labs · 腾讯云 119 运行时编排（Docker Compose v2）
+#
+#  本文件只含非敏感配置；宿主机 / 用户 / 私钥等凭据一律不进入仓库，
+#  由 deploy.sh 在部署时通过命令行参数传入。
+#
+#  用法：
+#    cp .env.example .env     # 按需调整端口 / JDWP 绑定地址 / 镜像标签
+#    docker compose up -d
+#
+#  注意：本机的 docker compose 是 v2，没有独立的 `docker-compose` 命令。
+# ==========================================================================
+
+# 项目名固定，避免在任意目录下执行 docker compose 时生成多个项目/容器
+name: spring-labs
+
+services:
+  spring-labs:
+    container_name: ${CONTAINER_NAME:-spring-labs}
+    image: ${IMAGE_NAME:-spring-labs}:${IMAGE_TAG:-jdwp}
+    restart: unless-stopped
+    working_dir: /app
+
+    ports:
+      # ---- 业务 HTTP：容器内固定 8080，宿主机侧端口由 APP_PORT 决定 ----
+      # 等价于 0.0.0.0:8080:8080（公网可达，需在腾讯云安全组放通 8080 入方向）
+      - "${APP_PORT:-8080}:8080"
+
+      # ---- JDWP 远程调试：容器内固定 5005 ----
+      # JDWP_BIND 决定 JDWP 端口在【宿主机】上的绑定地址：
+      #   0.0.0.0   -> 公网直连（当前默认，IDEA 直连 <服务器IP>:5005）
+      #                 ⚠️ JDWP 未加密且等价于远程代码执行入口（RCE），
+      #                    必须在腾讯云安全组把 5005 入方向来源限制为你的固定 IP。
+      #   127.0.0.1 -> 仅宿主机回环可达，配合 SSH 隧道使用（收紧方案）：
+      #                 ssh -N -L 5005:127.0.0.1:5005 -i <私钥> <用户>@<服务器IP>
+      #                 IDEA 里 host=localhost port=5005
+      - "${JDWP_BIND:-0.0.0.0}:${JDWP_PORT:-5005}:5005"
+
+    environment:
+      # JDWP 调试代理。JDK 9+ 语法：address=*:5005 表示监听容器内所有网卡，
+      # 这样 Docker 把端口映射到宿主机 127.0.0.1 或 0.0.0.0 都能通。
+      JAVA_TOOL_OPTIONS: "-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:5005"
+
+      # 容器内业务端口（与 application.yml 的 SERVER_PORT 对应）
+      SERVER_PORT: "8080"
+
+      # JVM 参数。deploy/Dockerfile 的 entrypoint 用 sh -c 展开 $JAVA_OPTS。
+      # 宿主机物理内存仅 ~1.9G，因此堆给 640m、GC 用 Serial 省内存与线程。
+      JAVA_OPTS: "-Xms128m -Xmx640m -XX:MaxMetaspaceSize=192m -XX:+UseSerialGC -Dfile.encoding=UTF-8 -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/app/logs"
+
+    volumes:
+      # 堆转储 / 应用日志落到宿主机，便于排障
+      - ./logs:/app/logs
+
+    healthcheck:
+      # 容器内自检，与腾讯云安全组无关
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      # Spring Boot 冷启动 + JIT，给足 45s 再开始判定失败
+      start_period: 45s
+
+    logging:
+      # 日志轮转，防止 json 日志把磁盘打满
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
