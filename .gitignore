@@ -35,8 +35,13 @@ build/
 ### Mac OS ###
 .DS_Store
 /.mvn/
-/.tmp/
-/.env
+
+### 临时脚本目录（各层级都忽略） ###
+.tmp/
+
+### 本地环境变量（聚合工程下各子模块各自持有一份 .env） ###
+# 用 **/ 匹配任意层级：根目录、各子模块目录都忽略；.env.example 是模板，不受影响
+**/.env
 
 ### Secrets & credentials (防御未来误 commit) ###
 *.pem
