@@ -1,0 +1,26 @@
+# spring-labs 运行时镜像构建上下文忽略规则
+# 构建上下文 = spring-labs/
+
+# 源码与文档不参与运行时镜像
+src/
+*.md
+.idea/
+*.iml
+.git/
+.gitignore
+mvnw
+mvnw.cmd
+.mvn/
+
+# 中间产物（保留 jar 本身）
+target/classes/
+target/test-classes/
+target/generated-sources/
+target/generated-test-sources/
+target/maven-status/
+target/maven-archiver/
+target/surefire-reports/
+target/*.jar.original
+
+# 重要：不要排除 app.jar，也不要排除 target/app.jar
+# 运行时阶段依赖 COPY app.jar /app/app.jar

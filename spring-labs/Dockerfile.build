@@ -1,0 +1,28 @@
+# spring-labs 多阶段自包含构建（CI 用）
+#
+# 构建上下文必须是【仓库根目录】（因为子模块 pom 通过 relativePath ../pom.xml 继承父 pom）：
+#   docker build -f spring-labs/Dockerfile.build -t spring-labs:latest .
+#
+# 如需在镜像内也跑测试，去掉 -DskipTests 即可。
+
+FROM maven:3.9-eclipse-temurin-17 AS build
+
+WORKDIR /build
+
+# 父 pom（聚合工程） + 子模块 pom + 源码
+COPY pom.xml ./pom.xml
+COPY spring-labs/pom.xml ./spring-labs/pom.xml
+COPY spring-labs/src ./spring-labs/src
+
+RUN mvn -B -f spring-labs/pom.xml -DskipTests package
+
+FROM eclipse-temurin:17-jre
+
+WORKDIR /app
+
+COPY --from=build /build/spring-labs/target/spring-labs.jar /app/app.jar
+
+# 8080: HTTP 服务端口；5005: JDWP 远程调试端口
+EXPOSE 8080 5005
+
+ENTRYPOINT ["java","-jar","/app/app.jar"]
