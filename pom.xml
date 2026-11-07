@@ -7,59 +7,85 @@
     <groupId>edu.zjnu</groupId>
     <artifactId>interview-special-training</artifactId>
     <version>1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+
+    <name>interview-special-training</name>
+    <description>面试专项训练 · Maven 聚合工程（子项目集合）</description>
+
+    <!--
+      聚合工程本身不产出 jar，只负责：
+        1. 统一声明子模块；
+        2. 统一管理公共属性（Java 版本、编码、依赖版本、插件版本）。
+      新增子项目时：在同级目录建子工程目录，写好子 pom，并在下面 <modules> 里登记一行。
+    -->
+    <modules>
+        <module>java-labs</module>
+        <!-- 后续子项目在此登记，例如：<module>spring-labs</module> -->
+    </modules>
 
     <properties>
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <!-- 公共依赖版本（供各子模块 dependencyManagement 引用） -->
+        <jol.version>0.10</jol.version>
+        <hikaricp.version>4.0.3</hikaricp.version>
+        <mysql-connector.version>8.4.0</mysql-connector.version>
+        <kafka-clients.version>3.9.1</kafka-clients.version>
+
+        <!-- 公共插件版本 -->
+        <maven-compiler-plugin.version>3.13.0</maven-compiler-plugin.version>
+        <exec-maven-plugin.version>1.6.0</exec-maven-plugin.version>
     </properties>
 
-    <dependencies>
-        <!-- Q4 锁升级实验：打印对象头 mark word -->
-        <dependency>
-            <groupId>org.openjdk.jol</groupId>
-            <artifactId>jol-core</artifactId>
-            <version>0.10</version>
-        </dependency>
-        <!-- database Q01：HikariCP 连接池实验（4.0.3 是最后一个兼容 Java 8 的版本） -->
-        <dependency>
-            <groupId>com.zaxxer</groupId>
-            <artifactId>HikariCP</artifactId>
-            <version>4.0.3</version>
-        </dependency>
-        <!-- database Q01/Q02：MySQL JDBC 驱动 -->
-        <dependency>
-            <groupId>com.mysql</groupId>
-            <artifactId>mysql-connector-j</artifactId>
-            <version>8.4.0</version>
-        </dependency>
-        <!-- Kafka 简单示例：生产者 / 消费者客户端 -->
-        <dependency>
-            <groupId>org.apache.kafka</groupId>
-            <artifactId>kafka-clients</artifactId>
-            <version>3.9.1</version>
-        </dependency>
-    </dependencies>
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.openjdk.jol</groupId>
+                <artifactId>jol-core</artifactId>
+                <version>${jol.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.zaxxer</groupId>
+                <artifactId>HikariCP</artifactId>
+                <version>${hikaricp.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.mysql</groupId>
+                <artifactId>mysql-connector-j</artifactId>
+                <version>${mysql-connector.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.kafka</groupId>
+                <artifactId>kafka-clients</artifactId>
+                <version>${kafka-clients.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <build>
-        <plugins>
-            <!-- 显式锁定 Java 8,避免部分 mvn 不读 maven.compiler.source/target properties -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-compiler-plugin</artifactId>
-                <version>3.13.0</version>
-                <configuration>
-                    <source>1.8</source>
-                    <target>1.8</target>
-                </configuration>
-            </plugin>
-            <!-- 统一运行方式: mvn -q compile exec:java -Dexec.mainClass=edu.zjnu.lab.q01.Q01HashMapLab -->
-            <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>exec-maven-plugin</artifactId>
-                <version>1.6.0</version>
-            </plugin>
-        </plugins>
+        <pluginManagement>
+            <plugins>
+                <!-- 显式锁定 Java 8，避免部分 mvn 不读 maven.compiler.source/target properties -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${maven-compiler-plugin.version}</version>
+                    <configuration>
+                        <source>${maven.compiler.source}</source>
+                        <target>${maven.compiler.target}</target>
+                    </configuration>
+                </plugin>
+                <!-- 统一运行方式: mvn -q -pl java-labs compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q01.L01VisibilityLab -->
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>exec-maven-plugin</artifactId>
+                    <version>${exec-maven-plugin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
     </build>
 
 </project>
