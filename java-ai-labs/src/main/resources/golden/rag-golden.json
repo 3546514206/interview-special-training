@@ -1,0 +1,366 @@
+{
+  "dataset": "rag-golden-v1",
+  "description": "私募资产服务知识库黄金集。相关文档按「文档 id」标注（与文件名主干一致）；difficulty=EASY 表示问题与语料词面高度重合，HARD 表示刻意做了改写/换词/跨文档组合的低词面重叠问题；UNANSWERABLE 表示知识库中无答案、应当拒答。",
+  "cases": [
+    {
+      "id": "g001",
+      "question": "私募管理人接入平台的实缴资本最低要求是多少？",
+      "expectedDocIds": ["private-asset-access-standard"],
+      "expectedKeywords": ["1000万元"],
+      "referenceAnswer": "管理人实缴资本不低于人民币 1000 万元，且注册资本必须已经实缴，不接受认缴额度。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g002",
+      "question": "私募管理人的成立年限和管理规模门槛分别是什么？",
+      "expectedDocIds": ["private-asset-access-standard"],
+      "expectedKeywords": ["3年", "5亿元"],
+      "referenceAnswer": "管理人成立满 3 年，并且管理规模不低于 5 亿元人民币。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g003",
+      "question": "单一投资者持有私募基金份额的比例上限是多少？",
+      "expectedDocIds": ["private-asset-access-standard"],
+      "expectedKeywords": ["50%"],
+      "referenceAnswer": "单一投资者持有份额占比不得超过 50%。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g004",
+      "question": "资产配置中股票类资产的比例上限是多少？",
+      "expectedDocIds": ["asset-allocation-service"],
+      "expectedKeywords": ["30%"],
+      "referenceAnswer": "股票类资产占 30% 以内。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g005",
+      "question": "什么情况下会触发战术再平衡？",
+      "expectedDocIds": ["asset-allocation-service"],
+      "expectedKeywords": ["5个百分点", "8%"],
+      "referenceAnswer": "任一大类资产偏离目标比例超过 5 个百分点，或组合近一年回撤超过 8% 时触发。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g006",
+      "question": "组合最大回撤的强制降仓线是多少？",
+      "expectedDocIds": ["asset-allocation-service"],
+      "expectedKeywords": ["12%"],
+      "referenceAnswer": "最大回撤的预警线为 8%，强制降仓线为 12%。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g007",
+      "question": "R3 产品的橙色净值预警回撤阈值是多少？",
+      "expectedDocIds": ["risk-identification-rules"],
+      "expectedKeywords": ["6%"],
+      "referenceAnswer": "R3 与 R4 产品的对应阈值下调为 3% 与 6%。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g008",
+      "question": "单一发行人占组合比例的集中度预警阈值是多少？",
+      "expectedDocIds": ["risk-identification-rules"],
+      "expectedKeywords": ["20%"],
+      "referenceAnswer": "单一发行人占组合比例 20%，触发后自动冻结新增申购。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g009",
+      "question": "涉及费率和风控阈值的核心配置变更需要几级审批？",
+      "expectedDocIds": ["operations-config-management"],
+      "expectedKeywords": ["二级"],
+      "referenceAnswer": "核心配置（涉及费率、风控阈值、权限）需要二级审批。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g010",
+      "question": "配置灰度发布分几档，每档观察窗口是多久？",
+      "expectedDocIds": ["operations-config-management"],
+      "expectedKeywords": ["10%", "50%", "100%", "30分钟"],
+      "referenceAnswer": "灰度发布按 10%、50%、100% 三档推进，每档观察窗口为 30 分钟。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g011",
+      "question": "合规形式审核的时限是多少，需要几名审核人员？",
+      "expectedDocIds": ["compliance-review-requirements"],
+      "expectedKeywords": ["5个工作日", "3名"],
+      "referenceAnswer": "形式合规审核时限为 5 个工作日，实质合规审核需要 3 名审核人员参与。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g012",
+      "question": "手机号的脱敏规则是保留哪几位？",
+      "expectedDocIds": ["data-permission-masking"],
+      "expectedKeywords": ["前 3 位", "后 4 位"],
+      "referenceAnswer": "手机号保留前 3 位和后 4 位，中间 4 位以星号掩码。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g013",
+      "question": "私募产品的冷静期是多长时间？",
+      "expectedDocIds": ["private-product-suitability"],
+      "expectedKeywords": ["24小时"],
+      "referenceAnswer": "冷静期为 24 小时，冷静期内不得划款。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g014",
+      "question": "首次面谈时长和风险测评问卷的题数分别是多少？",
+      "expectedDocIds": ["advisory-service-process"],
+      "expectedKeywords": ["60分钟", "28"],
+      "referenceAnswer": "首次面谈时长不少于 60 分钟，风险测评问卷共 28 道题。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g015",
+      "question": "准入尽调的必填项一共有多少个，分几大类？",
+      "expectedDocIds": ["due-diligence-checklist"],
+      "expectedKeywords": ["21", "6"],
+      "referenceAnswer": "尽调清单共 21 个必填项，分为 6 大类。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g016",
+      "question": "私钻客户的资产门槛是多少，服务响应时效是多久？",
+      "expectedDocIds": ["hnw-client-service"],
+      "expectedKeywords": ["1000万元", "30分钟"],
+      "referenceAnswer": "私钻客户为可投资资产 1000 万元以上，服务响应时效为 30 分钟。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g017",
+      "question": "私钻客户的响应时效是多少，准入尽调必填项又有多少个？",
+      "expectedDocIds": ["hnw-client-service", "due-diligence-checklist"],
+      "expectedKeywords": ["30分钟", "21"],
+      "referenceAnswer": "私钻客户响应时效 30 分钟；尽调清单共 21 个必填项。",
+      "type": "MULTI_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g018",
+      "question": "风险测评问卷有多少道题，私募适当性人工复核通过率是多少？",
+      "expectedDocIds": ["advisory-service-process", "private-product-suitability"],
+      "expectedKeywords": ["28", "82%"],
+      "referenceAnswer": "风险测评问卷共 28 道题；适当性人工复核通过率历史水平为 82%。",
+      "type": "MULTI_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g019",
+      "question": "私募产品的最低认购金额和单只募集规模上限分别是多少？",
+      "expectedDocIds": ["private-product-suitability"],
+      "expectedKeywords": ["100万元", "5亿元"],
+      "referenceAnswer": "私募产品最低认购金额 100 万元人民币，单只募集规模上限 5 亿元。",
+      "type": "MULTI_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "g020",
+      "question": "私募产品的适当性匹配允许哪几类风险等级组合？",
+      "expectedDocIds": ["private-product-suitability"],
+      "expectedKeywords": ["15"],
+      "referenceAnswer": "产品风险等级 R1 到 R5、投资者等级 C1 到 C5，允许的匹配组合共 15 种。",
+      "type": "SINGLE_HOP",
+      "difficulty": "EASY",
+      "answerable": true
+    },
+    {
+      "id": "h001",
+      "question": "投顾第一次和客户沟通需要安排多长时间？",
+      "expectedDocIds": ["advisory-service-process"],
+      "expectedKeywords": ["60分钟"],
+      "referenceAnswer": "首次面谈时长不少于 60 分钟，必须由持牌投顾完成并全程双录。",
+      "type": "SINGLE_HOP",
+      "difficulty": "HARD",
+      "answerable": true
+    },
+    {
+      "id": "h002",
+      "question": "定期重新调整投资组合的周期是多久？",
+      "expectedDocIds": ["asset-allocation-service"],
+      "expectedKeywords": ["季度"],
+      "referenceAnswer": "常规调仓周期为每季度一次。",
+      "type": "SINGLE_HOP",
+      "difficulty": "HARD",
+      "answerable": true
+    },
+    {
+      "id": "h003",
+      "question": "个人投资者首次参与这类产品最少要准备多少钱？",
+      "expectedDocIds": ["private-product-suitability"],
+      "expectedKeywords": ["100万元"],
+      "referenceAnswer": "私募产品的最低认购金额为 100 万元人民币。",
+      "type": "SINGLE_HOP",
+      "difficulty": "HARD",
+      "answerable": true
+    },
+    {
+      "id": "h004",
+      "question": "产品的净值跌到多少需要亮黄灯？",
+      "expectedDocIds": ["risk-identification-rules"],
+      "expectedKeywords": ["5%"],
+      "referenceAnswer": "R1 与 R2 产品的单月净值回撤达到 5% 触发黄色预警。",
+      "type": "SINGLE_HOP",
+      "difficulty": "HARD",
+      "answerable": true
+    },
+    {
+      "id": "h005",
+      "question": "配置改错了之后要求多长时间内能退回去？",
+      "expectedDocIds": ["operations-config-management"],
+      "expectedKeywords": ["15分钟"],
+      "referenceAnswer": "回滚要求 15 分钟内完成，配置平台通过版本快照实现一键回滚。",
+      "type": "SINGLE_HOP",
+      "difficulty": "HARD",
+      "answerable": true
+    },
+    {
+      "id": "h006",
+      "question": "尽调的时候要调阅多长时间的流水？",
+      "expectedDocIds": ["due-diligence-checklist"],
+      "expectedKeywords": ["24个月"],
+      "referenceAnswer": "现场尽调需调阅最近 24 个月的交易流水与后台系统日志。",
+      "type": "SINGLE_HOP",
+      "difficulty": "HARD",
+      "answerable": true
+    },
+    {
+      "id": "h007",
+      "question": "客户资产达到多少才算是最高等级的客户？",
+      "expectedDocIds": ["hnw-client-service"],
+      "expectedKeywords": ["1000万元"],
+      "referenceAnswer": "私钻为可投资资产 1000 万元以上，是最高一档客户。",
+      "type": "SINGLE_HOP",
+      "difficulty": "HARD",
+      "answerable": true
+    },
+    {
+      "id": "h008",
+      "question": "审核材料要在库里放多长时间？",
+      "expectedDocIds": ["compliance-review-requirements"],
+      "expectedKeywords": ["10年"],
+      "referenceAnswer": "所有审核材料留存 10 年。",
+      "type": "SINGLE_HOP",
+      "difficulty": "HARD",
+      "answerable": true
+    },
+    {
+      "id": "h009",
+      "question": "身份证号脱敏之后保留哪几段？",
+      "expectedDocIds": ["data-permission-masking"],
+      "expectedKeywords": ["前 6 位", "后 4 位"],
+      "referenceAnswer": "身份证号保留前 6 位和后 4 位。",
+      "type": "SINGLE_HOP",
+      "difficulty": "HARD",
+      "answerable": true
+    },
+    {
+      "id": "h010",
+      "question": "托管费用和管理费用合计不能超过多少？",
+      "expectedDocIds": ["private-asset-custody-rules"],
+      "expectedKeywords": ["2.5%"],
+      "referenceAnswer": "托管费 0.05%、管理费 1.5%、业绩报酬 20%，三项费用合计不得超过 2.5%。",
+      "type": "SINGLE_HOP",
+      "difficulty": "HARD",
+      "answerable": true
+    },
+    {
+      "id": "h011",
+      "question": "洗钱风险等级最高的那批客户多久要复核一次？",
+      "expectedDocIds": ["client-identification-rules"],
+      "expectedKeywords": ["6个月"],
+      "referenceAnswer": "高风险客户每 6 个月复核一次风险等级。",
+      "type": "SINGLE_HOP",
+      "difficulty": "HARD",
+      "answerable": true
+    },
+    {
+      "id": "h012",
+      "question": "第一次见客户要谈多久，尽调时又要把多长时间的交易记录翻一遍？",
+      "expectedDocIds": ["advisory-service-process", "due-diligence-checklist"],
+      "expectedKeywords": ["60分钟", "24个月"],
+      "referenceAnswer": "首次面谈不少于 60 分钟；尽调需调阅最近 24 个月的交易流水。",
+      "type": "MULTI_HOP",
+      "difficulty": "HARD",
+      "answerable": true
+    },
+    {
+      "id": "g021",
+      "question": "港股通每天的额度是多少？",
+      "expectedDocIds": [],
+      "expectedKeywords": [],
+      "referenceAnswer": "知识库中没有关于港股通额度的问题，应当拒答。",
+      "type": "UNANSWERABLE",
+      "difficulty": "EASY",
+      "answerable": false
+    },
+    {
+      "id": "g022",
+      "question": "螺纹钢期货主力合约昨天的最高价是多少？",
+      "expectedDocIds": [],
+      "expectedKeywords": [],
+      "referenceAnswer": "知识库中没有期货行情数据，应当拒答。",
+      "type": "UNANSWERABLE",
+      "difficulty": "EASY",
+      "answerable": false
+    },
+    {
+      "id": "g023",
+      "question": "公司年会几点开始，在哪个酒店举办？",
+      "expectedDocIds": [],
+      "expectedKeywords": [],
+      "referenceAnswer": "知识库中没有公司年会信息，应当拒答。",
+      "type": "UNANSWERABLE",
+      "difficulty": "EASY",
+      "answerable": false
+    },
+    {
+      "id": "h013",
+      "question": "明天杭州的天气怎么样，适合去爬山吗？",
+      "expectedDocIds": [],
+      "expectedKeywords": [],
+      "referenceAnswer": "知识库中没有天气信息，应当拒答。",
+      "type": "UNANSWERABLE",
+      "difficulty": "HARD",
+      "answerable": false
+    }
+  ]
+}

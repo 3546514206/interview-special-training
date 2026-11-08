@@ -21,12 +21,15 @@
     <modules>
         <module>java-labs</module>
         <module>spring-labs</module>
+        <module>java-ai-labs</module>
         <!-- 后续子项目在此登记 -->
     </modules>
 
     <properties>
-        <maven.compiler.source>1.8</maven.compiler.source>
-        <maven.compiler.target>1.8</maven.compiler.target>
+        <!-- 全工程统一 JDK 17（IDEA 项目设置已同步为 17） -->
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <maven.compiler.release>17</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
@@ -69,14 +72,14 @@
     <build>
         <pluginManagement>
             <plugins>
-                <!-- 显式锁定 Java 8，避免部分 mvn 不读 maven.compiler.source/target properties -->
+                <!-- 显式锁定 JDK 17，避免部分 mvn 不读 maven.compiler.source/target properties -->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
                     <version>${maven-compiler-plugin.version}</version>
                     <configuration>
-                        <source>${maven.compiler.source}</source>
-                        <target>${maven.compiler.target}</target>
+                        <release>${maven.compiler.release}</release>
+                        <encoding>UTF-8</encoding>
                     </configuration>
                 </plugin>
                 <!-- 统一运行方式: mvn -q -pl java-labs compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q01.L01VisibilityLab -->

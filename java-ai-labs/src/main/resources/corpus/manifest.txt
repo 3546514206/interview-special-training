@@ -1,0 +1,14 @@
+# classpath 目录清单：jar 运行时目录不可枚举，靠这个清单加载语料。
+asset-allocation-service.md
+advisory-service-process.md
+client-identification-rules.md
+compliance-review-requirements.md
+data-permission-masking.md
+due-diligence-checklist.md
+hnw-client-service.md
+operations-config-management.md
+private-asset-access-standard.md
+private-asset-custody-rules.md
+private-product-suitability.md
+risk-identification-rules.md
+risk-reporting-requirements.md

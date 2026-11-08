@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+      Java AI 工程实验模块。
+      继承聚合父 pom（统一 groupId / version / 编码），但编译级别独立覆盖为 JDK 17：
+      1) 大量使用 record / sealed / text block / switch 表达式，这些是现代 Java AI 工程的主流写法；
+      2) 与 Spring AI、LangChain4j 等主流框架的最低版本要求一致（JDK 17+）。
+      构建方式：
+        export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
+        mvn -f java-ai-labs/pom.xml -B clean test
+    -->
+    <parent>
+        <groupId>edu.zjnu</groupId>
+        <artifactId>interview-special-training</artifactId>
+        <version>1.0-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>java-ai-labs</artifactId>
+    <packaging>jar</packaging>
+
+    <name>java-ai-labs</name>
+    <description>面试专项训练 · Java AI 工程实验模块（JDK 17：RAG 全链路 / Agent Loop / Harness Engineering）</description>
+
+    <properties>
+        <maven.compiler.source>17</maven.compiler.source>
+        <maven.compiler.target>17</maven.compiler.target>
+        <maven.compiler.release>17</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
+        <!-- 依赖版本 -->
+        <jackson.version>2.19.2</jackson.version>
+        <junit.version>5.11.0</junit.version>
+
+        <!-- 插件版本：Maven 3.6.3 默认绑定的 surefire 2.12.4 不支持 JUnit 5，必须显式升级 -->
+        <maven-surefire-plugin.version>3.2.5</maven-surefire-plugin.version>
+        <exec-maven-plugin.version>3.6.3</exec-maven-plugin.version>
+    </properties>
+
+    <dependencies>
+        <!--
+          唯一的运行时依赖：JSON 编解码。
+          工具调用参数、Trace 事件、评测报告都要落 JSON，Jackson 是事实标准；
+          其余能力（向量检索、重排、Agent Loop、权限沙箱）全部用 JDK 自带能力实现，
+          以便在没有模型 API Key、没有外网的环境下也能完整跑通与回归。
+        -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>java-ai-labs</finalName>
+
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <release>17</release>
+                    <encoding>UTF-8</encoding>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven-surefire-plugin.version}</version>
+            </plugin>
+
+            <!-- 统一运行方式：mvn -q -pl java-ai-labs compile exec:java -Dexec.mainClass=edu.zjnu.interview.ai.cli.AiLabCli -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>${exec-maven-plugin.version}</version>
+            </plugin>
+        </plugins>
+    </build>
+
+</project>

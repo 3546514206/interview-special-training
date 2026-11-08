@@ -1,0 +1,2 @@
+# classpath 目录清单：jar 运行时目录不可枚举，靠这个清单加载黄金集。
+rag-golden.json

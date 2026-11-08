@@ -1,7 +1,8 @@
 # 面试专项训练
 
-> 构建与实验环境：JDK 8（`maven.compiler.source/target=1.8`）+ Maven。
-> 例外：`spring-labs` 子模块单独使用 **JDK 17 + Spring Boot 3.3.5**，需要单独指定 JDK 构建（见下方命令）。
+> 构建与实验环境：**全工程统一 JDK 17** + Maven（IDEA 项目设置已同步为 17）。
+> 终端里构建时如默认 `JAVA_HOME` 不是 17，先执行：
+> `export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home`
 
 本仓库是一个 **Maven 聚合工程（多模块）**：根目录只放聚合 `pom.xml` 与仓库级说明，
 每个专题/子项目是根目录下的一个独立子模块，自带 `pom.xml`、源码、文档与本地配置。
@@ -27,12 +28,26 @@ interview-special-training/          # 聚合工程根（packaging=pom，不产�
 │   ├── src/test/java/edu/zjnu/interview/springlabs/
 │   ├── Dockerfile                    # 仅运行时阶段（需先备好 app.jar）
 │   └── Dockerfile.build              # 多阶段自包含构建（CI 用）
+├── java-ai-labs/                     # 子模块：Java AI 工程实验（独立 JDK 17）
+│   ├── pom.xml                       # 子模块 pom（继承根 pom，编译级别覆盖为 17）
+│   ├── src/main/java/edu/zjnu/interview/ai/
+│   │   ├── core/                     # 公共 SPI：模型/工具/向量库/Trace/计量端口
+│   │   ├── rag/                      # RAG 六段流水线：接入→索引→召回→重排→组装→评测
+│   │   ├── agent/                    # Agent Loop：工具调用/状态与记忆/工作流编排/多 Agent
+│   │   └── harness/                  # Harness 工程：可观测/成本预算/权限安全/降级
+│   ├── src/main/resources/corpus/    # RAG 中文语料（私募资产接入、风险识别等）
+│   ├── src/main/resources/golden/    # 黄金评测集（question / expectedDocIds / ...）
+│   ├── .env                          # 本机私有配置（Qdrant 凭据等，gitignore，勿提交）
+│   └── .env.example                  # 配置模板（提交版）
 └── deploy/                           # 部署编排：Docker Compose / 部署脚本（不含任何凭据）
 ```
 
 ## 常用命令（均在仓库根目录执行）
 
 ```bash
+# 全工程统一 JDK 17（终端默认 JDK 若不是 17，先 export）
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
+
 # 构建全部子模块
 mvn clean compile
 
@@ -42,12 +57,18 @@ mvn -pl java-labs clean compile
 # 跑某个实验（工作目录 = java-labs/，.env 能被自动读到）
 mvn -q -pl java-labs compile exec:java -Dexec.mainClass=edu.zjnu.interview.lock.q01.L01VisibilityLab
 
-# 构建 spring-labs（该模块要求 JDK 17，不能用默认的 JDK 8）
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/JDK17/Contents/Home
+# 构建 spring-labs
 mvn -f spring-labs/pom.xml -B clean package      # 产物：spring-labs/target/spring-labs.jar
 
 # 本地起服务
 java -jar spring-labs/target/spring-labs.jar      # 默认监听 8080
+
+# 构建 java-ai-labs
+mvn -f java-ai-labs/pom.xml -B clean package     # 产物：java-ai-labs/target/java-ai-labs.jar
+mvn -f java-ai-labs/pom.xml -B clean test        # 只跑回归（246 个测试）
+
+# 跑 Java AI 全套实验（RAG / Agent / Harness）
+mvn -q -pl java-ai-labs compile exec:java -Dexec.mainClass=edu.zjnu.interview.ai.cli.AiLabCli
 ```
 
 ## 子模块
@@ -56,6 +77,7 @@ java -jar spring-labs/target/spring-labs.jar      # 默认监听 8080
 |---|---|---|
 | `java-labs` | [java-labs/](java-labs/) | Java 实验代码：JVM / 并发 / 锁 / 数据库 / Kafka，及配套答卷与实验教程 |
 | `spring-labs` | [spring-labs/](spring-labs/) | Spring Boot 3.3.5 Web 实验（JDK 17）：7 个 HTTP 契约接口、异常映射、MockMvc 测试、容器化 |
+| `java-ai-labs` | [java-ai-labs/](java-ai-labs/) | Java AI 工程实验（JDK 17）：RAG 全链路（含 Qdrant 向量库）、Agent Loop 与状态记忆、Harness 工程（可观测/成本/权限/安全）、AI Coding 交付流水线 |
 
 后续新增子项目（如 `rag-labs`）的步骤：
 
